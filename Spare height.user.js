@@ -1,11 +1,12 @@
-
 // ==UserScript==
 // @name         Spare height
-// @namespace    http://tampermonkey.net/
+// @namespace    Wolf 2.0
 // @version      1.0
-// @description  shrinks the spare gray bar height
+// @description  shrinks the spare gray bar height on spare Aircraft
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Spare%20height.user.js
+// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Spare%20height.user.js
 // ==/UserScript==
 
 
