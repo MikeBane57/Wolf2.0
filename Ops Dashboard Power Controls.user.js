@@ -1,10 +1,12 @@
 //==UserScript==
 // @name         Ops Dashboard Power Controls
-// @namespace    ops-clean
+// @namespace    Wolf 2.0
 // @version      4.0
 // @description  Toggle + resize panels (width & height) + minimize toolbar
 // @match        https://opssuitemain.swacorp.com/operational-dashboard*
 // @grant        none
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Ops%20Dashboard%20Power%20Controls.user.js
+// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Ops%20Dashboard%20Power%20Controls.user.js
 // ==/UserScript==
 
 (function() {
