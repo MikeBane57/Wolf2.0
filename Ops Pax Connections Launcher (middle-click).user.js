@@ -1,9 +1,12 @@
 // ==UserScript==
 // @name         Ops Pax Connections Launcher (middle-click)
+// @namespace Wolf 2.0
 // @match        https://opssuitemain.swacorp.com/*
-// @description  Pax connect middle click.
+// @description  Launch Pax connect on middle click.
 // @version  1.0
 // @grant        none
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Ops%20Pax%20Connections%20Launcher%20(middle-click).user.js
+// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Ops%20Pax%20Connections%20Launcher%20(middle-click).user.js
 // ==/UserScript==
 
 
