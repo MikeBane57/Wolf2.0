@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         One window to rule them all
 // @namespace    Wolf 2.0
-// @version      10.0
+// @version      10.1
 // @description  Position popup windows based on the requested URL. requires the user to change details in the file for the window to appear in the spot they want. 
 // @match        https://opssuitemain.swacorp.com/*
 // @run-at       document-start
