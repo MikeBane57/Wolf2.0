@@ -5,6 +5,8 @@
 // @description  Color date/time cells based on day relative to today with 3AM cutover
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/username/repo/main/myscript.user.js
+// @downloadURL  https://raw.githubusercontent.com/username/repo/main/myscript.user.js
 // ==/UserScript==
 
 
