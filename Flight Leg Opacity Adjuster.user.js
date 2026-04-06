@@ -1,7 +1,7 @@
 
 // ==UserScript==
 // @name         Flight Leg Opacity Adjuster
-// @namespace    http://tampermonkey.net/
+// @namespace    Wolf 2.0
 // @version      1.0
 // @description  Change opacity of flight leg elements, adjustable in one place
 // @match        https://opssuitemain.swacorp.com/*
