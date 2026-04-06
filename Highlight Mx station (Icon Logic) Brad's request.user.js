@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         Highlight Mx station (Icon Logic) Brad's request
-// @namespace    http://tampermonkey.net/
+// @namespace    Wolf 2.0
 // @version      1.4
 // @description  Color matches icon unless gray, otherwise default match color
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Highlight%20Mx%20station%20(Icon%20Logic)%20Brad's%20request.user.js
+// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Highlight%20Mx%20station%20(Icon%20Logic)%20Brad's%20request.user.js
 // ==/UserScript==
 
 (function () {
