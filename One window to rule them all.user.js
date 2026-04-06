@@ -29,7 +29,7 @@
             left: 0,
             top: 0,
             width: 500,
-            height: 2800
+            height: 1800
         },
         {
             name: "pax-connections",
