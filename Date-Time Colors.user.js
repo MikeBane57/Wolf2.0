@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Date/Time Colors
-// @namespace    http://tampermonkey.net/
+// @namespace    Wolf 2.0
 // @version      1.0
 // @description  Color date/time cells based on day relative to today with 3AM cutover
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/username/repo/main/myscript.user.js
-// @downloadURL  https://raw.githubusercontent.com/username/repo/main/myscript.user.js
+// @updateURL    	https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Date-Time%20Colors.user.js
+// @downloadURL  	https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Date-Time%20Colors.user.js
 // ==/UserScript==
 
 
