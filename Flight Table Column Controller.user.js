@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Flight Table Column Controller
-// @namespace    http://tampermonkey.net/
+// @namespace    Wolf 2.0
 // @version      1.0
 // @description  Hide columns and adjust spacing for related flights table
 // @match        https://opssuitemain.swacorp.com/*
