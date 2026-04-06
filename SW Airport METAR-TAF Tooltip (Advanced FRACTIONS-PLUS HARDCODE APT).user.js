@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         SW Airport METAR/TAF Tooltip (Advanced FRACTIONS-PLUS HARDCODE APT)
-// @namespace    http://tampermonkey.net/
+// @namespace    Wolf 2.0
 // @version      7.1
 // @description  METAR/TAF tooltip with per-token coloring, advanced alerts (crosswind, LLWS, icing, thunderstorm), React-friendly tooltip with logging
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
-// @run-at       document-idle
 // @connect      tgftp.nws.noaa.gov
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SW%20Airport%20METAR-TAF%20Tooltip%20(Advanced%20FRACTIONS-PLUS%20HARDCODE%20APT).user.js
+// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SW%20Airport%20METAR-TAF%20Tooltip%20(Advanced%20FRACTIONS-PLUS%20HARDCODE%20APT).user.js
 // ==/UserScript==
 
 (function() {
