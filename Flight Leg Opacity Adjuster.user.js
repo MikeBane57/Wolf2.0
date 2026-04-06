@@ -6,6 +6,8 @@
 // @description  Change opacity of flight leg elements, adjustable in one place
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20Leg%20Opacity%20Adjuster.user.js
+// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20Leg%20Opacity%20Adjuster.user.js
 // ==/UserScript==
 
 
