@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Flight Tooltip Dynamic Parser
+// @name         (Beta do not use)Flight Tooltip Dynamic Parser
 // @namespace    Wolf 2.0
-// @version      1.0
+// @version      1.1
 // @description  Reformat tool tip pop up
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
