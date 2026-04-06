@@ -1,9 +1,8 @@
 // ==UserScript==
 // @name         Flight Tooltip Dynamic Parser
-// @namespace    http://tampermonkey.net/
-// @version      2026-02-13
-// @description  try to take over the world!
-// @author       You
+// @namespace    Wolf 2.0
+// @version      1.0
+// @description  Reformat tool tip pop up
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // ==/UserScript==
