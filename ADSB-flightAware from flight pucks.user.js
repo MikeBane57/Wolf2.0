@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ADSB/flightAware from flight pucks
-// @namespace    http://tampermonkey.net/
-// @version      1.0
+// @namespace    Wolf 2.0
+// @version      1.1
 // @description  Double-click dep/arr target to open ADSB map for airport
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_openInTab
