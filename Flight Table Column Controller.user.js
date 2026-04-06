@@ -5,6 +5,8 @@
 // @description  Hide columns and adjust spacing for related flights table
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20Table%20Column%20Controller.user.js
+// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20Table%20Column%20Controller.user.js
 // ==/UserScript==
 
 
