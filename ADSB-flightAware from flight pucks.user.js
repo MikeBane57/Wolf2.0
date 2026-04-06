@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         ADSB/flightAware from flight pucks
 // @namespace    Wolf 2.0
-// @version      1.2
+// @version      1.3
 // @description  Double-click dep/arr target to open ADSB map for airport
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_openInTab
 // @connect      adsbexchange.com
-// @updateURL    https://raw.githubusercontent.com/MikeBane57/Wolf2.0/main/ADSB-flightAware%20from%20flight%20pucks.user.js
-// @downloadURL  https://raw.githubusercontent.com/MikeBane57/Wolf2.0/main/ADSB-flightAware%20from%20flight%20pucks.user.js
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
+// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
 // ==/UserScript==
 
 
