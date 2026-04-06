@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         One window to rule them all
-// @namespace    http://tampermonkey.net/
+// @namespace    Wolf 2.0
 // @version      10.0
-// @description  Position popup windows based on requested URL
+// @description  Position popup windows based on the requested URL. requires the user to change details in the file for the window to appear in the spot they want. 
 // @match        https://opssuitemain.swacorp.com/*
 // @run-at       document-start
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/One%20window%20to%20rule%20them%20all.user.js
+// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/One%20window%20to%20rule%20them%20all.user.js
 // ==/UserScript==
-
 
 (function () {
     'use strict';
