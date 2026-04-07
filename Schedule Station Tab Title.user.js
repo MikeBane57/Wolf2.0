@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Schedule Station Tab Title
 // @namespace    Wolf 2.0
-// @version      1.1
-// @description  Reflect schedule station dropdown (3-letter code) in the browser tab title
+// @version      1.2
+// @description  Reflect schedule station dropdown (3-letter code) in the tab title; ignores ABC
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Schedule%20Station%20Tab%20Title.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Schedule%20Station%20Tab%20Title.user.js
@@ -14,6 +14,8 @@
     const COMBO = 'div[name="station"][role="combobox"]';
     const CODE_RE = /^[A-Z]{3}$/;
     const TITLE_PREFIX_RE = /^[A-Z]{3} · /;
+    /** Placeholder / “all stations” — do not mirror in the tab title */
+    const IGNORE_CODES = new Set(['ABC']);
 
     const bodyMo = new MutationObserver(() => {
         wireCombos();
@@ -80,10 +82,14 @@
         return document.title.replace(TITLE_PREFIX_RE, '');
     }
 
+    function shouldPrefixTitle(code) {
+        return Boolean(code) && !IGNORE_CODES.has(code);
+    }
+
     function syncTitle() {
         const code = readStationCode();
         const base = baseTitle();
-        document.title = code ? `${code} · ${base}` : base;
+        document.title = shouldPrefixTitle(code) ? `${code} · ${base}` : base;
     }
 
     /**
@@ -91,7 +97,7 @@
      */
     function ensurePrefixedTitle() {
         const code = readStationCode();
-        if (!code) {
+        if (!shouldPrefixTitle(code)) {
             if (TITLE_PREFIX_RE.test(document.title)) {
                 document.title = baseTitle();
             }
