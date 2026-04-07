@@ -1,4 +1,3 @@
-
 // ==UserScript==
 // @name         Flight Leg Opacity Adjuster
 // @namespace    Wolf 2.0

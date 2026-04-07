@@ -1,4 +1,4 @@
-//==UserScript==
+// ==UserScript==
 // @name         Ops Dashboard Power Controls
 // @namespace    Wolf 2.0
 // @version      4.0
