@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Worksheet Tab Title
 // @namespace    Wolf 2.0
-// @version      1.0
-// @description  Shorten WorkSheet→WS in tab title, drop “for current date”, keep numbers
+// @version      1.1
+// @description  Tab title → WS # when WorkSheet appears; strip dates and extra text
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20Tab%20Title.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20Tab%20Title.user.js
@@ -11,20 +11,57 @@
 (function() {
     'use strict';
 
+    const WORKSHEET_RE = /\bWorkSheet\b/i;
+    /** Already normalized by this script (WS #12 or WS 12) */
+    const WS_NUM_RE = /^\s*WS\s*#?\s*(\d+)\s*$/i;
+
     const FOR_CURRENT_DATE_RE = /\s*for\s+current\s+date\s*/gi;
-    const WORKSHEET_WORD_RE = /\bWorkSheet\b/gi;
+    const DATE_PATTERNS = [
+        /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g,
+        /\b\d{4}-\d{2}-\d{2}\b/g,
+        /\b\d{1,2}-\d{1,2}-\d{2,4}\b/g,
+        /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s*\d{2,4}\b/gi,
+        /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*\d{2,4}\b/gi
+    ];
 
     let titleElObserver = null;
 
-    function transformTitle(raw) {
-        let t = String(raw || '');
-        t = t.replace(FOR_CURRENT_DATE_RE, ' ').replace(/\s{2,}/g, ' ').trim();
-        if (WORKSHEET_WORD_RE.test(t)) {
-            WORKSHEET_WORD_RE.lastIndex = 0;
-            t = t.replace(WORKSHEET_WORD_RE, 'WS');
+    function stripDatesAndBoilerplate(s) {
+        let t = s.replace(FOR_CURRENT_DATE_RE, ' ');
+        for (let i = 0; i < DATE_PATTERNS.length; i++) {
+            DATE_PATTERNS[i].lastIndex = 0;
+            t = t.replace(DATE_PATTERNS[i], ' ');
         }
-        t = t.replace(/\s{2,}/g, ' ').trim();
+        t = t.replace(/\s*[-–—|]\s*$/g, ' ').replace(/\s{2,}/g, ' ').trim();
         return t;
+    }
+
+    function extractWorksheetNumber(t) {
+        const m1 = t.match(/WorkSheet\s*#?\s*(\d+)/i);
+        if (m1) return m1[1];
+        const m2 = t.match(/(\d+)\s*[-–:#]?\s*WorkSheet/i);
+        if (m2) return m2[1];
+        const cleaned = stripDatesAndBoilerplate(t);
+        const m3 = cleaned.match(/WorkSheet\s*#?\s*(\d+)/i);
+        if (m3) return m3[1];
+        const m4 = cleaned.match(/(\d+)\s*[-–:#]?\s*WorkSheet/i);
+        if (m4) return m4[1];
+        const after = cleaned.replace(/\bWorkSheet\b/gi, ' ');
+        const m5 = after.match(/\b(\d{1,4})\b/);
+        return m5 ? m5[1] : '';
+    }
+
+    function transformTitle(raw) {
+        const t = String(raw || '').trim();
+        if (WS_NUM_RE.test(t)) {
+            const n = t.match(WS_NUM_RE)[1];
+            return `WS #${n}`;
+        }
+        if (!WORKSHEET_RE.test(t)) {
+            return t;
+        }
+        const num = extractWorksheetNumber(t);
+        return num ? `WS #${num}` : 'WS';
     }
 
     function applyTitle() {
