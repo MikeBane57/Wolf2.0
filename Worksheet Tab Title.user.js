@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Worksheet Tab Title
 // @namespace    Wolf 2.0
-// @version      1.1
-// @description  Tab title → WS # when WorkSheet appears; strip dates and extra text
+// @version      1.2
+// @description  Tab title → WS n when WorkSheet appears; strip dates and extra text
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20Tab%20Title.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20Tab%20Title.user.js
@@ -12,7 +12,7 @@
     'use strict';
 
     const WORKSHEET_RE = /\bWorkSheet\b/i;
-    /** Already normalized by this script (WS #12 or WS 12) */
+    /** Already normalized by this script (WS 12) */
     const WS_NUM_RE = /^\s*WS\s*#?\s*(\d+)\s*$/i;
 
     const FOR_CURRENT_DATE_RE = /\s*for\s+current\s+date\s*/gi;
@@ -55,13 +55,13 @@
         const t = String(raw || '').trim();
         if (WS_NUM_RE.test(t)) {
             const n = t.match(WS_NUM_RE)[1];
-            return `WS #${n}`;
+            return `WS ${n}`;
         }
         if (!WORKSHEET_RE.test(t)) {
             return t;
         }
         const num = extractWorksheetNumber(t);
-        return num ? `WS #${num}` : 'WS';
+        return num ? `WS ${num}` : 'WS';
     }
 
     function applyTitle() {
