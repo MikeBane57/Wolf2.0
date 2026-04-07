@@ -1,0 +1,29 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "",
+  "main": "ADSB-flightAware from flight pucks.user.js",
+  "scripts": {
+    "dev": "http-server . -p 8080 -c-1 --cors",
+    "lint": "eslint '*.user.js'",
+    "lint:fix": "eslint '*.user.js' --fix",
+    "validate": "node -e \"const fs=require('fs');const files=fs.readdirSync('.').filter(f=>f.endsWith('.user.js'));let ok=0,fail=0;files.forEach(f=>{try{new Function(fs.readFileSync(f,'utf8'));ok++;console.log('OK:',f)}catch(e){fail++;console.error('FAIL:',f,e.message)}});console.log(ok+' passed,',fail+' failed');if(fail)process.exit(1)\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MikeBane57/Wolf2.0.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/MikeBane57/Wolf2.0/issues"
+  },
+  "homepage": "https://github.com/MikeBane57/Wolf2.0#readme",
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "eslint": "^9.39.4",
+    "eslint-plugin-userscripts": "^0.5.6",
+    "http-server": "^14.1.1"
+  }
+}

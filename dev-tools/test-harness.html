@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Wolf 2.0 — Userscript Test Harness</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
+    h1 { color: #48d1cc; margin-bottom: 8px; }
+    .subtitle { color: #888; margin-bottom: 24px; font-size: 14px; }
+    .status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; margin-bottom: 24px; }
+    .status-card { background: #16213e; border-radius: 8px; padding: 14px 18px; border-left: 4px solid #333; }
+    .status-card.ok { border-left-color: #2ecc71; }
+    .status-card.fail { border-left-color: #e74c3c; }
+    .status-card .name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+    .status-card .detail { font-size: 12px; color: #aaa; }
+    h2 { color: #bb86fa; margin: 24px 0 12px; }
+    .sim-panel { background: #16213e; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+    .sim-panel h3 { color: #48d1cc; margin-bottom: 10px; font-size: 15px; }
+    .timeline-row { display: flex; gap: 0; }
+    .timeline-row div[style*="width: 75px"] { width: 75px; text-align: center; padding: 4px; border: 1px solid #333; }
+    .flight-puck { display: inline-block; background: #2d4059; border: 1px solid #555; border-radius: 4px; padding: 6px 12px; margin: 4px; cursor: pointer; font-size: 13px; }
+    .flight-puck:hover { background: #3d5a80; }
+    .OV3PKcjpyxw\= { background: #4a6fa5; padding: 4px 10px; margin: 2px; display: inline-block; border-radius: 3px; }
+    .vVzbj3J5m70\= { background: #6b5b95; padding: 4px 10px; margin: 2px; display: inline-block; border-radius: 3px; }
+    .pfZ-vT1mjJU\= { background: gray; height: 30px; width: 100%; margin: 4px 0; border-radius: 3px; }
+    .panel-container { display: flex; gap: 12px; flex-wrap: wrap; }
+    .ops-panel { background: #1a1a3e; border: 1px solid #444; border-radius: 6px; padding: 12px; min-width: 150px; min-height: 80px; }
+    .ops-panel .title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+    #log { background: #0d1117; color: #58a6ff; font-family: 'Courier New', monospace; font-size: 12px; padding: 12px; border-radius: 6px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Wolf 2.0 — Userscript Test Harness</h1>
+  <p class="subtitle">Simulated Southwest Ops Suite DOM for testing userscripts locally</p>
+
+  <div id="status-grid" class="status-grid"></div>
+
+  <h2>Simulated Panels</h2>
+
+  <div class="sim-panel">
+    <h3>Timeline — Date/Time Colors test</h3>
+    <div class="timeline-row" id="timeline"></div>
+  </div>
+
+  <div class="sim-panel">
+    <h3>Flight Legs — Opacity Adjuster test</h3>
+    <div>
+      <span class="OV3PKcjpyxw=">Completed Leg DAL→HOU</span>
+      <span class="OV3PKcjpyxw=">Completed Leg HOU→AUS</span>
+      <span class="vVzbj3J5m70=">Sched Block DAL→DEN</span>
+      <span class="vVzbj3J5m70=">Sched Block DEN→PHX</span>
+    </div>
+  </div>
+
+  <div class="sim-panel">
+    <h3>Spare Aircraft — Spare Height test</h3>
+    <div class="pfZ-vT1mjJU=">Spare Aircraft Bar</div>
+    <div class="pfZ-vT1mjJU=">Spare Aircraft Bar 2</div>
+  </div>
+
+  <div class="sim-panel">
+    <h3>Flight Pucks — Click interaction tests</h3>
+    <div>
+      <span class="flight-puck" data-airport="DAL" data-flight="WN1234">WN1234 DAL→HOU</span>
+      <span class="flight-puck" data-airport="MDW" data-flight="WN5678">WN5678 MDW→DEN</span>
+      <span class="flight-puck" data-airport="LAS" data-flight="WN9012">WN9012 LAS→PHX</span>
+    </div>
+  </div>
+
+  <div class="sim-panel">
+    <h3>Dashboard Panels — Power Controls test</h3>
+    <div class="panel-container">
+      <div class="ops-panel"><div class="title">Delays</div><div>3 flights</div></div>
+      <div class="ops-panel"><div class="title">Weather</div><div>IFR: DAL, MDW</div></div>
+      <div class="ops-panel"><div class="title">Maintenance</div><div>2 aircraft</div></div>
+    </div>
+  </div>
+
+  <h2>Script Load Log</h2>
+  <div id="log">Loading scripts...\n</div>
+
+  <script>
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const now = new Date();
+    const timeline = document.getElementById('timeline');
+
+    for (let offset = -1; offset <= 2; offset++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() + offset);
+      for (let h = 0; h < 24; h += 6) {
+        const col = document.createElement('div');
+        col.style.width = '75px';
+        if (h === 0) {
+          const dateDiv = document.createElement('div');
+          dateDiv.textContent = months[d.getMonth()] + ' ' + d.getDate();
+          col.appendChild(dateDiv);
+        }
+        const hourDiv = document.createElement('div');
+        hourDiv.textContent = String(h).padStart(2,'0') + ':00';
+        col.appendChild(hourDiv);
+        timeline.appendChild(col);
+      }
+    }
+
+    const log = document.getElementById('log');
+    const grid = document.getElementById('status-grid');
+
+    const scripts = [
+      'Flight Leg Opacity Adjuster.user.js',
+      'Date-Time Colors.user.js',
+      'Spare height.user.js',
+      'Flight Table Column Controller.user.js',
+      'Highlight Mx station (Icon Logic) Brad\'s request.user.js',
+      'Highlight OW-ET origin (Dynamic).user.js',
+      'Ops Dashboard Power Controls.user.js',
+      'ADSB-flightAware from flight pucks.user.js',
+      'One window to rule them all.user.js',
+      'Ops Pax Connections Launcher (middle-click).user.js',
+      'SW Airport METAR-TAF Tooltip (Advanced FRACTIONS-PLUS HARDCODE APT).user.js',
+      'Turns W&B Launcher (NoDis + Debug).user.js',
+      'Flight Tooltip Dynamic Parser.user.js',
+    ];
+
+    function addCard(name, ok, detail) {
+      const card = document.createElement('div');
+      card.className = 'status-card ' + (ok ? 'ok' : 'fail');
+      card.innerHTML = `<div class="name">${ok ? '✅' : '❌'} ${name}</div><div class="detail">${detail}</div>`;
+      grid.appendChild(card);
+    }
+
+    async function loadScripts() {
+      for (const name of scripts) {
+        try {
+          const resp = await fetch('../' + encodeURIComponent(name));
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          let code = await resp.text();
+          code = code.replace(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==/m, '');
+          new Function(code);
+          eval(code);
+          const msg = `✅ Loaded: ${name}`;
+          log.textContent += msg + '\n';
+          addCard(name, true, 'Loaded and executed successfully');
+        } catch (e) {
+          const msg = `❌ Error: ${name} — ${e.message}`;
+          log.textContent += msg + '\n';
+          addCard(name, false, e.message);
+        }
+      }
+      log.textContent += '\nDone loading all scripts.\n';
+    }
+
+    loadScripts();
+  </script>
+</body>
+</html>

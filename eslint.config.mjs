@@ -1,0 +1,50 @@
+import js from "@eslint/js";
+import userscripts from "eslint-plugin-userscripts";
+
+export default [
+  js.configs.recommended,
+  {
+    plugins: { userscripts },
+    rules: {
+      ...userscripts.configs.recommended.rules,
+      "no-unused-vars": "warn",
+      "no-undef": "off",
+    },
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "script",
+      globals: {
+        window: "readonly",
+        document: "readonly",
+        console: "readonly",
+        MutationObserver: "readonly",
+        setTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        GM_xmlhttpRequest: "readonly",
+        GM_addStyle: "readonly",
+        GM_getValue: "readonly",
+        GM_setValue: "readonly",
+        GM_registerMenuCommand: "readonly",
+        GM_notification: "readonly",
+        navigator: "readonly",
+        HTMLElement: "readonly",
+        Node: "readonly",
+        MouseEvent: "readonly",
+        KeyboardEvent: "readonly",
+        Event: "readonly",
+        NodeList: "readonly",
+        URL: "readonly",
+        XMLHttpRequest: "readonly",
+        fetch: "readonly",
+        alert: "readonly",
+        prompt: "readonly",
+        confirm: "readonly",
+        performance: "readonly",
+        getComputedStyle: "readonly",
+        requestAnimationFrame: "readonly",
+      },
+    },
+    files: ["**/*.user.js"],
+  },
+];
