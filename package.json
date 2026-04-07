@@ -5,8 +5,9 @@
   "main": "ADSB-flightAware from flight pucks.user.js",
   "scripts": {
     "dev": "http-server . -p 8080 -c-1 --cors",
-    "lint": "eslint '*.user.js'",
-    "lint:fix": "eslint '*.user.js' --fix",
+    "lint": "eslint '*.user.js' 'DonkeyCODE/DonkeyCode/**/*.js'",
+    "lint:fix": "eslint '*.user.js' 'DonkeyCODE/DonkeyCode/**/*.js' --fix",
+    "build:donkeycode": "cd DonkeyCODE && npm run build",
     "validate": "node -e \"const fs=require('fs');const files=fs.readdirSync('.').filter(f=>f.endsWith('.user.js'));let ok=0,fail=0;files.forEach(f=>{try{new Function(fs.readFileSync(f,'utf8'));ok++;console.log('OK:',f)}catch(e){fail++;console.error('FAIL:',f,e.message)}});console.log(ok+' passed,',fail+' failed');if(fail)process.exit(1)\""
   },
   "repository": {
