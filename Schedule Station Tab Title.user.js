@@ -14,16 +14,13 @@
     const COMBO = 'div[name="station"][role="combobox"]';
     const DIVIDER_TEXT = '.divider.text';
     const CODE_RE = /^[A-Z]{3}$/;
-
-    /** Title before this script prefixed it; reset when station is cleared. */
-    let baseTitle = document.title;
+    const TITLE_PREFIX_RE = /^[A-Z]{3} · /;
 
     const bodyMo = new MutationObserver(() => {
         wireCombos();
         syncTitle();
     });
 
-    /** One observer per combobox node (React may replace the node). */
     const comboObservers = [];
 
     function wireCombos() {
@@ -49,13 +46,15 @@
         return CODE_RE.test(text) ? text : '';
     }
 
+    /** Strip our IATA prefix so SPA title updates still apply to the base string. */
+    function baseTitle() {
+        return document.title.replace(TITLE_PREFIX_RE, '');
+    }
+
     function syncTitle() {
         const code = readStationCode();
-        if (!code) {
-            document.title = baseTitle;
-            return;
-        }
-        document.title = `${code} · ${baseTitle}`;
+        const base = baseTitle();
+        document.title = code ? `${code} · ${base}` : base;
     }
 
     bodyMo.observe(document.body, { childList: true, subtree: true });
@@ -66,6 +65,6 @@
         bodyMo.disconnect();
         comboObservers.forEach(o => o.disconnect());
         comboObservers.length = 0;
-        document.title = baseTitle;
+        document.title = baseTitle();
     };
 })();
