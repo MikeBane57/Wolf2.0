@@ -1,39 +1,70 @@
-# Wolf 2.0 userscript standardization (plan)
+# Wolf 2.0 userscript standardization
 
-This document captures how we will standardize Tampermonkey-style scripts for DonkeyCODE and the ops suite. **Fill in the “DonkeyCODE” section** when the other agent returns answers from the DonkeyCODE codebase.
+Conventions for scripts used with **DonkeyCODE** and the ops suite (`opssuitemain.swacorp.com`). Details below are aligned with DonkeyCODE’s loader (`parseUserScript` in `background.js`): only certain headers are parsed; the rest are optional documentation.
 
 ## Goals
 
-- One `.user.js` file per feature (users can enable/disable individually).
-- Consistent headers and structure so scripts are easy to review and maintain.
-- Default scope: `https://opssuitemain.swacorp.com/*`; use a **narrower** `@match` when a script only applies to one app area (e.g. operational dashboard).
+- One `.user.js` file per feature (users can enable or disable individually).
+- Consistent headers and structure for review and maintenance.
+- Default scope: `https://opssuitemain.swacorp.com/*`; use a **narrower** `@match` when a script only applies to one area (e.g. `.../operational-dashboard*`).
 
-## Header conventions (current repo practice)
+## DonkeyCODE: what the loader actually reads
+
+From `parseUserScript` (and related logic in `background.js`):
+
+| Header | Effect |
+|--------|--------|
+| `@name` | Parsed; used for display. (Listing / filename still matters for which files load.) |
+| `@match` | Parsed; Tampermonkey-style patterns. If **none**, default is `*://*/*`. |
+| `@exclude` | Parsed; stored as excludes. |
+| `@grant` | Only used to enable **`GM_xmlhttpRequest`** (normalized to `xmlhttprequest`, or code contains `GM_xmlhttpRequest`). Other grants are not implemented. |
+| `@connect` | Parsed; host allowlist for `GM_xmlhttpRequest` (empty ⇒ allow all hosts for connect checks, per implementation). |
+
+**Not parsed by the loader** (safe to keep for humans or Tampermonkey; DonkeyCODE ignores):
+
+- `@include`, `@namespace`, `@version`, `@description`
+- `@run-at` (injection is after load complete / tab sync)
+- `@updateURL`, `@downloadURL`
+- `@require`, `@resource`
+
+## DonkeyCODE: APIs and storage
+
+- **`GM_xmlhttpRequest` only** — no `GM_getValue`, `GM_setValue`, `GM_addStyle`, `unsafeWindow`, etc.
+- **Page** `fetch` runs in the page world (CORS / page CSP apply).
+- **Cross-origin from the extension path** — use `GM_xmlhttpRequest` with appropriate `@connect` and user permission for `http(s)://*/*` when required.
+- **Storage** — use **`localStorage` / `sessionStorage`** on the target origin (no GM storage API).
+
+Optional cleanup: define a global **`__myScriptCleanup`** if the script needs teardown (see `donkeycodeInjectMain`).
+
+## Updates (DonkeyCODE)
+
+**`@updateURL` / `@downloadURL` are not used.** Scripts update when the extension **re-fetches** them from:
+
+- The configured **GitHub Contents API** listing (e.g. Wolf2.0 `*.user.js` files), and/or  
+- **Extra raw URLs** in settings,
+
+then saves to extension storage. Refresh runs on install, startup, ~daily alarm, and manual “Refresh scripts”.  
+
+Repo scripts may still include `@updateURL` / `@downloadURL` for **Tampermonkey** users or documentation; DonkeyCODE ignores them.
+
+## Repo header conventions (Wolf 2.0)
 
 | Item | Convention |
 |------|------------|
 | Opening/closing | `// ==UserScript==` and `// ==/UserScript==` (space after `//`) |
 | First line of file | No leading blank line before the opening tag |
-| `@namespace` | `Wolf 2.0` |
-| `@updateURL` / `@downloadURL` | Raw **Wolf2.0** GitHub URLs; filename path segment URL-encoded (spaces → `%20`, etc.)—**if** DonkeyCODE uses these tags (see below) |
+| `@namespace` | Keep `Wolf 2.0` (documentation; DonkeyCODE ignores) |
+| `@version`, `@description` | Recommended for humans; DonkeyCODE ignores |
+| `@grant` | Omit unless the script needs **`GM_xmlhttpRequest`**; then `@grant GM_xmlhttpRequest` and list hosts in `@connect` |
+| `@updateURL` / `@downloadURL` | Optional; point at Wolf2.0 raw URLs if you want Tampermonkey parity or a clear canonical URL — **not** used by DonkeyCODE for sync |
 | Body | IIFE: `(function() { 'use strict'; ... })();` |
 | Dynamic UI | Prefer `MutationObserver` on `document.body` when the app adds nodes after load |
 
 ## Template
 
-Copy `templates/userscript.template.user.js` when starting a new script; rename the file to match the `@name` and update `@updateURL` / `@downloadURL` paths to the real filename.
-
-## DonkeyCODE (pending confirmation)
-
-Paste answers from the DonkeyCODE investigation here so we can lock rules and update the template.
-
-- **Metadata used:** (which of `@match`, `@grant`, `@connect`, `@updateURL`, `@downloadURL`, … are honored?)
-- **Grants / APIs:** (which `GM_*` are available?)
-- **Cross-origin:** (`GM_xmlhttpRequest` + `@connect` vs `fetch`, etc.)
-- **Updates:** (manual only vs `@updateURL`?)
-- **Storage:** (`GM_getValue` / `GM_setValue` vs `localStorage`?)
-- **Other constraints:** (forbidden patterns, size limits, …)
+Copy `templates/userscript.template.user.js` when starting a new script.
 
 ## Changelog
 
-- Initial plan and `templates/userscript.template.user.js` added; `Ops Dashboard Power Controls.user.js` header aligned to `// ==UserScript==`; `Flight Leg Opacity Adjuster.user.js` leading blank line removed.
+- Initial plan and template; header fixes on two scripts.
+- Filled DonkeyCODE section from `background.js` / `bridge.js` / `manifest.json` report (parser fields, GM XHR only, updates via listing, storage).
