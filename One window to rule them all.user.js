@@ -1,32 +1,36 @@
 // ==UserScript==
 // @name         One window to rule them all
 // @namespace    Wolf 2.0
-// @version      10.2
+// @version      10.3
 // @description  Position popup windows by URL; geometry from DonkeyCODE Pref (Scripts → gear) or defaults below.
 // @match        https://opssuitemain.swacorp.com/*
 // @run-at       document-start
-// @donkeycode-pref {"goTurnMonitor":{"type":"select","label":"Go Turn Details — monitor","description":"Secondary adds the opener window width to horizontal position (use for a second display).","default":1,"options":[{"value":1,"label":"Primary (opener screen)"},{"value":2,"label":"Secondary (opener width offset)"}]},"goTurnLeft":{"type":"number","label":"Go Turn — left offset (px)","default":0,"min":-5000,"max":5000,"step":1},"goTurnTop":{"type":"number","label":"Go Turn — top (px)","default":0,"min":0,"max":4000,"step":1},"goTurnWidth":{"type":"number","label":"Go Turn — width (px)","default":1100,"min":200,"max":4000,"step":1},"goTurnHeight":{"type":"number","label":"Go Turn — height (px)","default":900,"min":200,"max":4000,"step":1}}
-// @donkeycode-pref {"relatedFlightsMonitor":{"type":"select","label":"Related flights — monitor","default":1,"options":[{"value":1,"label":"Primary (opener screen)"},{"value":2,"label":"Secondary (opener width offset)"}]},"relatedFlightsLeft":{"type":"number","label":"Related flights — left offset (px)","default":0,"min":-5000,"max":5000,"step":1},"relatedFlightsTop":{"type":"number","label":"Related flights — top (px)","default":0,"min":0,"max":4000,"step":1},"relatedFlightsWidth":{"type":"number","label":"Related flights — width (px)","default":500,"min":200,"max":4000,"step":1},"relatedFlightsHeight":{"type":"number","label":"Related flights — height (px)","default":1800,"min":200,"max":4000,"step":1}}
-// @donkeycode-pref {"paxConnectionsMonitor":{"type":"select","label":"Pax connections widget — monitor","default":1,"options":[{"value":1,"label":"Primary (opener screen)"},{"value":2,"label":"Secondary (opener width offset)"}]},"paxConnectionsLeft":{"type":"number","label":"Pax connections — left offset (px)","default":0,"min":-5000,"max":5000,"step":1},"paxConnectionsTop":{"type":"number","label":"Pax connections — top (px)","default":0,"min":0,"max":4000,"step":1},"paxConnectionsWidth":{"type":"number","label":"Pax connections — width (px)","default":1000,"min":200,"max":4000,"step":1},"paxConnectionsHeight":{"type":"number","label":"Pax connections — height (px)","default":800,"min":200,"max":4000,"step":1}}
+// @donkeycode-pref {"goTurnMonitor":{"type":"select","group":"Go Turn Details","label":"Monitor","description":"Primary: align from opener screen edge. Secondary: add opener window width (typical two-monitor setup).","default":1,"options":[{"value":1,"label":"Primary"},{"value":2,"label":"Secondary"}]},"goTurnLeft":{"type":"number","group":"Go Turn Details","label":"Left (px)","description":"Horizontal offset from the computed edge.","default":0,"min":-5000,"max":5000,"step":1},"goTurnTop":{"type":"number","group":"Go Turn Details","label":"Top (px)","default":0,"min":0,"max":4000,"step":1},"goTurnWidth":{"type":"number","group":"Go Turn Details","label":"Width (px)","default":1100,"min":200,"max":4000,"step":1},"goTurnHeight":{"type":"number","group":"Go Turn Details","label":"Height (px)","default":900,"min":200,"max":4000,"step":1}}
+// @donkeycode-pref {"relatedFlightsMonitor":{"type":"select","group":"Related flights","label":"Monitor","description":"Primary: align from opener screen edge. Secondary: add opener window width.","default":1,"options":[{"value":1,"label":"Primary"},{"value":2,"label":"Secondary"}]},"relatedFlightsLeft":{"type":"number","group":"Related flights","label":"Left (px)","description":"Horizontal offset from the computed edge.","default":0,"min":-5000,"max":5000,"step":1},"relatedFlightsTop":{"type":"number","group":"Related flights","label":"Top (px)","default":0,"min":0,"max":4000,"step":1},"relatedFlightsWidth":{"type":"number","group":"Related flights","label":"Width (px)","default":500,"min":200,"max":4000,"step":1},"relatedFlightsHeight":{"type":"number","group":"Related flights","label":"Height (px)","default":1800,"min":200,"max":4000,"step":1}}
+// @donkeycode-pref {"paxConnectionsMonitor":{"type":"select","group":"Pax connections (widget)","label":"Monitor","description":"Primary: align from opener screen edge. Secondary: add opener window width.","default":1,"options":[{"value":1,"label":"Primary"},{"value":2,"label":"Secondary"}]},"paxConnectionsLeft":{"type":"number","group":"Pax connections (widget)","label":"Left (px)","description":"Horizontal offset from the computed edge.","default":0,"min":-5000,"max":5000,"step":1},"paxConnectionsTop":{"type":"number","group":"Pax connections (widget)","label":"Top (px)","default":0,"min":0,"max":4000,"step":1},"paxConnectionsWidth":{"type":"number","group":"Pax connections (widget)","label":"Width (px)","default":1000,"min":200,"max":4000,"step":1},"paxConnectionsHeight":{"type":"number","group":"Pax connections (widget)","label":"Height (px)","default":800,"min":200,"max":4000,"step":1}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/One%20window%20to%20rule%20them%20all.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/One%20window%20to%20rule%20them%20all.user.js
 // ==/UserScript==
 
-(function(donkeycodeGetPref) {
+(function() {
     'use strict';
 
-    const getPref = typeof donkeycodeGetPref === 'function'
+    /**
+     * DonkeyCODE injects donkeycodeGetPref as the wrapper function parameter — it is
+     * NOT necessarily on globalThis. Do not IIFE (fn)(globalThis.donkeycodeGetPref).
+     */
+    var getPref = typeof donkeycodeGetPref === 'function'
         ? donkeycodeGetPref
         : function() { return undefined; };
 
     function buildRules() {
-        const num = function(key, def) {
-            const v = getPref(key);
+        var num = function(key, def) {
+            var v = getPref(key);
             if (v === undefined || v === null || v === '') return def;
-            const x = Number(v);
+            var x = Number(v);
             return Number.isFinite(x) ? x : def;
         };
-        const mon = function(key, def) {
+        var mon = function(key, def) {
             return num(key, def) === 2 ? 2 : 1;
         };
 
@@ -61,9 +65,9 @@
         ];
     }
 
-    const RULES = buildRules();
+    var RULES = buildRules();
 
-    const s = document.createElement('script');
+    var s = document.createElement('script');
 
     s.textContent = `
         console.log("=== POPUP ROUTER ACTIVE (Reuse + Reload URL) ===");
@@ -165,4 +169,4 @@
     document.documentElement.appendChild(s);
     s.remove();
 
-})(typeof globalThis.donkeycodeGetPref === 'function' ? globalThis.donkeycodeGetPref : undefined);
+})();
