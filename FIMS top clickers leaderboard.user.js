@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.1.0
+// @version      1.2.0
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersTopN":{"type":"number","group":"Leaderboard","label":"Show top N","description":"How many names to list in the box.","default":10,"min":3,"max":30,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
@@ -15,6 +15,7 @@
     var TABLE_ID = 'fims-id';
     var TAB_ID = 'dc-fims-top-clickers-host';
     var PANEL_ID = 'dc-fims-top-clickers-panel';
+    var STYLE_ID = 'dc-fims-top-clickers-style';
 
     var EXT_LINE_RE = /\/\s*EXT\s+\d{3}-\d{3}-\d{4}/;
     var NAME_WORD_RE = /^[A-Za-z][A-Za-z'\-\.]*$/;
@@ -258,6 +259,159 @@
         return pairs.slice(0, getTopN());
     }
 
+    function ensureStyles() {
+        if (document.getElementById(STYLE_ID)) {
+            return;
+        }
+        var css = [
+            '#' + PANEL_ID + '.dc-fims-tc-wrap{',
+            'display:none;',
+            'padding:0;',
+            'background:linear-gradient(145deg,#1a1a2e 0%,#16213e 45%,#0f3460 100%);',
+            'border-radius:12px;',
+            'box-shadow:0 8px 32px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);',
+            'overflow:hidden;',
+            'max-height:70vh;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-inner{',
+            'padding:16px 18px 18px;',
+            'color:#e8e8ef;',
+            'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-head{',
+            'display:flex;',
+            'align-items:center;',
+            'justify-content:space-between;',
+            'gap:12px;',
+            'margin-bottom:14px;',
+            'padding-bottom:12px;',
+            'border-bottom:1px solid rgba(255,255,255,.12);',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-title{',
+            'font-weight:700;',
+            'font-size:1.15rem;',
+            'letter-spacing:.02em;',
+            'background:linear-gradient(90deg,#ffd93d,#ff6b6b 50%,#c56cf0);',
+            '-webkit-background-clip:text;',
+            'background-clip:text;',
+            '-webkit-text-fill-color:transparent;',
+            'text-shadow:none;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-sub{',
+            'font-size:.75rem;',
+            'opacity:.75;',
+            'color:#b8c5d6;',
+            'margin-top:2px;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-emoji{',
+            'font-size:1.75rem;',
+            'line-height:1;',
+            'filter:drop-shadow(0 2px 4px rgba(0,0,0,.3));',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-top-clickers-ol{',
+            'list-style:none;',
+            'margin:0;',
+            'padding:0;',
+            'display:flex;',
+            'flex-direction:column;',
+            'gap:8px;',
+            'max-height:calc(70vh - 120px);',
+            'overflow:auto;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-row{',
+            'display:flex;',
+            'align-items:center;',
+            'gap:12px;',
+            'padding:10px 12px;',
+            'border-radius:10px;',
+            'background:rgba(255,255,255,.06);',
+            'border:1px solid rgba(255,255,255,.08);',
+            'transition:transform .15s ease,box-shadow .15s ease;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-row:hover{',
+            'transform:translateX(4px);',
+            'box-shadow:0 4px 16px rgba(0,0,0,.2);',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-row--1{',
+            'background:linear-gradient(90deg,rgba(255,215,0,.25),rgba(255,215,0,.08));',
+            'border-color:rgba(255,215,0,.35);',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-row--2{',
+            'background:linear-gradient(90deg,rgba(192,192,192,.2),rgba(192,192,192,.06));',
+            'border-color:rgba(200,200,210,.3);',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-row--3{',
+            'background:linear-gradient(90deg,rgba(205,127,50,.22),rgba(205,127,50,.07));',
+            'border-color:rgba(205,127,50,.35);',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-rank{',
+            'flex:0 0 2rem;',
+            'width:2rem;',
+            'height:2rem;',
+            'border-radius:50%;',
+            'display:flex;',
+            'align-items:center;',
+            'justify-content:center;',
+            'font-weight:800;',
+            'font-size:.85rem;',
+            'background:rgba(0,0,0,.25);',
+            'color:#fff;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-row--1 .dc-fims-tc-rank,',
+            '#' + PANEL_ID + ' .dc-fims-tc-row--2 .dc-fims-tc-rank,',
+            '#' + PANEL_ID + ' .dc-fims-tc-row--3 .dc-fims-tc-rank{',
+            'background:transparent;',
+            'font-size:1.35rem;',
+            'line-height:1;',
+            'width:auto;',
+            'min-width:2.25rem;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-name{',
+            'flex:1;',
+            'min-width:0;',
+            'font-weight:600;',
+            'font-size:.95rem;',
+            'letter-spacing:.01em;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-count{',
+            'flex:0 0 auto;',
+            'font-variant-numeric:tabular-nums;',
+            'font-weight:800;',
+            'font-size:1.1rem;',
+            'padding:4px 12px;',
+            'border-radius:999px;',
+            'background:rgba(255,107,107,.2);',
+            'color:#ffb4b4;',
+            'border:1px solid rgba(255,107,107,.35);',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-row--1 .dc-fims-tc-count{',
+            'background:rgba(255,215,0,.25);',
+            'color:#ffe566;',
+            'border-color:rgba(255,215,0,.4);',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-empty{',
+            'text-align:center;',
+            'padding:28px 16px;',
+            'opacity:.65;',
+            'font-style:italic;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-reset.ui.button{',
+            'margin-top:14px !important;',
+            'background:linear-gradient(180deg,#4a4e69,#3d4154) !important;',
+            'color:#e8e8ef !important;',
+            'border:1px solid rgba(255,255,255,.15) !important;',
+            'border-radius:8px !important;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-reset.ui.button:hover{',
+            'filter:brightness(1.12);',
+            '}'
+        ].join('');
+        var el = document.createElement('style');
+        el.id = STYLE_ID;
+        el.textContent = css;
+        (document.head || document.documentElement).appendChild(el);
+    }
+
     function render(panel) {
         if (!panel) {
             return;
@@ -268,16 +422,34 @@
         }
         var list = topList();
         ol.innerHTML = '';
+        var medals = ['\u{1F947}', '\u{1F948}', '\u{1F949}'];
         var i;
         for (i = 0; i < list.length; i++) {
+            var rank = i + 1;
             var li = document.createElement('li');
-            li.textContent = list[i].name + ' — ' + list[i].n;
+            li.className = 'dc-fims-tc-row';
+            if (rank <= 3) {
+                li.classList.add('dc-fims-tc-row--' + rank);
+            }
+            var rankEl = document.createElement('span');
+            rankEl.className = 'dc-fims-tc-rank';
+            rankEl.textContent = rank <= 3 ? medals[rank - 1] : String(rank);
+            var nameEl = document.createElement('span');
+            nameEl.className = 'dc-fims-tc-name';
+            nameEl.textContent = list[i].name;
+            var countEl = document.createElement('span');
+            countEl.className = 'dc-fims-tc-count';
+            countEl.textContent = String(list[i].n);
+            countEl.title = 'FIMs';
+            li.appendChild(rankEl);
+            li.appendChild(nameEl);
+            li.appendChild(countEl);
             ol.appendChild(li);
         }
         if (list.length === 0) {
             var empty = document.createElement('li');
-            empty.textContent = 'No senders yet';
-            empty.style.opacity = '0.7';
+            empty.className = 'dc-fims-tc-empty';
+            empty.textContent = 'No senders yet — check back after new FIMs land.';
             ol.appendChild(empty);
         }
     }
@@ -413,30 +585,47 @@
         if (existing) {
             return existing;
         }
+        ensureStyles();
         var table = document.getElementById(TABLE_ID);
         if (!table || !table.parentNode) {
             return null;
         }
         var panel = document.createElement('div');
         panel.id = PANEL_ID;
-        panel.style.cssText = 'display:none;padding:12px 16px;';
+        panel.className = 'dc-fims-tc-wrap';
+        panel.style.display = 'none';
 
-        var h = document.createElement('div');
-        h.textContent = 'Top clickers (by FIM #)';
-        h.style.cssText = 'font-weight:600;margin-bottom:0.75em';
-        panel.appendChild(h);
+        var inner = document.createElement('div');
+        inner.className = 'dc-fims-tc-inner';
+
+        var head = document.createElement('div');
+        head.className = 'dc-fims-tc-head';
+        var headText = document.createElement('div');
+        var title = document.createElement('div');
+        title.className = 'dc-fims-tc-title';
+        title.textContent = 'Top clickers';
+        var sub = document.createElement('div');
+        sub.className = 'dc-fims-tc-sub';
+        sub.textContent = 'Who sent the most FIMs (one count per FIM #)';
+        headText.appendChild(title);
+        headText.appendChild(sub);
+        var emoji = document.createElement('span');
+        emoji.className = 'dc-fims-tc-emoji';
+        emoji.setAttribute('aria-hidden', 'true');
+        emoji.textContent = '\u{1F3C6}';
+        head.appendChild(headText);
+        head.appendChild(emoji);
+        inner.appendChild(head);
 
         var ol = document.createElement('ol');
         ol.className = 'dc-fims-top-clickers-ol';
-        ol.style.cssText = 'margin:0;padding-left:1.25em;line-height:1.5;max-height:70vh;overflow:auto';
-        panel.appendChild(ol);
+        inner.appendChild(ol);
 
         var reset = document.createElement('button');
         reset.type = 'button';
         reset.textContent = 'Reset counts';
         reset.title = 'Clears all saved leaderboard data for this page (counts and per-FIM senders). Same as wiping localStorage for this script\'s key.';
-        reset.className = 'ui mini button';
-        reset.style.cssText = 'margin-top:12px';
+        reset.className = 'ui mini button dc-fims-tc-reset';
         reset.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
@@ -445,7 +634,8 @@
             writeState(fimToSender);
             render(panel);
         });
-        panel.appendChild(reset);
+        inner.appendChild(reset);
+        panel.appendChild(inner);
 
         table.parentNode.insertBefore(panel, table);
         render(panel);
@@ -467,7 +657,7 @@
         a.id = TAB_ID;
         a.className = 'item';
         a.href = '#';
-        a.innerHTML = '<div>Top clickers</div>';
+        a.innerHTML = '<div><span aria-hidden="true">\u{1F3C6}</span> Top clickers</div>';
         a.addEventListener('click', onTopClickersTabClick);
         found.advisoriesTab.insertAdjacentElement('afterend', a);
         return a;
@@ -579,6 +769,10 @@
         var panel = document.getElementById(PANEL_ID);
         if (panel && panel.parentNode) {
             panel.parentNode.removeChild(panel);
+        }
+        var st = document.getElementById(STYLE_ID);
+        if (st && st.parentNode) {
+            st.parentNode.removeChild(st);
         }
         window.__myScriptCleanup = undefined;
     };
