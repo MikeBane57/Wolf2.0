@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         One window to rule them all
 // @namespace    Wolf 2.0
-// @version      10.3
+// @version      10.4
 // @description  Position popup windows by URL; geometry from DonkeyCODE Pref (Scripts → gear) or defaults below.
 // @match        https://opssuitemain.swacorp.com/*
 // @run-at       document-start
@@ -124,16 +124,9 @@
 
             const w = originalOpen.call(window, abs, "_blank", features);
             windowRefs[rule.name] = w;
-
-            if(w){
-                const move = () => {
-                    try{
-                        w.resizeTo(rule.width, rule.height);
-                        w.moveTo(left, top);
-                    }catch(e){}
-                };
-                [200,800,1500,2500].forEach(t => setTimeout(move,t));
-            }
+            // Position/size come only from window.open features. Do not call
+            // moveTo/resizeTo on a timer — users reported the window snapping back
+            // after they dragged it (old code retried at 200/800/1500/2500 ms).
 
             console.groupEnd();
             return w;
