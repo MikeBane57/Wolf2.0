@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         URL path tab titles
 // @namespace    Wolf 2.0
-// @version      1.3.0
-// @description  Rename tabs by URL path; manage many rules in-page (add/edit/delete) plus optional prefs
+// @version      1.4.0
+// @description  Rename tabs by URL path; list UI, optional right-click to save (page JS cannot add browser tab menu)
 // @match        https://opssuitemain.swacorp.com/*
-// @donkeycode-pref {"pathTabTitleUrls":{"type":"string","group":"Tab titles (optional)","label":"URLs or paths","description":"Optional extra rules (same as before). Rules you save in the page list are stored in the browser and take precedence when the path matches.","default":"","placeholder":"https://opssuitemain.swacorp.com/alerts"},"pathTabTitleTitles":{"type":"string","group":"Tab titles (optional)","label":"Tab titles","description":"One title per line, aligned with URLs above.","default":"","placeholder":"🚨 Alerts"},"pathTabTitleShowManager":{"type":"boolean","group":"Tab titles (optional)","label":"Show “Tab titles” button","description":"Floating button to open the rule list on opssuitemain pages.","default":true}}
+// @donkeycode-pref {"pathTabTitleUrls":{"type":"string","group":"Tab titles (optional)","label":"URLs or paths","description":"Optional extra rules (same as before). Rules you save in the page list are stored in the browser and take precedence when the path matches.","default":"","placeholder":"https://opssuitemain.swacorp.com/alerts"},"pathTabTitleTitles":{"type":"string","group":"Tab titles (optional)","label":"Tab titles","description":"One title per line, aligned with URLs above.","default":"","placeholder":"🚨 Alerts"},"pathTabTitleShowManager":{"type":"boolean","group":"Tab titles (optional)","label":"Show “Tab titles” button","description":"Floating button to open the rule list on opssuitemain pages.","default":true},"pathTabTitleContextMenu":{"type":"boolean","group":"Tab titles (optional)","label":"Right-click menu to save","description":"Same-site link: right-click → set tab title for that URL. Anywhere: Alt+right-click → set tab title for the current page. (Browser tab bar menus need DonkeyCODE/extension support.)","default":true}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/URL%20path%20tab%20titles.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/URL%20path%20tab%20titles.user.js
 // ==/UserScript==
@@ -17,6 +17,7 @@
     var BTN_ID = 'dc-path-tab-titles-fab';
     var PANEL_ID = 'dc-path-tab-titles-panel';
     var HOST_ID = 'dc-path-tab-titles-host';
+    var CTX_MENU_ID = 'dc-path-tab-titles-ctx-menu';
 
     var baseTitleAtInject = document.title;
     var titleElObserver = null;
@@ -26,6 +27,7 @@
     var onPopState = null;
     var onHashChange = null;
     var editingIndex = -1;
+    var onDocumentContextMenu = null;
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -341,7 +343,14 @@
             '#' + PANEL_ID + ' .dc-ptt-form .dc-ptt-btns button{padding:8px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;}',
             '#' + PANEL_ID + ' .dc-ptt-btn-add{background:linear-gradient(135deg,#3282b8,#0f4c75);color:#fff;}',
             '#' + PANEL_ID + ' .dc-ptt-btn-sec{background:rgba(255,255,255,.12);color:#eee;}',
-            '#' + PANEL_ID + ' .dc-ptt-hint{font-size:10px;opacity:.65;margin-top:8px;line-height:1.35;}'
+            '#' + PANEL_ID + ' .dc-ptt-hint{font-size:10px;opacity:.65;margin-top:8px;line-height:1.35;}',
+            '#' + CTX_MENU_ID + '{position:fixed;z-index:2147483640;min-width:220px;max-width:320px;padding:4px 0;',
+            'background:#1b262c;color:#eee;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);',
+            'border:1px solid rgba(255,255,255,.15);font-size:13px;font-family:system-ui,-apple-system,sans-serif;display:none;}',
+            '#' + CTX_MENU_ID + '.dc-ptt-ctx-open{display:block;}',
+            '#' + CTX_MENU_ID + ' button{display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:transparent;color:inherit;cursor:pointer;font-size:13px;}',
+            '#' + CTX_MENU_ID + ' button:hover{background:rgba(255,255,255,.12);}',
+            '#' + CTX_MENU_ID + ' .dc-ptt-ctx-h{padding:8px 14px 4px;font-size:11px;opacity:.65;word-break:break-all;}'
         ].join('');
         var st = document.createElement('style');
         st.id = UI_STYLE_ID;
@@ -490,25 +499,20 @@
         applyTitle();
     }
 
-    function saveRuleFromForm() {
-        var els = getPanelEls();
-        if (!els) {
-            return;
+    function upsertStoredRule(urlRaw, titleRaw) {
+        var urlTrim = String(urlRaw || '').trim();
+        var titleTrim = String(titleRaw || '').trim();
+        if (!urlTrim || !titleTrim) {
+            return { ok: false, error: 'URL and title are required.' };
         }
-        var urlRaw = els.urlIn.value.trim();
-        var titleRaw = els.titleIn.value.trim();
-        if (!urlRaw || !titleRaw) {
-            return;
-        }
-        var pathPrefix = parseLeftToPathPrefix(urlRaw);
+        var pathPrefix = parseLeftToPathPrefix(urlTrim);
         if (pathPrefix === null) {
-            alert('URL must be for this site (' + window.location.hostname + ') or a path like /alerts');
-            return;
+            return { ok: false, error: 'URL must be for this site (' + window.location.hostname + ') or a path like /alerts' };
         }
         var entry = {
             pathPrefix: pathPrefix,
-            title: titleRaw,
-            url: urlRaw
+            title: titleTrim,
+            url: urlTrim
         };
         var rules = loadStoredRules();
         if (editingIndex >= 0 && editingIndex < rules.length) {
@@ -523,6 +527,141 @@
         resetForm();
         renderRuleList();
         applyTitle();
+        return { ok: true };
+    }
+
+    function saveRuleFromForm() {
+        var els = getPanelEls();
+        if (!els) {
+            return;
+        }
+        var r = upsertStoredRule(els.urlIn.value, els.titleIn.value);
+        if (!r.ok) {
+            alert(r.error);
+        }
+    }
+
+    function openPanelWithPrefill(urlStr, titleHint) {
+        ensureRulePanelHost();
+        var els = getPanelEls();
+        if (!els) {
+            return;
+        }
+        els.urlIn.value = urlStr || '';
+        els.titleIn.value = titleHint || '';
+        els.addBtn.textContent = 'Save rule';
+        if (els.cancelBtn) {
+            els.cancelBtn.style.display = 'none';
+        }
+        editingIndex = -1;
+        var p = document.getElementById(PANEL_ID);
+        if (p) {
+            p.classList.add('dc-ptt-open');
+        }
+        renderRuleList();
+        els.titleIn.focus();
+        els.titleIn.select();
+    }
+
+    function hideContextMenu() {
+        var m = document.getElementById(CTX_MENU_ID);
+        if (m && m.parentNode) {
+            m.parentNode.removeChild(m);
+        }
+    }
+
+    function showContextMenuAt(pageX, pageY, urlForRule, urlLabel) {
+        hideContextMenu();
+        var menu = document.createElement('div');
+        menu.id = CTX_MENU_ID;
+        menu.className = 'dc-ptt-ctx-open';
+
+        var head = document.createElement('div');
+        head.className = 'dc-ptt-ctx-h';
+        head.textContent = urlLabel || urlForRule;
+        menu.appendChild(head);
+
+        var b1 = document.createElement('button');
+        b1.type = 'button';
+        b1.textContent = 'Set tab title for this URL…';
+        b1.addEventListener('click', function(ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            hideContextMenu();
+            openPanelWithPrefill(urlForRule, '');
+        });
+        menu.appendChild(b1);
+
+        document.documentElement.appendChild(menu);
+
+        var vw = window.innerWidth;
+        var vh = window.innerHeight;
+        var mw = menu.offsetWidth;
+        var mh = menu.offsetHeight;
+        var x = pageX;
+        var y = pageY;
+        if (x + mw > vw - 8) {
+            x = Math.max(8, vw - mw - 8);
+        }
+        if (y + mh > vh - 8) {
+            y = Math.max(8, y - mh);
+        }
+        menu.style.left = x + 'px';
+        menu.style.top = y + 'px';
+
+        function dismiss() {
+            hideContextMenu();
+            document.removeEventListener('click', dismiss, true);
+            document.removeEventListener('contextmenu', dismiss, true);
+            window.removeEventListener('scroll', dismiss, true);
+            window.removeEventListener('blur', dismiss);
+        }
+        setTimeout(function() {
+            document.addEventListener('click', dismiss, true);
+            document.addEventListener('contextmenu', dismiss, true);
+            window.addEventListener('scroll', dismiss, true);
+            window.addEventListener('blur', dismiss);
+        }, 0);
+    }
+
+    function findLinkUnderPoint(target) {
+        var el = target;
+        var max = 8;
+        while (el && max-- > 0) {
+            if (el.tagName === 'A' && el.href) {
+                return el;
+            }
+            el = el.parentElement;
+        }
+        return null;
+    }
+
+    function onContextMenuCapture(e) {
+        if (!getPref('pathTabTitleContextMenu', true)) {
+            return;
+        }
+        ensureRulePanelHost();
+        var link = findLinkUnderPoint(e.target);
+        if (link) {
+            try {
+                var u = new URL(link.href);
+                if (u.hostname !== window.location.hostname) {
+                    return;
+                }
+            } catch (err) {
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            showContextMenuAt(e.clientX, e.clientY, link.href, link.href);
+            return;
+        }
+        if (e.altKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            var loc = window.location;
+            showContextMenuAt(e.clientX, e.clientY, loc.href, 'This page');
+        }
     }
 
     function togglePanel() {
@@ -533,10 +672,7 @@
         p.classList.toggle('dc-ptt-open');
     }
 
-    function ensureManagerUi() {
-        if (!getPref('pathTabTitleShowManager', true)) {
-            return;
-        }
+    function ensureRulePanelHost() {
         if (document.getElementById(HOST_ID)) {
             return;
         }
@@ -605,7 +741,7 @@
         btns.appendChild(impBtn);
         var hint = document.createElement('div');
         hint.className = 'dc-ptt-hint';
-        hint.textContent = 'Rules match by URL path (longest match wins). Optional prefs in DonkeyCODE still apply; this list overrides the same path.';
+        hint.innerHTML = 'Rules match by URL path (longest match wins). <strong>Right-click</strong> a same-site link to set its tab title, or <strong>Alt+right-click</strong> the page for the current URL. Browser tab bar menus require the extension.';
 
         form.appendChild(l1);
         form.appendChild(inUrl);
@@ -615,22 +751,29 @@
         form.appendChild(hint);
         panel.appendChild(form);
 
-        var fab = document.createElement('button');
-        fab.id = BTN_ID;
-        fab.type = 'button';
-        fab.textContent = 'Tab titles';
-        fab.addEventListener('click', function(e) {
-            e.preventDefault();
-            togglePanel();
-            if (document.getElementById(PANEL_ID).classList.contains('dc-ptt-open')) {
-                renderRuleList();
-            }
-        });
-
         host.appendChild(panel);
-        host.appendChild(fab);
+
+        if (getPref('pathTabTitleShowManager', true)) {
+            var fab = document.createElement('button');
+            fab.id = BTN_ID;
+            fab.type = 'button';
+            fab.textContent = 'Tab titles';
+            fab.addEventListener('click', function(e) {
+                e.preventDefault();
+                togglePanel();
+                if (document.getElementById(PANEL_ID).classList.contains('dc-ptt-open')) {
+                    renderRuleList();
+                }
+            });
+            host.appendChild(fab);
+        }
+
         document.documentElement.appendChild(host);
         renderRuleList();
+    }
+
+    function ensureManagerUi() {
+        ensureRulePanelHost();
     }
 
     bodyMo = new MutationObserver(function() {
@@ -645,6 +788,9 @@
     lastNavKey = navKey();
     applyTitle();
     ensureManagerUi();
+
+    onDocumentContextMenu = onContextMenuCapture;
+    document.addEventListener('contextmenu', onDocumentContextMenu, true);
 
     onPopState = function() {
         onNavMaybe();
@@ -673,6 +819,11 @@
             window.removeEventListener('hashchange', onHashChange);
             onHashChange = null;
         }
+        if (onDocumentContextMenu) {
+            document.removeEventListener('contextmenu', onDocumentContextMenu, true);
+            onDocumentContextMenu = null;
+        }
+        hideContextMenu();
         if (bodyMo) {
             bodyMo.disconnect();
             bodyMo = null;
