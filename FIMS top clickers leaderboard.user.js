@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.3.1
+// @version      1.3.2
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersMaxNames":{"type":"number","group":"Leaderboard","label":"Max names shown","description":"0 = show everyone with a count. Set a positive number only if you want to cap a very long list.","default":0,"min":0,"max":500,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
@@ -320,11 +320,13 @@
             'padding:0;',
             'display:flex;',
             'flex-direction:column;',
-            'gap:4px;',
+            'gap:0;',
             'max-height:calc(70vh - 120px);',
             'overflow:auto;',
+            '-webkit-overflow-scrolling:touch;',
             '}',
             '#' + PANEL_ID + ' .dc-fims-tc-row{',
+            'position:relative;',
             'display:flex;',
             'align-items:center;',
             'gap:8px;',
@@ -332,12 +334,28 @@
             'border-radius:7px;',
             'background:rgba(255,255,255,.06);',
             'border:1px solid rgba(255,255,255,.08);',
-            'transition:background .12s ease,border-color .12s ease,box-shadow .12s ease;',
+            'box-sizing:border-box;',
             '}',
-            '#' + PANEL_ID + ' .dc-fims-tc-row:hover{',
-            'background:rgba(255,255,255,.1);',
-            'border-color:rgba(255,255,255,.16);',
-            'box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);',
+            '#' + PANEL_ID + ' .dc-fims-tc-row:not(:last-child){',
+            'margin-bottom:4px;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-row::before{',
+            'content:"";',
+            'position:absolute;',
+            'inset:0;',
+            'border-radius:6px;',
+            'background:rgba(255,255,255,0);',
+            'pointer-events:none;',
+            'transition:background .14s ease;',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-row:hover::before{',
+            'background:rgba(255,255,255,.09);',
+            '}',
+            '#' + PANEL_ID + ' .dc-fims-tc-rank,',
+            '#' + PANEL_ID + ' .dc-fims-tc-name,',
+            '#' + PANEL_ID + ' .dc-fims-tc-count{',
+            'position:relative;',
+            'z-index:1;',
             '}',
             '#' + PANEL_ID + ' .dc-fims-tc-row--1{',
             'background:linear-gradient(90deg,rgba(255,215,0,.25),rgba(255,215,0,.08));',
