@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.0.0
+// @version      1.1.0
 // @description  FIMS tab: wall of fame accolades; password to edit; optional JSON sync URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,7 +17,19 @@
     var TABLE_ID = 'fims-id';
     var TAB_ID = 'dc-wof-tab';
     var PANEL_ID = 'dc-wof-panel';
+    var TCP_PANEL_ID = 'dc-fims-top-clickers-panel';
     var STYLE_ID = 'dc-wof-style';
+
+    function hideTopClickersPanel() {
+        var tcp = document.getElementById(TCP_PANEL_ID);
+        if (tcp) {
+            tcp.style.display = 'none';
+        }
+        var tcTab = document.getElementById('dc-fims-top-clickers-host');
+        if (tcTab) {
+            tcTab.classList.remove('active');
+        }
+    }
 
     var LS_KEY = 'donkeycode.sodWallOfFame.v1';
     var SESSION_KEY = 'dc_wof_unlocked';
@@ -225,13 +237,15 @@
             return;
         }
         var css = [
-            '#' + PANEL_ID + '{display:none;padding:0;background:linear-gradient(160deg,#1a1025 0%,#2d1f4a 50%,#1e3a5f 100%);',
-            'border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.35);overflow:hidden;max-height:70vh;}',
-            '#' + PANEL_ID + ' .dc-wof-inner{padding:16px 18px;color:#f0e8ff;font-family:system-ui,-apple-system,sans-serif;}',
+            '#' + PANEL_ID + '{display:none;padding:0;width:100%;box-sizing:border-box;min-height:min(75vh,900px);',
+            'background:linear-gradient(160deg,#1a1025 0%,#2d1f4a 50%,#1e3a5f 100%);',
+            'border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.35);overflow:hidden;max-height:85vh;}',
+            '#' + PANEL_ID + ' .dc-wof-inner{padding:16px 18px;color:#f0e8ff;font-family:system-ui,-apple-system,sans-serif;',
+            'width:100%;max-width:none;box-sizing:border-box;}',
             '#' + PANEL_ID + ' .dc-wof-h{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.15);}',
             '#' + PANEL_ID + ' .dc-wof-title{font-weight:800;font-size:1.2rem;background:linear-gradient(90deg,#ffd700,#ff8c00,#da70d6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}',
             '#' + PANEL_ID + ' .dc-wof-sub{font-size:.75rem;opacity:.75;margin-top:4px;color:#c8b8e0;}',
-            '#' + PANEL_ID + ' .dc-wof-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;max-height:calc(70vh - 200px);overflow:auto;padding:2px;}',
+            '#' + PANEL_ID + ' .dc-wof-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;max-height:calc(85vh - 200px);overflow:auto;padding:2px;}',
             '#' + PANEL_ID + ' .dc-wof-card{background:rgba(255,255,255,.08);border:1px solid rgba(255,215,0,.25);border-radius:10px;padding:12px;',
             'min-height:100px;display:flex;flex-direction:column;}',
             '#' + PANEL_ID + ' .dc-wof-card-t{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;opacity:.85;color:#e8d4ff;margin-bottom:6px;}',
@@ -536,15 +550,12 @@
         }
         var table = document.getElementById(TABLE_ID);
         var panel = document.getElementById(PANEL_ID);
-        var tcp = document.getElementById('dc-fims-top-clickers-panel');
+        hideTopClickersPanel();
         if (table) {
             table.style.display = '';
         }
         if (panel) {
             panel.style.display = 'none';
-        }
-        if (tcp) {
-            tcp.style.display = 'none';
         }
     }
 
@@ -570,11 +581,8 @@
         } else if (segments.length === 1) {
             segments[0].classList.add('active');
         }
+        hideTopClickersPanel();
         table.style.display = 'none';
-        var tcp = document.getElementById('dc-fims-top-clickers-panel');
-        if (tcp) {
-            tcp.style.display = 'none';
-        }
         panel.style.display = 'block';
         render(panel);
     }
@@ -597,18 +605,13 @@
             if (link.id === TAB_ID) {
                 continue;
             }
+            if (link.id === 'dc-fims-top-clickers-host') {
+                continue;
+            }
             var txt = (link.textContent || '').replace(/\s+/g, ' ');
             if (txt.indexOf('FIMS') !== -1 || txt.indexOf('Advisories') !== -1) {
                 link.addEventListener('click', showFimsTable);
             }
-        }
-    }
-
-    function wireTopClickersTabWhenPresent() {
-        var tcTab = document.getElementById('dc-fims-top-clickers-host');
-        if (tcTab && !tcTab.dataset.dcWofWiredTc) {
-            tcTab.dataset.dcWofWiredTc = '1';
-            tcTab.addEventListener('click', showFimsTable);
         }
     }
 
@@ -686,7 +689,6 @@
             return null;
         }
         wireTabs(found.menu);
-        wireTopClickersTabWhenPresent();
         var a = document.createElement('a');
         a.id = TAB_ID;
         a.className = 'item';
@@ -707,7 +709,6 @@
         var t = document.getElementById(TABLE_ID);
         if (t) {
             ensureUi();
-            wireTopClickersTabWhenPresent();
         }
     }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.3.4
+// @version      1.3.5
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersMaxNames":{"type":"number","group":"Leaderboard","label":"Max names shown","description":"0 = show everyone with a count. Set a positive number only if you want to cap a very long list.","default":0,"min":0,"max":500,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
@@ -15,7 +15,19 @@
     var TABLE_ID = 'fims-id';
     var TAB_ID = 'dc-fims-top-clickers-host';
     var PANEL_ID = 'dc-fims-top-clickers-panel';
+    var WOF_PANEL_ID = 'dc-wof-panel';
     var STYLE_ID = 'dc-fims-top-clickers-style';
+
+    function hideWallOfFamePanel() {
+        var wof = document.getElementById(WOF_PANEL_ID);
+        if (wof) {
+            wof.style.display = 'none';
+        }
+        var wofTab = document.getElementById('dc-wof-tab');
+        if (wofTab) {
+            wofTab.classList.remove('active');
+        }
+    }
 
     var EXT_LINE_RE = /\/\s*EXT\s+\d{3}-\d{3}-\d{4}/;
     var NAME_WORD_RE = /^[A-Za-z][A-Za-z'\-\.]*$/;
@@ -271,16 +283,21 @@
             '#' + PANEL_ID + '.dc-fims-tc-wrap{',
             'display:none;',
             'padding:0;',
+            'width:100%;',
+            'box-sizing:border-box;',
+            'min-height:min(75vh,900px);',
             'background:linear-gradient(145deg,#1a1a2e 0%,#16213e 45%,#0f3460 100%);',
             'border-radius:12px;',
             'box-shadow:0 8px 32px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);',
             'overflow:hidden;',
-            'max-height:70vh;',
+            'max-height:85vh;',
             '}',
             '#' + PANEL_ID + ' .dc-fims-tc-inner{',
             'padding:12px 14px 14px;',
-            'max-width:min(100%,480px);',
-            'margin:0 auto;',
+            'width:100%;',
+            'max-width:none;',
+            'margin:0;',
+            'box-sizing:border-box;',
             'color:#e8e8ef;',
             'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;',
             '}',
@@ -321,7 +338,7 @@
             'display:flex;',
             'flex-direction:column;',
             'gap:0;',
-            'max-height:calc(70vh - 120px);',
+            'max-height:calc(85vh - 120px);',
             'overflow:auto;',
             '-webkit-overflow-scrolling:touch;',
             '}',
@@ -566,6 +583,7 @@
         if (panel) {
             panel.style.display = 'none';
         }
+        hideWallOfFamePanel();
     }
 
     function showLeaderboardInFimsArea() {
@@ -592,6 +610,7 @@
             segments[0].classList.add('active');
         }
 
+        hideWallOfFamePanel();
         table.style.display = 'none';
         panel.style.display = 'block';
         render(panel);
@@ -610,6 +629,7 @@
         if (panel) {
             panel.style.display = 'none';
         }
+        hideWallOfFamePanel();
     }
 
     function wireSiblingTabs(menu) {
@@ -622,6 +642,9 @@
         for (j = 0; j < links.length; j++) {
             var link = links[j];
             if (link.id === TAB_ID) {
+                continue;
+            }
+            if (link.id === 'dc-wof-tab') {
                 continue;
             }
             var txt = (link.textContent || '').replace(/\s+/g, ' ');
