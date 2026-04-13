@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         URL path tab titles
 // @namespace    Wolf 2.0
-// @version      1.1.0
-// @description  Rename the browser tab from URL path; one rule per line in prefs (emojis OK)
+// @version      1.2.0
+// @description  Rename the browser tab from URL path; URLs and titles in separate pref fields (emojis OK)
 // @match        https://opssuitemain.swacorp.com/*
-// @donkeycode-pref {"pathTabTitleRules":{"type":"string","group":"Tab titles","label":"URL or path → tab title","description":"One rule per line: path or full URL, then | , then the tab title. Example: /widgets/worksheet | 📋 Worksheet  Lines starting with # are ignored. Longest matching path wins. In the title you can use {pathname} {search} {hash} {host}. You can paste a full link: https://opssuitemain.swacorp.com/schedule | 📅","default":"","placeholder":"/widgets/worksheet | 📋 Worksheet"}}
+// @donkeycode-pref {"pathTabTitleUrls":{"type":"string","group":"Tab titles","label":"URLs or paths","description":"One per line; same order as Tab titles below. Full URL (https://…) or path like /alerts. Lines starting with # are ignored. Host must match this page.","default":"","placeholder":"https://opssuitemain.swacorp.com/alerts"},"pathTabTitleTitles":{"type":"string","group":"Tab titles","label":"Tab titles","description":"One per line: tab name for the URL on the same line (line 1 with line 1, etc.). Emojis OK. Placeholders: {pathname} {search} {hash} {host}","default":"","placeholder":"🚨 Alerts"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/URL%20path%20tab%20titles.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/URL%20path%20tab%20titles.user.js
 // ==/UserScript==
@@ -64,6 +64,36 @@
         return normalizePrefix(s);
     }
 
+    function splitPrefLines(text) {
+        return String(text || '').split(/\r?\n/);
+    }
+
+    function parseRulesFromPairedFields() {
+        var urlLines = splitPrefLines(getPref('pathTabTitleUrls', ''));
+        var titleLines = splitPrefLines(getPref('pathTabTitleTitles', ''));
+        var max = Math.max(urlLines.length, titleLines.length);
+        var rules = [];
+        var i;
+        for (i = 0; i < max; i++) {
+            var uRaw = (urlLines[i] !== undefined) ? urlLines[i] : '';
+            var tRaw = (titleLines[i] !== undefined) ? titleLines[i] : '';
+            var u = uRaw.trim();
+            var t = tRaw.trim();
+            if (!u || u[0] === '#') {
+                continue;
+            }
+            if (!t || t[0] === '#') {
+                continue;
+            }
+            var pathPrefix = parseLeftToPathPrefix(u);
+            if (pathPrefix === null) {
+                continue;
+            }
+            rules.push({ pathPrefix: pathPrefix, title: t });
+        }
+        return rules;
+    }
+
     function parseRulesFromLines(text) {
         var rules = [];
         var raw = String(text || '');
@@ -104,7 +134,7 @@
         });
     }
 
-    function parseRules() {
+    function parseRulesLegacy() {
         var raw = getPref('pathTabTitleRules', '');
         if (raw !== null && raw !== undefined && typeof raw !== 'string') {
             raw = String(raw);
@@ -121,6 +151,14 @@
             }
         }
         return parseRulesFromLines(s);
+    }
+
+    function parseRules() {
+        var paired = parseRulesFromPairedFields();
+        if (paired.length > 0) {
+            return paired;
+        }
+        return parseRulesLegacy();
     }
 
     function pathMatches(pathname, prefixNorm) {
