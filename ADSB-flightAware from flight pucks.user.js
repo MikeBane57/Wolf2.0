@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ADSB/flightAware from flight pucks
 // @namespace    Wolf 2.0
-// @version      1.9
+// @version      2.0
 // @description  Double-click dep/arr or flight: airport + flight URLs from prefs (ADSB / FR24 / FlightAware)
 // @match        https://opssuitemain.swacorp.com/*
-// @donkeycode-pref {"flightTrackerProvider":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Open flight in","description":"Southwest flight number from the puck. Flightradar24 uses /data/flights/wn{n} (IATA airline code WN + number).","default":"flightaware","options":[{"value":"flightaware","label":"FlightAware"},{"value":"flightradar24","label":"Flightradar24"}]}}
+// @donkeycode-pref {"flightTrackerProvider":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Open flight in","description":"Southwest flight number from the puck.","default":"flightaware","options":[{"value":"flightaware","label":"FlightAware"},{"value":"flightradar24","label":"Flightradar24"}]},"fr24FlightView":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Flightradar24: open as","description":"Only when Flightradar24 is selected. Live map uses flightradar24.com/SWA{n} (tracker map). Data table is /data/flights/wn{n} (schedules/history, not the main map).","default":"live_map","options":[{"value":"live_map","label":"Live map (SWA + flight)"},{"value":"data_table","label":"Data / history table (WN only)"}]}}
 // @donkeycode-pref {"airportMapProvider":{"type":"select","group":"Airport map (double-click dep/arr code)","label":"Open airport in","description":"IATA code from the puck. ADSB Exchange globe or Flightradar24 airport page.","default":"adsb","options":[{"value":"adsb","label":"ADSB Exchange globe"},{"value":"flightradar24","label":"Flightradar24 airport"}]},"fr24AirportZoom":{"type":"number","group":"Airport map (double-click dep/arr code)","label":"Flightradar24 map zoom (z)","description":"Only when Flightradar24 airport is selected. Added as ?z= on the airport URL.","default":15,"min":2,"max":21,"step":1}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
@@ -62,10 +62,15 @@
         var provider = String(getPref('flightTrackerProvider', 'flightaware')).toLowerCase();
         var url;
         if (provider === 'flightradar24' || provider === 'fr24') {
-            // Southwest = IATA WN; FR24 flight list URL (not /SWA{n}, which often fails to resolve).
             var fn = String(flightNum || '').replace(/\D/g, '');
             if (!fn) return;
-            url = `https://www.flightradar24.com/data/flights/wn${fn}`;
+            var frView = String(getPref('fr24FlightView', 'live_map')).toLowerCase();
+            if (frView === 'data_table' || frView === 'data' || frView === 'table') {
+                url = `https://www.flightradar24.com/data/flights/wn${fn}`;
+            } else {
+                // Live tracker + map (callsign-style path; not the /data/flights table).
+                url = `https://www.flightradar24.com/SWA${fn}`;
+            }
         } else {
             const callsign = `SWA${flightNum}`;
             url = `https://www.flightaware.com/live/flight/${callsign}`;
