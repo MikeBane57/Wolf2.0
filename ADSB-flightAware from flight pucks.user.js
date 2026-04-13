@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ADSB/flightAware from flight pucks
 // @namespace    Wolf 2.0
-// @version      1.8
+// @version      1.9
 // @description  Double-click dep/arr or flight: airport + flight URLs from prefs (ADSB / FR24 / FlightAware)
 // @match        https://opssuitemain.swacorp.com/*
-// @donkeycode-pref {"flightTrackerProvider":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Open flight in","description":"Southwest flight number from the puck. Flightradar24: https://www.flightradar24.com/SWA{n} only (no /lat,lon/zoom).","default":"flightaware","options":[{"value":"flightaware","label":"FlightAware"},{"value":"flightradar24","label":"Flightradar24"}]}}
-// @donkeycode-pref {"airportMapProvider":{"type":"select","group":"Airport map (double-click dep/arr code)","label":"Open airport in","description":"IATA code from the puck. ADSB Exchange globe or Flightradar24 airport page (e.g. /airport/den).","default":"adsb","options":[{"value":"adsb","label":"ADSB Exchange globe"},{"value":"flightradar24","label":"Flightradar24 airport"}]}}
+// @donkeycode-pref {"flightTrackerProvider":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Open flight in","description":"Southwest flight number from the puck. Flightradar24 uses /data/flights/wn{n} (IATA airline code WN + number).","default":"flightaware","options":[{"value":"flightaware","label":"FlightAware"},{"value":"flightradar24","label":"Flightradar24"}]}}
+// @donkeycode-pref {"airportMapProvider":{"type":"select","group":"Airport map (double-click dep/arr code)","label":"Open airport in","description":"IATA code from the puck. ADSB Exchange globe or Flightradar24 airport page.","default":"adsb","options":[{"value":"adsb","label":"ADSB Exchange globe"},{"value":"flightradar24","label":"Flightradar24 airport"}]},"fr24AirportZoom":{"type":"number","group":"Airport map (double-click dep/arr code)","label":"Flightradar24 map zoom (z)","description":"Only when Flightradar24 airport is selected. Added as ?z= on the airport URL.","default":15,"min":2,"max":21,"step":1}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
 // ==/UserScript==
@@ -24,6 +24,10 @@
         return v;
     }
 
+    function clamp(n, lo, hi) {
+        return Math.min(hi, Math.max(lo, n));
+    }
+
     const DOUBLE_MS = 350;
     let lastAction = null;
     let lastTime = 0;
@@ -39,7 +43,10 @@
         var airportProv = String(getPref('airportMapProvider', 'adsb')).toLowerCase();
         var url;
         if (airportProv === 'flightradar24' || airportProv === 'fr24') {
-            url = `https://www.flightradar24.com/airport/${iata.toLowerCase()}`;
+            var z = Number(getPref('fr24AirportZoom', 15));
+            if (!Number.isFinite(z)) z = 15;
+            z = Math.round(clamp(z, 2, 21));
+            url = `https://www.flightradar24.com/airport/${iata.toLowerCase()}?z=${z}`;
         } else {
             url = `https://globe.adsbexchange.com/?airport=${encodeURIComponent(iata)}&zoom=15&labels=1`;
         }
@@ -55,9 +62,10 @@
         var provider = String(getPref('flightTrackerProvider', 'flightaware')).toLowerCase();
         var url;
         if (provider === 'flightradar24' || provider === 'fr24') {
-            // Single-segment flight URL only. FR24’s SPA drops the flight id if we append
-            // /lat,lon/zoom (user ends up on e.g. /32.78,-96.80/8 with “no flight info”).
-            url = `https://www.flightradar24.com/SWA${flightNum}`;
+            // Southwest = IATA WN; FR24 flight list URL (not /SWA{n}, which often fails to resolve).
+            var fn = String(flightNum || '').replace(/\D/g, '');
+            if (!fn) return;
+            url = `https://www.flightradar24.com/data/flights/wn${fn}`;
         } else {
             const callsign = `SWA${flightNum}`;
             url = `https://www.flightaware.com/live/flight/${callsign}`;
