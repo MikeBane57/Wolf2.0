@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         ADSB/flightAware from flight pucks
 // @namespace    Wolf 2.0
-// @version      1.7
-// @description  Double-click dep/arr or flight: ADSB globe; flight opens FlightAware or Flightradar24 (Pref)
+// @version      1.8
+// @description  Double-click dep/arr or flight: airport + flight URLs from prefs (ADSB / FR24 / FlightAware)
 // @match        https://opssuitemain.swacorp.com/*
-// @donkeycode-pref {"flightTrackerProvider":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Open flight in","description":"Southwest flight number from the puck. Flightradar24: opens https://www.flightradar24.com/SWA{n} only — do not append /lat,lon/zoom; FR24’s site strips the flight and leaves a bare map. Zoom the map after load if needed.","default":"flightaware","options":[{"value":"flightaware","label":"FlightAware"},{"value":"flightradar24","label":"Flightradar24"}]}}
+// @donkeycode-pref {"flightTrackerProvider":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Open flight in","description":"Southwest flight number from the puck. Flightradar24: https://www.flightradar24.com/SWA{n} only (no /lat,lon/zoom).","default":"flightaware","options":[{"value":"flightaware","label":"FlightAware"},{"value":"flightradar24","label":"Flightradar24"}]}}
+// @donkeycode-pref {"airportMapProvider":{"type":"select","group":"Airport map (double-click dep/arr code)","label":"Open airport in","description":"IATA code from the puck. ADSB Exchange globe or Flightradar24 airport page (e.g. /airport/den).","default":"adsb","options":[{"value":"adsb","label":"ADSB Exchange globe"},{"value":"flightradar24","label":"Flightradar24 airport"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
 // ==/UserScript==
@@ -30,7 +31,18 @@
     // ---------- Launchers ----------
 
     function launchAirport(code) {
-        const url = `https://globe.adsbexchange.com/?airport=${code}&zoom=15&labels=1`;
+        var raw = String(code || '').trim();
+        var iata = raw.toUpperCase().replace(/[^A-Z]/g, '');
+        if (iata.length !== 3) {
+            iata = raw.slice(0, 3).toUpperCase();
+        }
+        var airportProv = String(getPref('airportMapProvider', 'adsb')).toLowerCase();
+        var url;
+        if (airportProv === 'flightradar24' || airportProv === 'fr24') {
+            url = `https://www.flightradar24.com/airport/${iata.toLowerCase()}`;
+        } else {
+            url = `https://globe.adsbexchange.com/?airport=${encodeURIComponent(iata)}&zoom=15&labels=1`;
+        }
 
         window.open(
             url,
