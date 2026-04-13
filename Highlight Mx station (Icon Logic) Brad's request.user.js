@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Highlight Mx station (Icon Logic) Brad's request
 // @namespace    Wolf 2.0
-// @version      1.4
+// @version      1.5
 // @description  Color matches icon unless gray, otherwise default match color
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -97,4 +97,11 @@
         characterData: true,
     });
 
+    window.__myScriptCleanup = function() {
+        observer.disconnect();
+        document.querySelectorAll(textSelector).forEach(function(el) {
+            el.style.fontWeight = '';
+            el.style.color = '';
+        });
+    };
 })();

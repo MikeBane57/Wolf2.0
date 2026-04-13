@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Date/Time Colors
 // @namespace    Wolf 2.0
-// @version      1.0
+// @version      1.2
 // @description  Color date/time cells based on day relative to today with 3AM cutover
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -103,4 +103,22 @@
 
     observer.observe(document.body, { childList: true, subtree: true });
 
+    function resetStyledNodesInColumn(col) {
+        col.childNodes.forEach(function(child) {
+            if (child.nodeType !== 1) return;
+            const text = child.textContent.trim();
+            if (dateRegex.test(text) || /^\d{1,2}:\d{2}$/.test(text)) {
+                child.style.color = '';
+                child.style.fontWeight = '';
+            }
+        });
+    }
+
+    window.__myScriptCleanup = function() {
+        observer.disconnect();
+        document.querySelectorAll('[data-tm-processed]').forEach(function(col) {
+            resetStyledNodesInColumn(col);
+            delete col.dataset.tmProcessed;
+        });
+    };
 })();

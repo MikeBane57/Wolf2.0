@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         SW Airport METAR/TAF Tooltip (Advanced FRACTIONS-PLUS HARDCODE APT)
 // @namespace    Wolf 2.0
-// @version      7.1
-// @description  METAR/TAF tooltip with per-token coloring, advanced alerts (crosswind, LLWS, icing, thunderstorm), React-friendly tooltip with logging
+// @version      7.3
+// @description  METAR/TAF tooltip with per-token coloring, advanced alerts, prefs for display and alerts
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
+// @donkeycode-pref {"metarCacheMinutes":{"type":"number","group":"METAR tooltip","label":"Cache (minutes)","description":"How long to reuse fetched METAR/TAF before refreshing.","default":5,"min":1,"max":120,"step":1},"metarDebug":{"type":"boolean","group":"METAR tooltip","label":"Debug logging","description":"Log to the browser console when enabled.","default":false},"metarTooltipOffsetX":{"type":"number","group":"METAR tooltip","label":"Tooltip offset X (px)","description":"Added to click position (positive = right).","default":12,"min":-500,"max":500,"step":1},"metarTooltipOffsetY":{"type":"number","group":"METAR tooltip","label":"Tooltip offset Y (px)","description":"Added to click position (positive = down).","default":12,"min":-500,"max":500,"step":1},"metarTooltipDisplayMs":{"type":"number","group":"METAR tooltip","label":"Auto-hide after (ms)","description":"0 = stay open until you click elsewhere.","default":0,"min":0,"max":300000,"step":1000},"metarUseCustomAirportAlerts":{"type":"boolean","group":"METAR alerts","label":"Use custom airport thresholds","description":"Airport-specific rules in the script (e.g. BUR ceilings/gusts). Turn off to ignore those.","default":true},"metarHighlightIFR":{"type":"boolean","group":"METAR highlights","label":"Highlight IFR (ceiling/vis)","default":true},"metarHighlightMVFR":{"type":"boolean","group":"METAR highlights","label":"Highlight MVFR","default":true},"metarHighlightCustom":{"type":"boolean","group":"METAR highlights","label":"Highlight custom threshold hits","description":"When custom airport alerts fire.","default":true},"metarHighlightCrosswind":{"type":"boolean","group":"METAR highlights","label":"Highlight crosswind","default":true},"metarHighlightLLWS":{"type":"boolean","group":"METAR highlights","label":"Highlight LLWS / WS","default":true},"metarHighlightIcing":{"type":"boolean","group":"METAR highlights","label":"Highlight icing","default":true},"metarHighlightTS":{"type":"boolean","group":"METAR highlights","label":"Highlight thunderstorms","default":true}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SW%20Airport%20METAR-TAF%20Tooltip%20(Advanced%20FRACTIONS-PLUS%20HARDCODE%20APT).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SW%20Airport%20METAR-TAF%20Tooltip%20(Advanced%20FRACTIONS-PLUS%20HARDCODE%20APT).user.js
 // ==/UserScript==
@@ -13,8 +14,71 @@
 (function() {
 "use strict";
 
+function getPref(key, def) {
+    if (typeof donkeycodeGetPref !== 'function') {
+        return def;
+    }
+    var v = donkeycodeGetPref(key);
+    if (v === undefined || v === null || v === '') {
+        return def;
+    }
+    return v;
+}
+
+function numPref(key, def, min, max) {
+    var n = Number(getPref(key, def));
+    if (!Number.isFinite(n)) {
+        return def;
+    }
+    return Math.min(max, Math.max(min, n));
+}
+
+function boolPref(key, def) {
+    var v = getPref(key, def);
+    if (v === true || v === false) {
+        return v;
+    }
+    if (v === 'true' || v === '1') {
+        return true;
+    }
+    if (v === 'false' || v === '0') {
+        return false;
+    }
+    return def;
+}
+
+function getCacheMs() {
+    return numPref('metarCacheMinutes', 5, 1, 120) * 60 * 1000;
+}
+
+function logDebug() {
+    if (!boolPref('metarDebug', false)) {
+        return;
+    }
+    console.log.apply(console, arguments);
+}
+
+function allowHighlight(cls) {
+    if (!cls) {
+        return null;
+    }
+    var map = {
+        ifr: 'metarHighlightIFR',
+        mvfr: 'metarHighlightMVFR',
+        custom: 'metarHighlightCustom',
+        crosswind: 'metarHighlightCrosswind',
+        llws: 'metarHighlightLLWS',
+        icing: 'metarHighlightIcing',
+        ts: 'metarHighlightTS'
+    };
+    var pk = map[cls];
+    if (!pk) {
+        return cls;
+    }
+    return boolPref(pk, true) ? cls : null;
+}
+
 // ---------------- CONFIG ----------------
-const CACHE_MS = 5*60*1000;
 const cache = {};
 
 const IATA_TO_ICAO = {
@@ -86,20 +150,40 @@ Object.assign(tip.style,{
     display:"none"
 });
 
+var tipHideTimer = null;
+
 function showTip(x, y, html){
+    if (tipHideTimer) {
+        clearTimeout(tipHideTimer);
+        tipHideTimer = null;
+    }
     tip.innerHTML = html;
-    host.style.left = x + "px";
-    host.style.top = y + "px";
+    var ox = x + numPref('metarTooltipOffsetX', 12, -500, 500);
+    var oy = y + numPref('metarTooltipOffsetY', 12, -500, 500);
+    host.style.left = ox + "px";
+    host.style.top = oy + "px";
     tip.style.display = "block";
     tip.offsetHeight; // force repaint
+    var dms = numPref('metarTooltipDisplayMs', 0, 0, 300000);
+    if (dms > 0) {
+        tipHideTimer = setTimeout(function() {
+            tip.style.display = "none";
+            tipHideTimer = null;
+        }, dms);
+    }
 }
 
 // hide on click outside
-window.addEventListener("pointerdown", e=>{
+function onPointerDownHide(e){
     if(!tip.contains(e.target) && tip.style.display==="block"){
+        if (tipHideTimer) {
+            clearTimeout(tipHideTimer);
+            tipHideTimer = null;
+        }
         tip.style.display="none";
     }
-});
+}
+window.addEventListener("pointerdown", onPointerDownHide);
 
 // ---------------- WEATHER FETCH ----------------
 function fetchWeather(iata, cb){
@@ -107,7 +191,8 @@ function fetchWeather(iata, cb){
     if(!icao){ cb({metar:"No ICAO mapping", taf:""}); return; }
 
     const now = Date.now();
-    if(cache[icao] && now-cache[icao].t<CACHE_MS){
+    const cacheMs = getCacheMs();
+    if(cache[icao] && now-cache[icao].t<cacheMs){
         cb(cache[icao]); return;
     }
 
@@ -116,14 +201,14 @@ function fetchWeather(iata, cb){
 
     GM_xmlhttpRequest({method:"GET", url:metarURL, onload:r=>{
         let metar="N/A";
-        try{ metar=r.responseText.split("\n").slice(1).join(" ").trim()||"N/A"; }catch{}
+        try{ metar=r.responseText.split("\n").slice(1).join(" ").trim()||"N/A"; }catch(e){}
         GM_xmlhttpRequest({method:"GET", url:tafURL, onload:r2=>{
             let taf="N/A";
-            try{ taf=r2.responseText.split("\n").slice(1).join("\n").trim()||"N/A"; }catch{}
+            try{ taf=r2.responseText.split("\n").slice(1).join("\n").trim()||"N/A"; }catch(e){}
             const metarHTML=selectiveHighlightMETAR(metar,iata);
             const tafHTML=selectiveHighlightTAF(taf,iata);
             const html=`<b>${iata} (${icao})</b>\n${metarHTML}\n\n${tafHTML}`;
- console.log("Tooltip HTML generated for", iata, ":\n", html);
+            logDebug("Tooltip HTML generated for", iata, ":\n", html);
             const result={metar, taf, html, t:Date.now()};
             cache[icao]=result;
             cb(result);
@@ -191,45 +276,48 @@ function classifyToken(word,iata,fullLine=""){
     // Ceiling
     m=word.match(/^(BKN|OVC)(\d{3})$/);
     if(m){
-        const ceil=parseInt(m[2])*100;
-        if(ceil<1000) return "ifr";
-        if(ceil<=3000) return "mvfr";
-        if(triggerAlert("ceiling",ceil,iata)) return "custom";
+        const ceil=parseInt(m[2],10)*100;
+        if(ceil<1000) return allowHighlight("ifr");
+        if(ceil<=3000) return allowHighlight("mvfr");
+        if(triggerAlert("ceiling",ceil,iata)) return allowHighlight("custom");
         return null;
     }
 
    // -------- Visibility (FULL fractional support) --------
 let vis = parseVisibility(word);
 if(vis !== null){
-    if(vis < 3) return "ifr";
-    if(vis <= 5) return "mvfr";
-    if(triggerAlert("visibility", vis, iata)) return "custom";
+    if(vis < 3) return allowHighlight("ifr");
+    if(vis <= 5) return allowHighlight("mvfr");
+    if(triggerAlert("visibility", vis, iata)) return allowHighlight("custom");
     return null;
 }
 
 
     // Wind gust
     m=word.match(/G(\d{2,3})KT/);
-    if(m && triggerAlert("wind_gust",parseInt(m[1]),iata)) return "custom";
+    if(m && triggerAlert("wind_gust",parseInt(m[1],10),iata)) return allowHighlight("custom");
 
     // Crosswind (approximate)
     if(fullLine.match(/^\d{3}\d{2,3}G?\d{0,2}KT/)){
-        if(triggerAlert("crosswind",0,iata)) return "crosswind";
+        if(triggerAlert("crosswind",0,iata)) return allowHighlight("crosswind");
     }
 
     // LLWS detection
-    if(fullLine.includes("WS") || fullLine.includes("LLWS")) return "llws";
+    if(fullLine.includes("WS") || fullLine.includes("LLWS")) return allowHighlight("llws");
 
     // Icing
-    if(word.match(/FZRA|FZDZ|SN|PL/)) return "icing";
+    if(word.match(/FZRA|FZDZ|SN|PL/)) return allowHighlight("icing");
 
     // Thunderstorm
-    if(word.match(/TS|TSRA|VCTS/)) return "ts";
+    if(word.match(/TS|TSRA|VCTS/)) return allowHighlight("ts");
 
     return null;
 }
 
 function triggerAlert(type,val,iata){
+    if (!boolPref('metarUseCustomAirportAlerts', true)) {
+        return false;
+    }
     const rules=ALERTS[iata.toUpperCase()];
     if(!rules) return false;
     for(const r of rules){
@@ -264,11 +352,10 @@ function detectAirport(x,y){
     const stack=document.elementsFromPoint(x,y);
     for(const el of stack){
         const txt=el.textContent?.trim();
-////////////////////////////////////////////////////        console.log("Clicked element:", el.tagName, el.className, "Text:", txt);
         if(!txt) continue;
         if(el.className.includes("tg9Iiv9oAOo= zbA1EvKL1Bo=") || el.className.includes("tg9Iiv9oAOo= Ziu3-r4LY1M=")){
             if(/^[A-Z]{3}$/.test(txt)){
- console.log("Detected airport code:", txt);
+                logDebug("Detected airport code:", txt);
                 return txt;
             }
         }
@@ -279,17 +366,28 @@ function detectAirport(x,y){
 // ---------------- LISTENER ----------------
 let tooltipLock = false;
 
-window.addEventListener("pointerup", e=>{
+function onPointerUpShow(e){
     if (tooltipLock) return;
     tooltipLock = true;
-    setTimeout(()=>{ tooltipLock=false }, 50); // ignore duplicate events for 50ms
+    setTimeout(function(){ tooltipLock=false; }, 50); // ignore duplicate events for 50ms
 
     const code = detectAirport(e.clientX,e.clientY);
     if(!code) return;
-    fetchWeather(code, data=>{
+    fetchWeather(code, function(data){
         showTip(e.clientX,e.clientY, data.html);
     });
-}, true);
+}
+window.addEventListener("pointerup", onPointerUpShow, true);
+
+window.__myScriptCleanup = function() {
+    if (tipHideTimer) {
+        clearTimeout(tipHideTimer);
+        tipHideTimer = null;
+    }
+    window.removeEventListener("pointerdown", onPointerDownHide);
+    window.removeEventListener("pointerup", onPointerUpShow, true);
+    try { host.remove(); } catch (e) {}
+};
 
 
 })();
