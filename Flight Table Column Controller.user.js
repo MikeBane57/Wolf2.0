@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flight Table Column Controller
 // @namespace    Wolf 2.0
-// @version      1.0
+// @version      1.1
 // @description  Hide columns and adjust spacing for related flights table
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -12,6 +12,8 @@
 
 (function() {
     'use strict';
+
+    var injectedStyles = [];
 
     // -------------------------
     // Settings
@@ -52,6 +54,7 @@
                     }
                 `;
                 document.head.appendChild(style);
+                injectedStyles.push(style);
             } else {
                 // Apply width normally
                 th.style.width = config.width;
@@ -80,4 +83,17 @@
 
     observer.observe(document.body, { childList: true, subtree: true });
 
+    window.__myScriptCleanup = function() {
+        observer.disconnect();
+        injectedStyles.forEach(function(s) {
+            try { s.remove(); } catch (e) {}
+        });
+        injectedStyles.length = 0;
+        document.querySelectorAll('table[data-testid="related-flights-table"] thead th').forEach(function(th) {
+            th.style.width = '';
+        });
+        document.querySelectorAll('table[data-testid="related-flights-table"] tbody tr td').forEach(function(td) {
+            td.style.width = '';
+        });
+    };
 })();

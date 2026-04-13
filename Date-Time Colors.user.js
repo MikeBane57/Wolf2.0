@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Date/Time Colors
 // @namespace    Wolf 2.0
-// @version      1.0
+// @version      1.1
 // @description  Color date/time cells based on day relative to today with 3AM cutover
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -103,4 +103,10 @@
 
     observer.observe(document.body, { childList: true, subtree: true });
 
+    window.__myScriptCleanup = function() {
+        observer.disconnect();
+        document.querySelectorAll('[data-tm-processed]').forEach(function(el) {
+            delete el.dataset.tmProcessed;
+        });
+    };
 })();

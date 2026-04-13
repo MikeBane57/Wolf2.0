@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SW Airport METAR/TAF Tooltip (Advanced FRACTIONS-PLUS HARDCODE APT)
 // @namespace    Wolf 2.0
-// @version      7.1
+// @version      7.2
 // @description  METAR/TAF tooltip with per-token coloring, advanced alerts (crosswind, LLWS, icing, thunderstorm), React-friendly tooltip with logging
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -95,11 +95,12 @@ function showTip(x, y, html){
 }
 
 // hide on click outside
-window.addEventListener("pointerdown", e=>{
+function onPointerDownHide(e){
     if(!tip.contains(e.target) && tip.style.display==="block"){
         tip.style.display="none";
     }
-});
+}
+window.addEventListener("pointerdown", onPointerDownHide);
 
 // ---------------- WEATHER FETCH ----------------
 function fetchWeather(iata, cb){
@@ -279,7 +280,7 @@ function detectAirport(x,y){
 // ---------------- LISTENER ----------------
 let tooltipLock = false;
 
-window.addEventListener("pointerup", e=>{
+function onPointerUpShow(e){
     if (tooltipLock) return;
     tooltipLock = true;
     setTimeout(()=>{ tooltipLock=false }, 50); // ignore duplicate events for 50ms
@@ -289,7 +290,14 @@ window.addEventListener("pointerup", e=>{
     fetchWeather(code, data=>{
         showTip(e.clientX,e.clientY, data.html);
     });
-}, true);
+}
+window.addEventListener("pointerup", onPointerUpShow, true);
+
+window.__myScriptCleanup = function() {
+    window.removeEventListener("pointerdown", onPointerDownHide);
+    window.removeEventListener("pointerup", onPointerUpShow, true);
+    try { host.remove(); } catch (e) {}
+};
 
 
 })();

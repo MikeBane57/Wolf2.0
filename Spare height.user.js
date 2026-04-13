@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Spare height
 // @namespace    Wolf 2.0
-// @version      1.0
+// @version      1.1
 // @description  shrinks the spare gray bar height on spare Aircraft
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -43,4 +43,11 @@
 
     observer.observe(document.body, { childList: true, subtree: true });
 
+    window.__myScriptCleanup = function() {
+        observer.disconnect();
+        document.querySelectorAll('.pfZ-vT1mjJU\\=').forEach(function(el) {
+            el.style.height = '';
+            el.style.opacity = '';
+        });
+    };
 })();

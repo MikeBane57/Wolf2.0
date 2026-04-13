@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Turns W&B Launcher (NoDis + Debug)
 // @namespace    Wolf 2.0
-// @version      3.1
+// @version      3.2
 // @description  Reliable dblclick launcher with smart date extraction + logging
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -12,27 +12,17 @@
 (function () {
     'use strict';
 
-    //----------------------------------------------------
-    // CONFIG
-    //----------------------------------------------------
     const PUCK_SELECTOR =
     '[data-qe-id="as-flight-leg-puck"], [class*="CScizp4RisE="]';
-
 
     const WINDOW_NAME = "turnExecWindow";
 
     let turnWindow = null;
 
-    //----------------------------------------------------
-    // Logging helper
-    //----------------------------------------------------
-    function log(...args){
-     ///////////////   console.log("%c[TURN-LAUNCH]", "color:#00bfff", ...args);
-    }
+    const puckHandlers = new WeakMap();
+    let observer = null;
+    let initTimer = null;
 
-    //----------------------------------------------------
-    // Extract date from puck
-    //----------------------------------------------------
     function extractDate(puck){
 
         const linked = puck.getAttribute("data-linked-hover-id");
@@ -44,24 +34,16 @@
             }
         }
 
-        // fallback
         const fallback = new Date()
             .toISOString()
             .slice(0,10)
             .replace(/-/g,'');
 
-     ////////////////   console.log("Date fallback used:", fallback);
         return fallback;
     }
 
-    //----------------------------------------------------
-    // Parse flight data
-    //----------------------------------------------------
     function findFlightData(puck){
 
-    //----------------------------------------------------
-    // Airports
-    //----------------------------------------------------
     const stationNodes = puck.querySelectorAll('[class*="tg9Iiv9oAOo="]');
 
     const airports = Array.from(stationNodes)
@@ -70,22 +52,16 @@
 
     const depAirport = airports[0] || null;
 
-        //----------------------------------------------------
-        // Flight number (robust across variants)
-        //----------------------------------------------------
         let flight = null;
 
-        // flight wrapper
         const flightWrapper = puck.querySelector('[class*="u8OLVYUVzvY="]');
 
         if(flightWrapper){
-            // Try the inner span first
             const spanFlight = flightWrapper.querySelector("span");
             if(spanFlight && /^\d{1,4}$/.test(spanFlight.textContent.trim())){
                 flight = spanFlight.textContent.trim();
             }
 
-            // If no span, try the tw9pR6Lavy8 div
             if(!flight){
                 const divFlight = flightWrapper.querySelector('[class*="tw9pR6Lavy8="]');
                 if(divFlight && /^\d{1,4}$/.test(divFlight.textContent.trim())){
@@ -94,12 +70,6 @@
             }
         }
 
-      //////// console.log("Flight detected:", flight);
-
-
-    //----------------------------------------------------
-    // Fallback — linked-hover-id
-    //----------------------------------------------------
     if(!flight){
         const linked = puck.getAttribute("data-linked-hover-id");
 
@@ -107,28 +77,14 @@
 
         if(match){
             flight = match[1];
-            source = "linked-hover-id";
         }
     }
 
-    //----------------------------------------------------
-    // Validate flight numeric
-    //----------------------------------------------------
     if(!/^\d+$/.test(flight)){
         flight = null;
     }
 
-    //----------------------------------------------------
-    // Date
-    //----------------------------------------------------
     const date = extractDate(puck);
-
-    //----------------------------------------------------
-    // Logs
-    //----------------------------------------------------
-   //////// console.log("Airports detected:", airports);
-   //////// console.log("Flight detected:", flight);
-
 
     if(!depAirport || !flight){
         return null;
@@ -142,26 +98,16 @@
 }
 
 
-    //----------------------------------------------------
-    // Build URL
-    //----------------------------------------------------
    function buildUrl(data){
 
     const url =
 `https://opssuitemain.swacorp.com/go-turn-exec/${data.date}-${data.depAirport}-${data.flight}-WN-NULL`;
 
-  ///////////////////  console.log("URL formatted:", url);
-
     return url;
 }
 
 
-    //----------------------------------------------------
-    // Window control
-    //----------------------------------------------------
    function openTurnWindow(url){
-
-  ////////////////////  console.log("Attempting window.open with URL:", url);
 
     const features =
         "popup=yes,width=1400,height=900,resizable=yes,scrollbars=yes";
@@ -171,88 +117,62 @@
         if(turnWindow && !turnWindow.closed){
             turnWindow.location.href = url;
             turnWindow.focus();
-     ///////////////////       console.log("Reused existing window");
         } else {
             turnWindow = window.open(url, WINDOW_NAME, features);
-   //////////////////        console.log("New window requested");
-        }
-
-        if(!turnWindow){
-          ////  console.log("⚠ Popup blocked or browser forced tab");
-        } else {
-     /////////////////       console.log("✅ window.open call completed");
         }
 
     } catch(err){
-  /////////////////////      console.log("❌ window.open error:", err);
     }
 }
 
 
 
-    //----------------------------------------------------
-    // Bind puck
-    //----------------------------------------------------
     function bindPuck(puck){
 
         if(puck.dataset.turnBound) return;
         puck.dataset.turnBound="1";
 
-        puck.addEventListener("dblclick", e=>{
+        const onDbl = function(e){
             e.stopPropagation();
-
-      /////////////////////////////////////      console.log("Puck double-click detected:", puck);
 
             const data = findFlightData(puck);
 
             if(!data){
-              /////  console.log("❌ Flight parse failed");
                 return;
             }
 
-      ////////////////////////////////      console.log("Parsed Flight Data:", data);
-
             const url = buildUrl(data);
 
-     ////////////////////////////////       console.log("Generated URL:", url);
-
             openTurnWindow(url);
-        });
+        };
+
+        puckHandlers.set(puck, onDbl);
+        puck.addEventListener("dblclick", onDbl);
     }
 
-    //----------------------------------------------------
-    // Scan
-    //----------------------------------------------------
     function scan(){
         document.querySelectorAll(PUCK_SELECTOR)
             .forEach(bindPuck);
     }
 
-    //----------------------------------------------------
-    // Observe DOM
-    //----------------------------------------------------
-    const observer = new MutationObserver(mutations=>{
-        for(const m of mutations){
-            for(const node of m.addedNodes){
-
-                if(node.nodeType !== 1) continue;
-
-                if(node.matches?.(PUCK_SELECTOR)){
-                    bindPuck(node);
-                }
-
-                node.querySelectorAll?.(PUCK_SELECTOR)
-                    .forEach(bindPuck);
-            }
-        }
-    });
-
-    //----------------------------------------------------
-    // Init
-    //----------------------------------------------------
     function init(){
-        ////////////// console.log("Initializing…");
         scan();
+
+        observer = new MutationObserver(mutations=>{
+            for(const m of mutations){
+                for(const node of m.addedNodes){
+
+                    if(node.nodeType !== 1) continue;
+
+                    if(node.matches?.(PUCK_SELECTOR)){
+                        bindPuck(node);
+                    }
+
+                    node.querySelectorAll?.(PUCK_SELECTOR)
+                        .forEach(bindPuck);
+                }
+            }
+        });
 
         observer.observe(document.body,{
             childList:true,
@@ -260,6 +180,25 @@
         });
     }
 
-    setTimeout(init,1000);
+    initTimer = setTimeout(init,1000);
+
+    window.__myScriptCleanup = function() {
+        if (initTimer) {
+            clearTimeout(initTimer);
+            initTimer = null;
+        }
+        if (observer) {
+            observer.disconnect();
+            observer = null;
+        }
+        document.querySelectorAll('[data-turn-bound]').forEach(function(puck) {
+            const h = puckHandlers.get(puck);
+            if (h) {
+                try { puck.removeEventListener('dblclick', h); } catch (e) {}
+                puckHandlers.delete(puck);
+            }
+            delete puck.dataset.turnBound;
+        });
+    };
 
 })();

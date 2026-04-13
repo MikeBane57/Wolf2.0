@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Highlight OW/ET origin (Dynamic)
 // @namespace    Wolf 2.0
-// @version      1.1
+// @version      1.2
 // @description  Turns line mission type yellow when block contains OW or ET, reacts to dynamic updates
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -66,4 +66,11 @@
         characterData: true // watch text changes
     });
 
+    window.__myScriptCleanup = function() {
+        observer.disconnect();
+        document.querySelectorAll(selector).forEach(function(el) {
+            el.style.color = '';
+            el.style.fontWeight = '';
+        });
+    };
 })();

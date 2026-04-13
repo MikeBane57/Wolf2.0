@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ADSB/flightAware from flight pucks
 // @namespace    Wolf 2.0
-// @version      2.1
+// @version      2.2
 // @description  Double-click dep/arr or flight: airport + flight URLs from prefs (ADSB / FR24 / FlightAware)
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"flightTrackerProvider":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Open flight in","description":"Southwest flight number from the puck.","default":"flightaware","options":[{"value":"flightaware","label":"FlightAware"},{"value":"flightradar24","label":"Flightradar24"}]},"fr24FlightView":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Flightradar24: open as","description":"Only when Flightradar24 is selected. Live map uses flightradar24.com/SWA{n} (tracker map). Data table is /data/flights/wn{n} (schedules/history, not the main map).","default":"live_map","options":[{"value":"live_map","label":"Live map (SWA + flight)"},{"value":"data_table","label":"Data / history table (WN only)"}]}}
@@ -102,7 +102,7 @@
         return null;
     }
 
-    window.addEventListener('pointerdown', (e) => {
+    function onPointerDown(e) {
         const hit = detectClickTarget(e.clientX, e.clientY);
         if (!hit) return;
 
@@ -123,7 +123,11 @@
 
         lastAction = key;
         lastTime = now;
+    }
 
-    }, true);
+    window.addEventListener('pointerdown', onPointerDown, true);
 
+    window.__myScriptCleanup = function() {
+        window.removeEventListener('pointerdown', onPointerDown, true);
+    };
 })();

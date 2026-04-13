@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Schedule Station Tab Title
 // @namespace    Wolf 2.0
-// @version      1.2
+// @version      1.3
 // @description  Reflect schedule station dropdown (3-letter code) in the tab title; ignores ABC
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Schedule%20Station%20Tab%20Title.user.js
@@ -139,8 +139,8 @@
         document.querySelectorAll(`${COMBO}[data-schedule-station-tab-title-wired]`).forEach(el => {
             delete el.dataset.scheduleStationTabTitleWired;
         });
-        const t = document.querySelector('title');
-        if (t) delete t.dataset.scheduleStationTabTitleTitleEl;
+        const titleEl = document.querySelector('title');
+        if (titleEl) delete titleEl.dataset.scheduleStationTabTitleTitleEl;
         document.title = baseTitle();
     };
 })();

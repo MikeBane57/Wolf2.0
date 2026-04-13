@@ -21,6 +21,10 @@
 
     // TODO: implementation
     // Storage: use localStorage / sessionStorage on this origin (no GM_getValue in DonkeyCODE).
-    // Optional teardown: assign function __myScriptCleanup() { ... } on window if needed.
 
+    // DonkeyCODE calls this when the script is toggled off or before re-inject (prefs).
+    // Save listener/observer references so removeEventListener / disconnect work.
+    window.__myScriptCleanup = function() {
+        // TODO: disconnect MutationObservers, clear intervals, removeEventListener with same fn ref, remove injected nodes
+    };
 })();

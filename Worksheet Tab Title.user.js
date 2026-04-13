@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet Tab Title
 // @namespace    Wolf 2.0
-// @version      1.2
+// @version      1.3
 // @description  Tab title → WS n when WorkSheet appears; strip dates and extra text
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20Tab%20Title.user.js
@@ -12,6 +12,7 @@
     'use strict';
 
     const WORKSHEET_RE = /\bWorkSheet\b/i;
+    var baseTitleAtInject = document.title;
     /** Already normalized by this script (WS 12) */
     const WS_NUM_RE = /^\s*WS\s*#?\s*(\d+)\s*$/i;
 
@@ -103,5 +104,8 @@
         }
         const t = document.querySelector('title');
         if (t) delete t.dataset.worksheetTabTitleWired;
+        var cur = document.title;
+        var stripped = cur.replace(/^\s*WS(?:\s*#?\s*\d+)?\s*·?\s*/i, '').trim();
+        document.title = stripped || baseTitleAtInject;
     };
 })();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         (Beta do not use)Flight Tooltip Dynamic Parser
 // @namespace    Wolf 2.0
-// @version      1.1
+// @version      1.2
 // @description  Reformat tool tip pop up
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -196,9 +196,7 @@
     // Initial run
     document.querySelectorAll('div[data-testid="flight-leg-tooltip"]').forEach(rebuildTooltip);
 
+    window.__myScriptCleanup = function() {
+        observer.disconnect();
+    };
 })();
-
-
-}, this)}
-//# sourceURL=chrome-extension://dhdgffkkebhmkfjojejmpbldmpobfkfo/userscript.html?name=Flight-Tooltip-Dynamic-Parser.user.js&id=586a65df-66fd-4f47-aae4-df51aca65da2
-}

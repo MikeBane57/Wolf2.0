@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ops Dashboard Power Controls
 // @namespace    Wolf 2.0
-// @version      4.0
+// @version      4.1
 // @description  Toggle + resize panels (width & height) + minimize toolbar
 // @match        https://opssuitemain.swacorp.com/operational-dashboard*
 // @grant        none
@@ -42,6 +42,7 @@ function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(saved)); }
 
 // ---------- Toolbar ----------
 const toolbar = document.createElement('div');
+toolbar.id = 'ops-dashboard-power-controls-toolbar';
 Object.assign(toolbar.style,{
     position:'fixed',
     bottom:'20px',
@@ -185,6 +186,7 @@ const TARGET = ".middle.aligned.row._2co3koQ6lLI\\=.css-bwiy4s";
 
 function nukeRow() {
     document.querySelectorAll(TARGET).forEach(el => {
+        el.dataset.opsDashNukeTouched = '1';
         el.classList.remove(
             "middle",
             "aligned",
@@ -202,7 +204,33 @@ function nukeRow() {
 }
 
 nukeRow();
-new MutationObserver(nukeRow)
-.observe(document.body,{childList:true,subtree:true});
+const nukeObserver = new MutationObserver(nukeRow);
+nukeObserver.observe(document.body,{childList:true,subtree:true});
+
+window.__myScriptCleanup = function() {
+    nukeObserver.disconnect();
+    const tb = document.getElementById('ops-dashboard-power-controls-toolbar');
+    if (tb) tb.remove();
+
+    document.querySelectorAll('[data-ops-dash-nuke-touched]').forEach(function(el) {
+        el.classList.add("middle", "aligned", "row", "_2co3koQ6lLI=", "css-bwiy4s");
+        el.style.display = "";
+        el.style.flexWrap = "";
+        el.style.width = "";
+        delete el.dataset.opsDashNukeTouched;
+    });
+
+    groups.forEach(function(group) {
+        document.querySelectorAll(group.selector).forEach(function(el) {
+            const flexItem = getFlexItem(el);
+            if (!flexItem) return;
+            flexItem.style.flexBasis = "";
+            flexItem.style.maxWidth = "";
+            flexItem.style.flexGrow = "";
+            flexItem.style.flexShrink = "";
+            flexItem.style.height = "";
+        });
+    });
+};
 
 })();

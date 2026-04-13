@@ -34,7 +34,16 @@ From `parseUserScript` (and related logic in `background.js`):
 - **Cross-origin from the extension path** — use `GM_xmlhttpRequest` with appropriate `@connect` and user permission for `http(s)://*/*` when required.
 - **Storage** — use **`localStorage` / `sessionStorage`** on the target origin (no GM storage API).
 
-Optional cleanup: define a global **`__myScriptCleanup`** if the script needs teardown (see `donkeycodeInjectMain`).
+### Teardown (`__myScriptCleanup`)
+
+DonkeyCODE calls **`window.__myScriptCleanup()`** when a script is **disabled** or before **re-injecting** after pref changes. Assign a **no-arg** function that:
+
+- **`disconnect()`** any `MutationObserver`s
+- **`clearInterval` / `clearTimeout`** for timers you created
+- **`removeEventListener`** using the **same function reference** you passed to `addEventListener`
+- **Remove** injected DOM nodes (toolbars, overlays) and **restore** `document.title` / critical styles if feasible
+
+If cleanup is missing, toggling the script off leaves listeners and DOM changes until a **full page reload**.
 
 ## Updates (DonkeyCODE)
 
@@ -94,3 +103,4 @@ Copy `templates/userscript.template.user.js` when starting a new script.
 - Initial plan and template; header fixes on two scripts.
 - Filled DonkeyCODE section from `background.js` / `bridge.js` / `manifest.json` report (parser fields, GM XHR only, updates via listing, storage).
 - Documented `@donkeycode-pref`: grouped UI, `globalThis.donkeycodeGetPref`, debug log, named session folder vs Default.
+- Documented **`window.__myScriptCleanup`** for DonkeyCODE disable / re-inject; template and repo scripts assign teardown (observers, listeners, injected nodes).

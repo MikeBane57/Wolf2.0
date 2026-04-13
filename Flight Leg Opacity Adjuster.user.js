@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flight Leg Opacity Adjuster
 // @namespace    Wolf 2.0
-// @version      1.0
+// @version      1.1
 // @description  Change opacity of flight leg elements, adjustable in one place
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -44,4 +44,13 @@
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
+
+    window.__myScriptCleanup = function() {
+        observer.disconnect();
+        for (var sel in opacitySettings) {
+            document.querySelectorAll(sel).forEach(function(el) {
+                el.style.opacity = '';
+            });
+        }
+    };
 })();

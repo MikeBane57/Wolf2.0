@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         One window to rule them all
 // @namespace    Wolf 2.0
-// @version      10.5
+// @version      10.6
 // @description  Position popup windows by URL; geometry from DonkeyCODE Pref (Scripts → gear) or defaults below.
 // @match        https://opssuitemain.swacorp.com/*
 // @run-at       document-start
@@ -209,7 +209,7 @@
         //////////////////////////////////////////////////////
         // INTERCEPT LINKS
         //////////////////////////////////////////////////////
-        window.addEventListener("click", e=>{
+        const onOwtrtaLinkClick = function(e){
             const a = e.target.closest("a");
             if(a && a.target === "_blank"){
                 const rule = findRule(a.href);
@@ -218,7 +218,13 @@
                     openWithRule(a.href, rule);
                 }
             }
-        }, true);
+        };
+        window.addEventListener("click", onOwtrtaLinkClick, true);
+
+        window.__myScriptCleanup = function(){
+            window.open = originalOpen;
+            window.removeEventListener("click", onOwtrtaLinkClick, true);
+        };
     `;
 
     document.documentElement.appendChild(s);
