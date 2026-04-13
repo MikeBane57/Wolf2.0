@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.0.0
-// @description  Leaderboard of FIMS message senders (by FIM #); panel next to Advisories tab
+// @version      1.1.0
+// @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersTopN":{"type":"number","group":"Leaderboard","label":"Show top N","description":"How many names to list in the box.","default":10,"min":3,"max":30,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/FIMS%20top%20clickers%20leaderboard.user.js
@@ -13,7 +13,8 @@
     'use strict';
 
     var TABLE_ID = 'fims-id';
-    var HOST_ID = 'dc-fims-top-clickers-host';
+    var TAB_ID = 'dc-fims-top-clickers-host';
+    var PANEL_ID = 'dc-fims-top-clickers-panel';
 
     var EXT_LINE_RE = /\/\s*EXT\s+\d{3}-\d{3}-\d{4}/;
     var NAME_WORD_RE = /^[A-Za-z][A-Za-z'\-\.]*$/;
@@ -81,7 +82,6 @@
     }
 
     function isBadNameCandidate(line) {
-        var u = line.toUpperCase();
         if (/FLT\s|PLAN\s|LINE\s|DUE\s|CNLD|N\d{3,4}[A-Z]?|EXT\s+\d{3}-\d{3}-\d{4}|469-603-\d{4}/i.test(line)) {
             return true;
         }
@@ -170,19 +170,18 @@
                 counts = recomputeCountsFromFimMap(fimToSender);
                 return { fimToSender: fimToSender, counts: counts };
             }
-            /* Legacy v1 had only counts — drop it to avoid double-count after reload */
         } catch (e) {
             /* ignore */
         }
         return { fimToSender: fimToSender, counts: counts };
     }
 
-    function writeState(fimToSender) {
+    function writeState(map) {
         if (!shouldPersist()) {
             return;
         }
         try {
-            localStorage.setItem(storageKey(), JSON.stringify({ v: 2, fimToSender: fimToSender }));
+            localStorage.setItem(storageKey(), JSON.stringify({ v: 2, fimToSender: map }));
         } catch (e) {
             /* ignore */
         }
@@ -259,14 +258,18 @@
         return pairs.slice(0, getTopN());
     }
 
-    function render(host) {
-        var list = topList();
-        var ol = host.querySelector('.dc-fims-top-clickers-ol');
+    function render(panel) {
+        if (!panel) {
+            return;
+        }
+        var ol = panel.querySelector('.dc-fims-top-clickers-ol');
         if (!ol) {
             return;
         }
+        var list = topList();
         ol.innerHTML = '';
-        for (var i = 0; i < list.length; i++) {
+        var i;
+        for (i = 0; i < list.length; i++) {
             var li = document.createElement('li');
             li.textContent = list[i].name + ' — ' + list[i].n;
             ol.appendChild(li);
@@ -298,8 +301,159 @@
         return null;
     }
 
-    function ensureHost() {
-        var existing = document.getElementById(HOST_ID);
+    function getSegments(menu) {
+        var p = menu.parentElement;
+        if (!p) {
+            return [];
+        }
+        var out = [];
+        var ch = p.children;
+        var i;
+        for (i = 0; i < ch.length; i++) {
+            var el = ch[i];
+            if (el.classList && el.classList.contains('ui') && el.classList.contains('bottom') && el.classList.contains('attached') && el.classList.contains('segment')) {
+                out.push(el);
+            }
+        }
+        return out;
+    }
+
+    function onTopClickersTabClick(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        showLeaderboardInFimsArea();
+    }
+
+    function onFimsTabClick() {
+        showFimsTable();
+    }
+
+    function onAdvisoriesTabClick() {
+        var tab = document.getElementById(TAB_ID);
+        if (tab) {
+            tab.classList.remove('active');
+        }
+        var table = document.getElementById(TABLE_ID);
+        var panel = document.getElementById(PANEL_ID);
+        if (table) {
+            table.style.display = '';
+        }
+        if (panel) {
+            panel.style.display = 'none';
+        }
+    }
+
+    function showLeaderboardInFimsArea() {
+        var menuInfo = findTabMenu();
+        var tab = document.getElementById(TAB_ID);
+        var table = document.getElementById(TABLE_ID);
+        var panel = document.getElementById(PANEL_ID);
+        if (!tab || !table || !panel || !menuInfo) {
+            return;
+        }
+        var menu = menuInfo.menu;
+        var items = menu.querySelectorAll('a.item');
+        var i;
+        for (i = 0; i < items.length; i++) {
+            items[i].classList.remove('active');
+        }
+        tab.classList.add('active');
+
+        var segments = getSegments(menu);
+        if (segments.length >= 2) {
+            segments[0].classList.add('active');
+            segments[1].classList.remove('active');
+        } else if (segments.length === 1) {
+            segments[0].classList.add('active');
+        }
+
+        table.style.display = 'none';
+        panel.style.display = 'block';
+        render(panel);
+    }
+
+    function showFimsTable() {
+        var tab = document.getElementById(TAB_ID);
+        if (tab) {
+            tab.classList.remove('active');
+        }
+        var table = document.getElementById(TABLE_ID);
+        var panel = document.getElementById(PANEL_ID);
+        if (table) {
+            table.style.display = '';
+        }
+        if (panel) {
+            panel.style.display = 'none';
+        }
+    }
+
+    function wireSiblingTabs(menu) {
+        if (!menu || menu.dataset.dcFimsTopClickersTabWire) {
+            return;
+        }
+        menu.dataset.dcFimsTopClickersTabWire = '1';
+        var links = menu.querySelectorAll('a.item');
+        var j;
+        for (j = 0; j < links.length; j++) {
+            var link = links[j];
+            if (link.id === TAB_ID) {
+                continue;
+            }
+            var txt = (link.textContent || '').replace(/\s+/g, ' ');
+            if (txt.indexOf('FIMS') !== -1) {
+                link.addEventListener('click', onFimsTabClick);
+            } else if (txt.indexOf('Advisories') !== -1) {
+                link.addEventListener('click', onAdvisoriesTabClick);
+            }
+        }
+    }
+
+    function ensurePanel() {
+        var existing = document.getElementById(PANEL_ID);
+        if (existing) {
+            return existing;
+        }
+        var table = document.getElementById(TABLE_ID);
+        if (!table || !table.parentNode) {
+            return null;
+        }
+        var panel = document.createElement('div');
+        panel.id = PANEL_ID;
+        panel.style.cssText = 'display:none;padding:12px 16px;';
+
+        var h = document.createElement('div');
+        h.textContent = 'Top clickers (by FIM #)';
+        h.style.cssText = 'font-weight:600;margin-bottom:0.75em';
+        panel.appendChild(h);
+
+        var ol = document.createElement('ol');
+        ol.className = 'dc-fims-top-clickers-ol';
+        ol.style.cssText = 'margin:0;padding-left:1.25em;line-height:1.5;max-height:70vh;overflow:auto';
+        panel.appendChild(ol);
+
+        var reset = document.createElement('button');
+        reset.type = 'button';
+        reset.textContent = 'Reset counts';
+        reset.title = 'Clears all saved leaderboard data for this page (counts and per-FIM senders). Same as wiping localStorage for this script\'s key.';
+        reset.className = 'ui mini button';
+        reset.style.cssText = 'margin-top:12px';
+        reset.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            fimToSender = {};
+            counts = {};
+            writeState(fimToSender);
+            render(panel);
+        });
+        panel.appendChild(reset);
+
+        table.parentNode.insertBefore(panel, table);
+        render(panel);
+        return panel;
+    }
+
+    function ensureTab() {
+        var existing = document.getElementById(TAB_ID);
         if (existing) {
             return existing;
         }
@@ -307,47 +461,23 @@
         if (!found) {
             return null;
         }
-        var host = document.createElement('div');
-        host.id = HOST_ID;
-        host.className = 'item';
-        host.style.cssText = [
-            'padding:0.4em 0.85em !important',
-            'cursor:default',
-            'max-width:22em',
-            'vertical-align:top'
-        ].join(';');
+        wireSiblingTabs(found.menu);
 
-        var title = document.createElement('div');
-        title.textContent = 'Top clickers';
-        title.style.cssText = 'font-weight:600;font-size:0.8em;margin-bottom:0.2em;white-space:nowrap';
-        host.appendChild(title);
-
-        var ol = document.createElement('ol');
-        ol.className = 'dc-fims-top-clickers-ol';
-        ol.style.cssText = 'margin:0;padding-left:1.1em;font-size:0.75em;line-height:1.35;max-height:9em;overflow:auto';
-        host.appendChild(ol);
-
-        var reset = document.createElement('button');
-        reset.type = 'button';
-        reset.textContent = 'Reset';
-        reset.className = 'ui mini button';
-        reset.style.cssText = 'margin-top:0.35em;padding:0.25em 0.5em;font-size:0.7em';
-        reset.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            fimToSender = {};
-            counts = {};
-            writeState(fimToSender);
-            render(host);
-        });
-        host.appendChild(reset);
-
-        found.advisoriesTab.insertAdjacentElement('afterend', host);
-        render(host);
-        return host;
+        var a = document.createElement('a');
+        a.id = TAB_ID;
+        a.className = 'item';
+        a.href = '#';
+        a.innerHTML = '<div>Top clickers</div>';
+        a.addEventListener('click', onTopClickersTabClick);
+        found.advisoriesTab.insertAdjacentElement('afterend', a);
+        return a;
     }
 
-    var hostEl = null;
+    function ensureUi() {
+        ensureTab();
+        ensurePanel();
+    }
+
     var scanTimer = null;
     var rootMo = null;
     var tableMo = null;
@@ -361,9 +491,10 @@
             var t = document.getElementById(TABLE_ID);
             if (t) {
                 scanTable(t);
-                hostEl = ensureHost();
-                if (hostEl) {
-                    render(hostEl);
+                ensureUi();
+                var panel = document.getElementById(PANEL_ID);
+                if (panel && panel.style.display !== 'none') {
+                    render(panel);
                 }
             }
         }, 120);
@@ -418,12 +549,37 @@
         var t = document.getElementById(TABLE_ID);
         if (t) {
             delete t.dataset.dcFimsTopClickersMo;
+            t.style.display = '';
         }
-        var h = document.getElementById(HOST_ID);
-        if (h && h.parentNode) {
-            h.parentNode.removeChild(h);
+        var menuInfo = findTabMenu();
+        if (menuInfo && menuInfo.menu) {
+            delete menuInfo.menu.dataset.dcFimsTopClickersTabWire;
+            var links = menuInfo.menu.querySelectorAll('a.item');
+            var i;
+            for (i = 0; i < links.length; i++) {
+                var link = links[i];
+                if (link.id === TAB_ID) {
+                    continue;
+                }
+                var txt = (link.textContent || '').replace(/\s+/g, ' ');
+                if (txt.indexOf('FIMS') !== -1) {
+                    link.removeEventListener('click', onFimsTabClick);
+                } else if (txt.indexOf('Advisories') !== -1) {
+                    link.removeEventListener('click', onAdvisoriesTabClick);
+                }
+            }
         }
-        hostEl = null;
+        var tab = document.getElementById(TAB_ID);
+        if (tab) {
+            tab.removeEventListener('click', onTopClickersTabClick);
+            if (tab.parentNode) {
+                tab.parentNode.removeChild(tab);
+            }
+        }
+        var panel = document.getElementById(PANEL_ID);
+        if (panel && panel.parentNode) {
+            panel.parentNode.removeChild(panel);
+        }
         window.__myScriptCleanup = undefined;
     };
 })();
