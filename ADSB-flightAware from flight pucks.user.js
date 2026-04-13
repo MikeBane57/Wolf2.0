@@ -1,11 +1,10 @@
 // ==UserScript==
 // @name         ADSB/flightAware from flight pucks
 // @namespace    Wolf 2.0
-// @version      1.6
+// @version      1.7
 // @description  Double-click dep/arr or flight: ADSB globe; flight opens FlightAware or Flightradar24 (Pref)
 // @match        https://opssuitemain.swacorp.com/*
-// @donkeycode-pref {"flightTrackerProvider":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Open flight in","description":"Southwest (SWA/WN) flight number from the puck.","default":"flightaware","options":[{"value":"flightaware","label":"FlightAware"},{"value":"flightradar24","label":"Flightradar24"}]}}
-// @donkeycode-pref {"fr24MapZoom":{"type":"number","group":"Flightradar24 map","label":"Map zoom","description":"Only when Flightradar24 is selected. Larger = more zoomed in (2 ≈ whole map, ~7–9 = regional, ~12+ = closer).","default":8,"min":2,"max":21,"step":1},"fr24MapLat":{"type":"number","group":"Flightradar24 map","label":"Map center latitude","description":"Center of the map before the flight is selected (decimal degrees).","default":39,"min":-90,"max":90,"step":0.1},"fr24MapLon":{"type":"number","group":"Flightradar24 map","label":"Map center longitude","default":-98,"min":-180,"max":180,"step":0.1}}
+// @donkeycode-pref {"flightTrackerProvider":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Open flight in","description":"Southwest flight number from the puck. Flightradar24: opens https://www.flightradar24.com/SWA{n} only — do not append /lat,lon/zoom; FR24’s site strips the flight and leaves a bare map. Zoom the map after load if needed.","default":"flightaware","options":[{"value":"flightaware","label":"FlightAware"},{"value":"flightradar24","label":"Flightradar24"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
 // ==/UserScript==
@@ -22,10 +21,6 @@
             return defaultValue;
         }
         return v;
-    }
-
-    function clamp(n, lo, hi) {
-        return Math.min(hi, Math.max(lo, n));
     }
 
     const DOUBLE_MS = 350;
@@ -48,17 +43,9 @@
         var provider = String(getPref('flightTrackerProvider', 'flightaware')).toLowerCase();
         var url;
         if (provider === 'flightradar24' || provider === 'fr24') {
-            // Live flight page + map position/zoom (avoids /data/flights/… history-only view and world zoom).
-            var z = Number(getPref('fr24MapZoom', 8));
-            if (!Number.isFinite(z)) z = 8;
-            z = Math.round(clamp(z, 2, 21));
-            var lat = Number(getPref('fr24MapLat', 39));
-            var lon = Number(getPref('fr24MapLon', -98));
-            if (!Number.isFinite(lat)) lat = 39;
-            if (!Number.isFinite(lon)) lon = -98;
-            lat = clamp(lat, -90, 90);
-            lon = clamp(lon, -180, 180);
-            url = `https://www.flightradar24.com/SWA${flightNum}/${lat},${lon}/${z}`;
+            // Single-segment flight URL only. FR24’s SPA drops the flight id if we append
+            // /lat,lon/zoom (user ends up on e.g. /32.78,-96.80/8 with “no flight info”).
+            url = `https://www.flightradar24.com/SWA${flightNum}`;
         } else {
             const callsign = `SWA${flightNum}`;
             url = `https://www.flightaware.com/live/flight/${callsign}`;
