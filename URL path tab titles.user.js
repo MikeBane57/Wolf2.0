@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         URL path tab titles
 // @namespace    Wolf 2.0
-// @version      1.0.0
-// @description  Rename the browser tab from URL path via JSON rules in prefs (emojis OK)
+// @version      1.1.0
+// @description  Rename the browser tab from URL path; one rule per line in prefs (emojis OK)
 // @match        https://opssuitemain.swacorp.com/*
-// @donkeycode-pref {"pathTabTitleRules":{"type":"string","group":"Rules","label":"Path rules (JSON)","description":"JSON array: [{\"pathPrefix\":\"/widgets/worksheet\",\"title\":\"📋 Worksheet\"}]. Longest matching prefix wins. Titles may include emojis. Placeholders in title: {pathname}, {search}, {hash}, {host}. Example: [{\"pathPrefix\":\"/schedule\",\"title\":\"📅 Schedule\"}]","default":"[]"}}
+// @donkeycode-pref {"pathTabTitleRules":{"type":"string","group":"Tab titles","label":"URL or path → tab title","description":"One rule per line: path or full URL, then | , then the tab title. Example: /widgets/worksheet | 📋 Worksheet  Lines starting with # are ignored. Longest matching path wins. In the title you can use {pathname} {search} {hash} {host}. You can paste a full link: https://opssuitemain.swacorp.com/schedule | 📅","default":"","placeholder":"/widgets/worksheet | 📋 Worksheet"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/URL%20path%20tab%20titles.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/URL%20path%20tab%20titles.user.js
 // ==/UserScript==
@@ -31,28 +31,6 @@
         return v;
     }
 
-    function parseRules() {
-        var raw = getPref('pathTabTitleRules', '[]');
-        if (typeof raw !== 'string') {
-            raw = JSON.stringify(raw);
-        }
-        var s = String(raw).trim();
-        if (!s) {
-            return [];
-        }
-        try {
-            var arr = JSON.parse(s);
-            if (!Array.isArray(arr)) {
-                return [];
-            }
-            return arr.filter(function(r) {
-                return r && typeof r.pathPrefix === 'string' && typeof r.title === 'string';
-            });
-        } catch (e) {
-            return [];
-        }
-    }
-
     function normalizePrefix(p) {
         var s = String(p || '').trim();
         if (!s.length) {
@@ -67,6 +45,84 @@
         return s;
     }
 
+    function parseLeftToPathPrefix(left) {
+        var s = String(left || '').trim();
+        if (!s) {
+            return null;
+        }
+        if (/^https?:\/\//i.test(s)) {
+            try {
+                var u = new URL(s);
+                if (u.hostname !== window.location.hostname) {
+                    return null;
+                }
+                return normalizePrefix(u.pathname);
+            } catch (e) {
+                return null;
+            }
+        }
+        return normalizePrefix(s);
+    }
+
+    function parseRulesFromLines(text) {
+        var rules = [];
+        var raw = String(text || '');
+        var lines = raw.split(/\r?\n/);
+        var i;
+        for (i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (!line || line[0] === '#') {
+                continue;
+            }
+            var pipe = line.indexOf('|');
+            if (pipe === -1) {
+                continue;
+            }
+            var left = line.slice(0, pipe).trim();
+            var title = line.slice(pipe + 1).trim();
+            if (!left || !title) {
+                continue;
+            }
+            var pathPrefix = parseLeftToPathPrefix(left);
+            if (pathPrefix === null) {
+                continue;
+            }
+            rules.push({ pathPrefix: pathPrefix, title: title });
+        }
+        return rules;
+    }
+
+    function parseRulesFromJson(text) {
+        var arr = JSON.parse(text);
+        if (!Array.isArray(arr)) {
+            return [];
+        }
+        return arr.filter(function(r) {
+            return r && typeof r.pathPrefix === 'string' && typeof r.title === 'string';
+        }).map(function(r) {
+            return { pathPrefix: normalizePrefix(r.pathPrefix), title: r.title };
+        });
+    }
+
+    function parseRules() {
+        var raw = getPref('pathTabTitleRules', '');
+        if (raw !== null && raw !== undefined && typeof raw !== 'string') {
+            raw = String(raw);
+        }
+        var s = String(raw || '').trim();
+        if (!s) {
+            return [];
+        }
+        if (s[0] === '[') {
+            try {
+                return parseRulesFromJson(s);
+            } catch (e) {
+                return parseRulesFromLines(s);
+            }
+        }
+        return parseRulesFromLines(s);
+    }
+
     function pathMatches(pathname, prefixNorm) {
         if (prefixNorm === '/') {
             return true;
@@ -79,7 +135,7 @@
         var i;
         for (i = 0; i < rules.length; i++) {
             var r = rules[i];
-            var pn = normalizePrefix(r.pathPrefix);
+            var pn = r.pathPrefix;
             if (pathMatches(pathname, pn)) {
                 candidates.push({ rule: r, prefixLen: pn.length });
             }
