@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.2.0
+// @version      1.3.0
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
-// @donkeycode-pref {"fimsTopClickersTopN":{"type":"number","group":"Leaderboard","label":"Show top N","description":"How many names to list in the box.","default":10,"min":3,"max":30,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
+// @donkeycode-pref {"fimsTopClickersMaxNames":{"type":"number","group":"Leaderboard","label":"Max names shown","description":"0 = show everyone with a count. Set a positive number only if you want to cap a very long list.","default":0,"min":0,"max":500,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/FIMS%20top%20clickers%20leaderboard.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/FIMS%20top%20clickers%20leaderboard.user.js
 // ==/UserScript==
@@ -43,12 +43,12 @@
         return v;
     }
 
-    function getTopN() {
-        var n = Number(getPref('fimsTopClickersTopN', 10));
-        if (!Number.isFinite(n)) {
-            return 10;
+    function getListLimit() {
+        var n = Number(getPref('fimsTopClickersMaxNames', 0));
+        if (!Number.isFinite(n) || n <= 0) {
+            return Infinity;
         }
-        return Math.min(30, Math.max(3, Math.floor(n)));
+        return Math.min(500, Math.floor(n));
     }
 
     function shouldPersist() {
@@ -256,7 +256,11 @@
             }
             return a.name.localeCompare(b.name);
         });
-        return pairs.slice(0, getTopN());
+        var lim = getListLimit();
+        if (lim === Infinity || pairs.length <= lim) {
+            return pairs;
+        }
+        return pairs.slice(0, lim);
     }
 
     function ensureStyles() {
