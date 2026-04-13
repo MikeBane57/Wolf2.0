@@ -47,6 +47,31 @@ then saves to extension storage. Refresh runs on install, startup, ~daily alarm,
 
 Repo scripts may still include `@updateURL` / `@downloadURL` for **Tampermonkey** users or documentation; DonkeyCODE ignores them.
 
+## DonkeyCODE: user preferences (`@donkeycode-pref`)
+
+See **`DonkeyCode/DONKEYCODE_SCRIPT_PREFS_AGENT.md`** in the DonkeyCODE repo for the full schema. Summary for Wolf2.0 authors:
+
+### Grouped Pref UI
+
+- Each field spec may include **`"group": "Section name"`** (e.g. `"Go Turn Details"`).
+- Keys **without** `group` appear under **General** (first).
+- Other groups are sorted **A→Z**. Each group has a **section heading**, then its fields (sorted by **key** within the group).
+- Headings use the class **`.script-prefs-group-heading`**.
+
+### Runtime injection and `donkeycodeGetPref`
+
+- The extension runs script bodies as **`new Function("donkeycodeGetPref", code)`** (and **`GM_xmlhttpRequest`** when granted), then **`run(donkeycodeGetPref, …)`** with a closure from **saved user prefs + schema**.
+- **`donkeycodeGetPref` is also set on `window` / `globalThis`** for the injection lifetime, so these all work:
+  - **`globalThis.donkeycodeGetPref("key")`** inside parameterless IIFEs and async callbacks
+  - **`(function (donkeycodeGetPref) { … })(globalThis.donkeycodeGetPref)`** — safe **after** injection when the global is set
+- If **multiple** scripts run on the same page, **the last injected script** wins for **`globalThis.donkeycodeGetPref`** (per DonkeyCODE docs).
+- **Debug:** when at least one pref key is saved, the **page** console logs  
+  **`[DonkeyCode:page] applying saved prefs <scriptId> <object>`**.
+
+### Session folder (important)
+
+- Use a **named session folder** in DonkeyCODE (not **Default**) if you want **stored script prefs** to load and (where configured) **sync** — **Default** does not use stored script prefs the same way.
+
 ## Repo header conventions (Wolf 2.0)
 
 | Item | Convention |
@@ -68,3 +93,4 @@ Copy `templates/userscript.template.user.js` when starting a new script.
 
 - Initial plan and template; header fixes on two scripts.
 - Filled DonkeyCODE section from `background.js` / `bridge.js` / `manifest.json` report (parser fields, GM XHR only, updates via listing, storage).
+- Documented `@donkeycode-pref`: grouped UI, `globalThis.donkeycodeGetPref`, debug log, named session folder vs Default.
