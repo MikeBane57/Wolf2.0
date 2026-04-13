@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ADSB/flightAware from flight pucks
 // @namespace    Wolf 2.0
-// @version      2.0
+// @version      2.1
 // @description  Double-click dep/arr or flight: airport + flight URLs from prefs (ADSB / FR24 / FlightAware)
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"flightTrackerProvider":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Open flight in","description":"Southwest flight number from the puck.","default":"flightaware","options":[{"value":"flightaware","label":"FlightAware"},{"value":"flightradar24","label":"Flightradar24"}]},"fr24FlightView":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Flightradar24: open as","description":"Only when Flightradar24 is selected. Live map uses flightradar24.com/SWA{n} (tracker map). Data table is /data/flights/wn{n} (schedules/history, not the main map).","default":"live_map","options":[{"value":"live_map","label":"Live map (SWA + flight)"},{"value":"data_table","label":"Data / history table (WN only)"}]}}
-// @donkeycode-pref {"airportMapProvider":{"type":"select","group":"Airport map (double-click dep/arr code)","label":"Open airport in","description":"IATA code from the puck. ADSB Exchange globe or Flightradar24 airport page.","default":"adsb","options":[{"value":"adsb","label":"ADSB Exchange globe"},{"value":"flightradar24","label":"Flightradar24 airport"}]},"fr24AirportZoom":{"type":"number","group":"Airport map (double-click dep/arr code)","label":"Flightradar24 map zoom (z)","description":"Only when Flightradar24 airport is selected. Added as ?z= on the airport URL.","default":15,"min":2,"max":21,"step":1}}
+// @donkeycode-pref {"airportMapProvider":{"type":"select","group":"Airport map (double-click dep/arr code)","label":"Open airport in","description":"IATA code from the puck. ADSB Exchange globe or Flightradar24 airport page (no URL zoom — set zoom on the FR24 map after load).","default":"adsb","options":[{"value":"adsb","label":"ADSB Exchange globe"},{"value":"flightradar24","label":"Flightradar24 airport"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js
 // ==/UserScript==
@@ -24,10 +24,6 @@
         return v;
     }
 
-    function clamp(n, lo, hi) {
-        return Math.min(hi, Math.max(lo, n));
-    }
-
     const DOUBLE_MS = 350;
     let lastAction = null;
     let lastTime = 0;
@@ -43,10 +39,7 @@
         var airportProv = String(getPref('airportMapProvider', 'adsb')).toLowerCase();
         var url;
         if (airportProv === 'flightradar24' || airportProv === 'fr24') {
-            var z = Number(getPref('fr24AirportZoom', 15));
-            if (!Number.isFinite(z)) z = 15;
-            z = Math.round(clamp(z, 2, 21));
-            url = `https://www.flightradar24.com/airport/${iata.toLowerCase()}?z=${z}`;
+            url = `https://www.flightradar24.com/airport/${iata.toLowerCase()}`;
         } else {
             url = `https://globe.adsbexchange.com/?airport=${encodeURIComponent(iata)}&zoom=15&labels=1`;
         }
