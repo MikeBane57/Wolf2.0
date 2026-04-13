@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.1.0
+// @version      1.2.0
 // @description  FIMS tab: wall of fame accolades; password to edit; optional JSON sync URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -34,6 +34,7 @@
     var LS_KEY = 'donkeycode.sodWallOfFame.v1';
     var SESSION_KEY = 'dc_wof_unlocked';
     var EDIT_PASSWORD = 'DonkeyWall';
+    var editPanelOpen = false;
 
     var DEFAULT_ENTRIES = [
         {
@@ -242,7 +243,12 @@
             'border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.35);overflow:hidden;max-height:85vh;}',
             '#' + PANEL_ID + ' .dc-wof-inner{padding:16px 18px;color:#f0e8ff;font-family:system-ui,-apple-system,sans-serif;',
             'width:100%;max-width:none;box-sizing:border-box;}',
-            '#' + PANEL_ID + ' .dc-wof-h{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.15);}',
+            '#' + PANEL_ID + ' .dc-wof-h{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.15);}',
+            '#' + PANEL_ID + ' .dc-wof-head-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;}',
+            '#' + PANEL_ID + ' .dc-wof-edit-toggle{font-size:11px;padding:5px 11px;border-radius:8px;border:1px solid rgba(255,215,0,.45);',
+            'background:rgba(255,215,0,.12);color:#ffe8a8;cursor:pointer;font-weight:600;}',
+            '#' + PANEL_ID + ' .dc-wof-edit-toggle:hover{background:rgba(255,215,0,.22);}',
+            '#' + PANEL_ID + ' .dc-wof-head-emoji{font-size:1.75rem;line-height:1;}',
             '#' + PANEL_ID + ' .dc-wof-title{font-weight:800;font-size:1.2rem;background:linear-gradient(90deg,#ffd700,#ff8c00,#da70d6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}',
             '#' + PANEL_ID + ' .dc-wof-sub{font-size:.75rem;opacity:.75;margin-top:4px;color:#c8b8e0;}',
             '#' + PANEL_ID + ' .dc-wof-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;max-height:calc(85vh - 200px);overflow:auto;padding:2px;}',
@@ -252,7 +258,7 @@
             '#' + PANEL_ID + ' .dc-wof-card-h{font-weight:700;font-size:1rem;color:#fff;line-height:1.3;}',
             '#' + PANEL_ID + ' .dc-wof-card-n{margin-top:8px;font-size:.95rem;color:#ffd700;font-weight:600;}',
             '#' + PANEL_ID + ' .dc-wof-card-note{margin-top:4px;font-size:.78rem;opacity:.75;font-style:italic;}',
-            '#' + PANEL_ID + ' .dc-wof-edit{margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.12);}',
+            '#' + PANEL_ID + ' .dc-wof-edit{display:none;margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.12);}',
             '#' + PANEL_ID + ' .dc-wof-edit label{display:block;font-size:.72rem;opacity:.85;margin-bottom:4px;}',
             '#' + PANEL_ID + ' .dc-wof-edit input,.dc-wof-edit textarea{width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.25);color:#fff;margin-bottom:8px;font-size:13px;}',
             '#' + PANEL_ID + ' .dc-wof-edit textarea{min-height:52px;resize:vertical;}',
@@ -308,6 +314,18 @@
         }
     }
 
+    function syncEditPanelVisibility(panel) {
+        var wrap = panel.querySelector('.dc-wof-edit');
+        var btn = panel.querySelector('.dc-wof-edit-toggle');
+        if (wrap) {
+            wrap.style.display = editPanelOpen ? 'block' : 'none';
+        }
+        if (btn) {
+            btn.textContent = editPanelOpen ? 'Hide editor' : 'Edit';
+            btn.setAttribute('aria-expanded', editPanelOpen ? 'true' : 'false');
+        }
+    }
+
     function renderEditSection(panel) {
         var wrap = panel.querySelector('.dc-wof-edit');
         if (!wrap) {
@@ -354,6 +372,7 @@
         lockBtn.addEventListener('click', function(ev) {
             ev.preventDefault();
             setUnlocked(false);
+            editPanelOpen = false;
             renderEditSection(panel);
         });
         wrap.appendChild(lockBtn);
@@ -462,6 +481,8 @@
         hint.className = 'dc-wof-hint';
         hint.textContent = 'Cloud: host a JSON file and set the URL in prefs. GET merges on fetch; POST sends { entries, updatedAt }. Raw static hosts often reject POST—use your own endpoint or team shared storage.';
         wrap.appendChild(hint);
+
+        syncEditPanelVisibility(panel);
     }
 
     function renderEntryList(panel) {
@@ -643,12 +664,28 @@
         sub.textContent = 'SOD accolades (local + optional cloud URL in prefs)';
         ht.appendChild(title);
         ht.appendChild(sub);
+        var actions = document.createElement('div');
+        actions.className = 'dc-wof-head-actions';
+        var editToggle = document.createElement('button');
+        editToggle.type = 'button';
+        editToggle.className = 'dc-wof-edit-toggle';
+        editToggle.textContent = 'Edit';
+        editToggle.setAttribute('aria-expanded', 'false');
+        editToggle.title = 'Show or hide password and editor';
+        editToggle.addEventListener('click', function(ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            editPanelOpen = !editPanelOpen;
+            syncEditPanelVisibility(panel);
+        });
         var em = document.createElement('span');
+        em.className = 'dc-wof-head-emoji';
         em.setAttribute('aria-hidden', 'true');
-        em.style.fontSize = '2rem';
         em.textContent = '\u{1F3DB}\u{FE0F}';
+        actions.appendChild(editToggle);
+        actions.appendChild(em);
         head.appendChild(ht);
-        head.appendChild(em);
+        head.appendChild(actions);
         inner.appendChild(head);
 
         var grid = document.createElement('div');
