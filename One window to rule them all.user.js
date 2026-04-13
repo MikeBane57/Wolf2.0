@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         One window to rule them all
 // @namespace    Wolf 2.0
-// @version      10.4
+// @version      10.5
 // @description  Position popup windows by URL; geometry from DonkeyCODE Pref (Scripts → gear) or defaults below.
 // @match        https://opssuitemain.swacorp.com/*
 // @run-at       document-start
@@ -124,9 +124,71 @@
 
             const w = originalOpen.call(window, abs, "_blank", features);
             windowRefs[rule.name] = w;
-            // Position/size come only from window.open features. Do not call
-            // moveTo/resizeTo on a timer — users reported the window snapping back
-            // after they dragged it (old code retried at 200/800/1500/2500 ms).
+
+            // Popup geometry from the features string can be applied late (SPA paint,
+            // etc.), which feels like "I moved it and it jumped." We apply prefs once
+            // after the child window fires load, in rAF — not on a repeating timer.
+            // If the user already moved/resized the popup before then, skip so we
+            // do not snap back over their gesture.
+            if (w) {
+                const leftPx = left;
+                const topPx = top;
+                const wPx = rule.width;
+                const hPx = rule.height;
+                let placed = false;
+                let lastSample = null;
+
+                const sample = function() {
+                    if (!w || w.closed) return;
+                    try {
+                        const cur = {
+                            x: w.screenX,
+                            y: w.screenY,
+                            ow: w.outerWidth,
+                            oh: w.outerHeight
+                        };
+                        if (lastSample) {
+                            const moved = Math.abs(cur.x - lastSample.x) > 6 ||
+                                Math.abs(cur.y - lastSample.y) > 6;
+                            const resized = Math.abs(cur.ow - lastSample.ow) > 8 ||
+                                Math.abs(cur.oh - lastSample.oh) > 8;
+                            if (moved || resized) {
+                                w.__owtrtaUserAdjusted = true;
+                            }
+                        }
+                        lastSample = cur;
+                    } catch (e) {}
+                };
+
+                const sampler = setInterval(sample, 120);
+                setTimeout(function() {
+                    try { clearInterval(sampler); } catch (e) {}
+                }, 1400);
+
+                const placeOnce = function() {
+                    if (placed || !w || w.closed) return;
+                    if (w.__owtrtaUserAdjusted) return;
+                    placed = true;
+                    try {
+                        w.resizeTo(wPx, hPx);
+                        w.moveTo(leftPx, topPx);
+                    } catch (e) {}
+                };
+
+                const schedulePlace = function() {
+                    requestAnimationFrame(placeOnce);
+                };
+
+                try {
+                    if (w.document && w.document.readyState === "complete") {
+                        schedulePlace();
+                    } else {
+                        w.addEventListener("load", schedulePlace, { once: true });
+                    }
+                } catch (e) {
+                    setTimeout(schedulePlace, 0);
+                }
+            }
 
             console.groupEnd();
             return w;
