@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Worksheet renamer
 // @namespace    Wolf 2.0
-// @version      2.0
-// @description  Rename worksheet widget tab title; placeholders in prefs
+// @version      2.1
+// @description  Rename worksheet widget tab title; placeholders in prefs; optional favicon
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
-// @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} for worksheet number, {base} for the rest of the title (dates/boilerplate stripped). Example: WS {num} — {base}","default":"{num} · {base}"}}
+// @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} for worksheet number, {base} for the rest of the title (dates/boilerplate stripped). Example: WS {num} — {base}","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"url","group":"Tab icon","label":"Custom favicon URL","description":"Shown in the tab; leave empty to keep the site icon. Data URLs work if your browser allows them.","default":"","placeholder":"https://… or data:image/…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js
 // ==/UserScript==
@@ -17,6 +17,9 @@
 
     var baseTitleAtInject = document.title;
 
+    /** Last app-emitted title before our rename; survives script refresh so prefs re-apply correctly. */
+    var rawTitleStorageKey = 'dc_worksheet_raw_title_' + location.pathname + location.search;
+
     const FOR_CURRENT_DATE_RE = /\s*for\s+current\s+date\s*/gi;
     const DATE_PATTERNS = [
         /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g,
@@ -27,6 +30,37 @@
     ];
 
     let titleElObserver = null;
+    var faviconLinkEl = null;
+
+    function readStoredRawTitle() {
+        try {
+            return sessionStorage.getItem(rawTitleStorageKey) || '';
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function writeStoredRawTitle(raw) {
+        if (!raw || !shouldRewrite(raw)) {
+            return;
+        }
+        try {
+            sessionStorage.setItem(rawTitleStorageKey, raw);
+        } catch (e) {}
+    }
+
+    /** Prefer live app title; if the tab already shows our formatted title, use stored raw. */
+    function getRawTitleForTransform() {
+        var cur = document.title;
+        if (shouldRewrite(cur)) {
+            return cur;
+        }
+        var stored = readStoredRawTitle();
+        if (stored && shouldRewrite(stored)) {
+            return stored;
+        }
+        return cur;
+    }
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -128,10 +162,31 @@
     }
 
     function applyTitle() {
-        var current = document.title;
-        var next = transformTitle(current);
-        if (next !== current) {
+        var raw = getRawTitleForTransform();
+        writeStoredRawTitle(raw);
+        var next = transformTitle(raw);
+        if (next !== document.title) {
             document.title = next;
+        }
+    }
+
+    function applyFavicon() {
+        var url = String(getPref('worksheetFaviconUrl', '') || '').trim();
+        if (!url) {
+            if (faviconLinkEl && faviconLinkEl.parentNode) {
+                faviconLinkEl.parentNode.removeChild(faviconLinkEl);
+            }
+            faviconLinkEl = null;
+            return;
+        }
+        if (!faviconLinkEl) {
+            faviconLinkEl = document.createElement('link');
+            faviconLinkEl.id = 'donkeycode-worksheet-favicon';
+            faviconLinkEl.rel = 'icon';
+            document.head.appendChild(faviconLinkEl);
+        }
+        if (faviconLinkEl.getAttribute('href') !== url) {
+            faviconLinkEl.setAttribute('href', url);
         }
     }
 
@@ -151,17 +206,29 @@
         });
     }
 
+    const headMo = new MutationObserver(function() {
+        wireTitleElement();
+        applyTitle();
+        applyFavicon();
+    });
+
     const bodyMo = new MutationObserver(function() {
         wireTitleElement();
         applyTitle();
+        applyFavicon();
     });
 
     bodyMo.observe(document.body, { childList: true, subtree: true });
+    if (document.head) {
+        headMo.observe(document.head, { childList: true, subtree: true });
+    }
     wireTitleElement();
     applyTitle();
+    applyFavicon();
 
     window.__myScriptCleanup = function() {
         bodyMo.disconnect();
+        headMo.disconnect();
         if (titleElObserver) {
             titleElObserver.disconnect();
             titleElObserver = null;
@@ -170,9 +237,20 @@
         if (t) {
             delete t.dataset.worksheetRenamerWired;
         }
-        var cur = document.title;
-        var numGuess = (cur.match(/^[\s]*(\d{1,4})\b/) || [])[1] || '';
-        var base = extractBaseFromBuiltTitle(cur, numGuess);
-        document.title = (base && base.length) ? base : baseTitleAtInject;
+        var stored = readStoredRawTitle();
+        if (stored && shouldRewrite(stored)) {
+            document.title = stored;
+        } else if (shouldRewrite(baseTitleAtInject)) {
+            document.title = baseTitleAtInject;
+        } else {
+            var cur = document.title;
+            var numGuess = (cur.match(/^[\s]*(\d{1,4})\b/) || [])[1] || '';
+            var base = extractBaseFromBuiltTitle(cur, numGuess);
+            document.title = (base && base.length) ? base : baseTitleAtInject;
+        }
+        if (faviconLinkEl && faviconLinkEl.parentNode) {
+            faviconLinkEl.parentNode.removeChild(faviconLinkEl);
+        }
+        faviconLinkEl = null;
     };
 })();
