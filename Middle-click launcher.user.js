@@ -5,7 +5,7 @@
 // @description  Middle-click a flight puck to open Pax connections, Go turn details, and/or a custom URL (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"opssuitemain …/go-turn-exec/{date}-{dep}-{flight}-WN-NULL","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"}}
+// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"opssuitemain …/go-turn-exec/{date}-{dep}-{flight}-WN-NULL","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Browsers open each target in its own tab/window; this controls position/size. One tab per URL is normal—merging into a single window needs the browser/extension, not page JS.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // ==/UserScript==
@@ -133,13 +133,56 @@
         }
     }
 
-    function openWindow(url) {
-        const pos = getSavedPosition();
+    function getLayoutRect(index, total, layout) {
+        var gap = 8;
+        var ax = typeof window.screen.availLeft === 'number' ? window.screen.availLeft : 0;
+        var ay = typeof window.screen.availTop === 'number' ? window.screen.availTop : 0;
+        var aw = typeof window.screen.availWidth === 'number' ? window.screen.availWidth : window.screen.width;
+        var ah = typeof window.screen.availHeight === 'number' ? window.screen.availHeight : window.screen.height;
+        if (total <= 1 || layout === 'same') {
+            var pos = getSavedPosition();
+            return {
+                left: Math.round(pos.x),
+                top: Math.round(pos.y),
+                width: WINDOW_WIDTH,
+                height: WINDOW_HEIGHT
+            };
+        }
+        if (layout === 'cascade') {
+            var off = 36;
+            var base = getSavedPosition();
+            return {
+                left: Math.round(base.x + index * off),
+                top: Math.round(base.y + index * off),
+                width: WINDOW_WIDTH,
+                height: WINDOW_HEIGHT
+            };
+        }
+        if (layout === 'vertical') {
+            var rows = total;
+            var h = Math.max(320, Math.floor((ah - gap * (rows + 1)) / rows));
+            var w = Math.max(400, aw - gap * 2);
+            var left = ax + gap;
+            var top = ay + gap + index * (h + gap);
+            return { left: left, top: top, width: w, height: h };
+        }
+        /* horizontal (default for multi) */
+        var cols = total;
+        var w = Math.max(360, Math.floor((aw - gap * (cols + 1)) / cols));
+        var h = Math.max(400, ah - gap * 2);
+        var left = ax + gap + index * (w + gap);
+        var top = ay + gap;
+        return { left: left, top: top, width: w, height: h };
+    }
+
+    function openWindow(url, index, total, layout) {
+        var layoutKey = layout || 'same';
+        var r = getLayoutRect(typeof index === 'number' ? index : 0, typeof total === 'number' ? total : 1, layoutKey);
         const win = window.open(
             url,
             '_blank',
-            'width=' + WINDOW_WIDTH + ',height=' + WINDOW_HEIGHT +
-            ',left=' + Math.round(pos.x) + ',top=' + Math.round(pos.y) +
+            'width=' + r.width + ',height=' + r.height +
+            ',left=' + r.left + ',top=' + r.top +
             ',resizable=yes,scrollbars=yes'
         );
         if (!win) {
@@ -169,19 +212,27 @@
             return;
         }
 
+        var urls = [];
         if (pax) {
-            openWindow(buildPaxUrl(data));
+            urls.push(buildPaxUrl(data));
         }
         if (go) {
-            openWindow(buildGoTurnUrl(data));
+            urls.push(buildGoTurnUrl(data));
         }
         if (cust) {
             var u = buildCustomUrl(data);
             if (u) {
-                openWindow(u);
+                urls.push(u);
             } else {
                 log('Custom URL template empty');
             }
+        }
+
+        var layout = String(getPref('midClickMultiLayout', 'horizontal') || 'horizontal');
+        var n = urls.length;
+        var i;
+        for (i = 0; i < urls.length; i++) {
+            openWindow(urls[i], i, n, layout);
         }
     }
 
