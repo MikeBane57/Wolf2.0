@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Dynamic station tab renamer
 // @namespace    Wolf 2.0
-// @version      2.0
-// @description  Reflect schedule station (3-letter code) in the tab title; template in prefs
+// @version      2.1
+// @description  Reflect schedule station (3-letter code) in the tab title; template in prefs; optional tab icon
 // @match        https://opssuitemain.swacorp.com/schedule*
-// @donkeycode-pref {"stationTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {station} for the IATA code and {base} for the page title without this prefix. Example: {station} · {base}","default":"{station} · {base}"}}
+// @donkeycode-pref {"stationTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {station} for the IATA code and {base} for the page title without this prefix. Example: {station} · {base}","default":"{station} · {base}"},"stationTabFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📅) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📅 or https://…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Dynamic%20station%20tab%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Dynamic%20station%20tab%20renamer.user.js
 // ==/UserScript==
@@ -36,14 +36,68 @@
         return t;
     }
 
+    const headMo = new MutationObserver(function() {
+        wireTitleElement();
+        applyFavicon();
+    });
+
     const bodyMo = new MutationObserver(function() {
         wireCombos();
         wireTitleElement();
         syncTitle();
+        applyFavicon();
     });
 
     const comboObservers = [];
     let titleElObserver = null;
+    var faviconLinkEl = null;
+
+    function escapeXml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function resolveTabIconHref(raw) {
+        var s = String(raw || '').trim();
+        if (!s) {
+            return '';
+        }
+        if (/^https?:\/\//i.test(s) || /^data:/i.test(s) || (s.charAt(0) === '/' && s.length > 1)) {
+            return s;
+        }
+        var graphemes = Array.from(s).slice(0, 4);
+        var label = graphemes.join('');
+        var svg =
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+            '<text x="32" y="44" text-anchor="middle" font-size="40" ' +
+            'font-family="system-ui,Segoe UI Emoji,Apple Color Emoji,Noto Color Emoji,sans-serif">' +
+            escapeXml(label) +
+            '</text></svg>';
+        return 'data:image/svg+xml,' + encodeURIComponent(svg);
+    }
+
+    function applyFavicon() {
+        var href = resolveTabIconHref(getPref('stationTabFaviconUrl', ''));
+        if (!href) {
+            if (faviconLinkEl && faviconLinkEl.parentNode) {
+                faviconLinkEl.parentNode.removeChild(faviconLinkEl);
+            }
+            faviconLinkEl = null;
+            return;
+        }
+        if (!faviconLinkEl) {
+            faviconLinkEl = document.createElement('link');
+            faviconLinkEl.id = 'donkeycode-station-tab-favicon';
+            faviconLinkEl.rel = 'icon';
+            document.head.appendChild(faviconLinkEl);
+        }
+        if (faviconLinkEl.getAttribute('href') !== href) {
+            faviconLinkEl.setAttribute('href', href);
+        }
+    }
 
     function wireCombos() {
         document.querySelectorAll(COMBO).forEach(function(combo) {
@@ -180,12 +234,17 @@
     }
 
     bodyMo.observe(document.body, { childList: true, subtree: true });
+    if (document.head) {
+        headMo.observe(document.head, { childList: true, subtree: true });
+    }
     wireCombos();
     wireTitleElement();
     syncTitle();
+    applyFavicon();
 
     window.__myScriptCleanup = function() {
         bodyMo.disconnect();
+        headMo.disconnect();
         comboObservers.forEach(function(o) {
             o.disconnect();
         });
@@ -202,5 +261,9 @@
             delete te.dataset.dynamicStationTabRenamerTitle;
         }
         document.title = baseTitle();
+        if (faviconLinkEl && faviconLinkEl.parentNode) {
+            faviconLinkEl.parentNode.removeChild(faviconLinkEl);
+        }
+        faviconLinkEl = null;
     };
 })();

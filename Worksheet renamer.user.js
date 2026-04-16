@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Worksheet renamer
 // @namespace    Wolf 2.0
-// @version      2.1
+// @version      2.2
 // @description  Rename worksheet widget tab title; placeholders in prefs; optional favicon
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
-// @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} for worksheet number, {base} for the rest of the title (dates/boilerplate stripped). Example: WS {num} — {base}","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"url","group":"Tab icon","label":"Custom favicon URL","description":"Shown in the tab; leave empty to keep the site icon. Data URLs work if your browser allows them.","default":"","placeholder":"https://… or data:image/…"}}
+// @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} for worksheet number, {base} for the rest of the title (dates/boilerplate stripped). Example: WS {num} — {base}","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📋) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📋 or https://…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js
 // ==/UserScript==
@@ -170,9 +170,37 @@
         }
     }
 
+    function escapeXml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    /** Emoji or short label → SVG data URL; already a URL → unchanged */
+    function resolveTabIconHref(raw) {
+        var s = String(raw || '').trim();
+        if (!s) {
+            return '';
+        }
+        if (/^https?:\/\//i.test(s) || /^data:/i.test(s) || (s.charAt(0) === '/' && s.length > 1)) {
+            return s;
+        }
+        var graphemes = Array.from(s).slice(0, 4);
+        var label = graphemes.join('');
+        var svg =
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+            '<text x="32" y="44" text-anchor="middle" font-size="40" ' +
+            'font-family="system-ui,Segoe UI Emoji,Apple Color Emoji,Noto Color Emoji,sans-serif">' +
+            escapeXml(label) +
+            '</text></svg>';
+        return 'data:image/svg+xml,' + encodeURIComponent(svg);
+    }
+
     function applyFavicon() {
-        var url = String(getPref('worksheetFaviconUrl', '') || '').trim();
-        if (!url) {
+        var href = resolveTabIconHref(getPref('worksheetFaviconUrl', ''));
+        if (!href) {
             if (faviconLinkEl && faviconLinkEl.parentNode) {
                 faviconLinkEl.parentNode.removeChild(faviconLinkEl);
             }
@@ -185,8 +213,8 @@
             faviconLinkEl.rel = 'icon';
             document.head.appendChild(faviconLinkEl);
         }
-        if (faviconLinkEl.getAttribute('href') !== url) {
-            faviconLinkEl.setAttribute('href', url);
+        if (faviconLinkEl.getAttribute('href') !== href) {
+            faviconLinkEl.setAttribute('href', href);
         }
     }
 
