@@ -100,7 +100,7 @@
     }
 
     function buildGoTurnUrl(data) {
-        return 'https://opssuitemain.swacorp.com/go-turn-exec/' +
+        return 'https://opssuitemain.swacorp.com/go-turn-details/' +
             data.date + '-' + data.depAirport + '-' + data.flight + '-WN-NULL';
     }
 
