@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Middle-click launcher
 // @namespace    Wolf 2.0
-// @version      2.0
+// @version      2.1
 // @description  Middle-click a flight puck to open Pax connections, Go turn details, and/or a custom URL (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
