@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Middle-click launcher
 // @namespace    Wolf 2.0
-// @version      2.2
+// @version      2.3
 // @description  Middle-click a flight puck to open Pax connections, Go turn details, and/or a custom URL (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"opssuitemain …/go-turn-exec/{date}-{dep}-{flight}-WN-NULL","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Browsers open each target in its own tab/window; this controls position/size. One tab per URL is normal—merging into a single window needs the browser/extension, not page JS.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]}}
+// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"Widgets URL …/go-turn-details/{date}-{flt}-{dep}-NULL-{flt}-{arr}-NULL/overview","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Position/size for multiple popups. Side by side uses capped width so windows are not full screen.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]},"midClickMultiMaxWidth":{"type":"number","group":"Middle-click — multiple windows","label":"Max width per window (px)","description":"Caps each popup width when several are open (side by side / vertical).","default":780,"min":400,"max":2000,"step":10},"midClickMultiMaxHeight":{"type":"number","group":"Middle-click — multiple windows","label":"Max height per window (px)","description":"Caps each popup height when several are open.","default":720,"min":320,"max":2000,"step":10},"midClickOverlapTopTarget":{"type":"select","group":"Middle-click — multiple windows","label":"Which window is on top (overlap / cascade)","description":"The last opened popup usually stacks on top. Choose which target opens last.","default":"go_turn","options":[{"value":"pax","label":"Pax connections"},{"value":"go_turn","label":"Go turn details"},{"value":"custom","label":"Custom URL"},{"value":"order","label":"Order in Pref (Pax → Go → Custom)"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // ==/UserScript==
@@ -47,16 +47,86 @@
             if (match) {
                 return match[1].replace(/-/g, '');
             }
+            const compact = linked.match(/^(\d{8})-/);
+            if (compact) {
+                return compact[1];
+            }
         }
         return new Date().toISOString().slice(0, 10).replace(/-/g, '');
     }
 
+    /**
+     * data-linked-hover-id often encodes the full go-turn slug after the date, e.g.
+     * 2026-04-16-1201-MCI-NULL-719-SAT-NULL → 20260416-1201-MCI-NULL-719-SAT-NULL
+     * or 20260416-1201-MCI-NULL-719-SAT-NULL
+     */
+    function parseLinkedHoverRoute(puck) {
+        const linked = puck.getAttribute('data-linked-hover-id');
+        if (!linked || typeof linked !== 'string') {
+            return null;
+        }
+        const parts = linked.split('-');
+        if (parts.length < 4) {
+            return null;
+        }
+
+        var dateCompact;
+        var routeParts;
+
+        if (/^\d{8}$/.test(parts[0])) {
+            dateCompact = parts[0];
+            routeParts = parts.slice(1);
+        } else if (parts.length >= 9 &&
+            /^\d{4}$/.test(parts[0]) && /^\d{2}$/.test(parts[1]) && /^\d{2}$/.test(parts[2])) {
+            dateCompact = parts[0] + parts[1] + parts[2];
+            routeParts = parts.slice(3);
+        } else {
+            return null;
+        }
+
+        if (routeParts.length < 3) {
+            return null;
+        }
+
+        var slug = dateCompact + '-' + routeParts.join('-');
+        var legFlight = /^\d{1,4}$/.test(routeParts[0]) ? routeParts[0] : null;
+        var depAirport = /^[A-Z]{3}$/.test(routeParts[1]) ? routeParts[1] : null;
+        var opFlight = routeParts.length > 3 && /^\d{1,4}$/.test(routeParts[3]) ? routeParts[3] : legFlight;
+        var arrAirport = routeParts.length > 4 && /^[A-Z]{3}$/.test(routeParts[4]) ? routeParts[4] : null;
+
+        return {
+            dateCompact: dateCompact,
+            slug: slug,
+            legFlight: legFlight,
+            depAirport: depAirport,
+            opFlight: opFlight || legFlight,
+            arrAirport: arrAirport
+        };
+    }
+
+    function buildGoTurnSlugFallback(data) {
+        var leg = data.legFlight || data.flight;
+        var op = data.opFlight || data.flight;
+        var dep = data.depAirport;
+        var arr = data.arrAirport;
+        if (!arr || !/^[A-Z]{3}$/.test(arr)) {
+            arr = 'NULL';
+        }
+        if (!data.date || !leg || !dep || !op) {
+            return null;
+        }
+        return data.date + '-' + leg + '-' + dep + '-NULL-' + op + '-' + arr + '-NULL';
+    }
+
     function findFlightData(puck) {
+        var fromLink = parseLinkedHoverRoute(puck);
+
         const stationNodes = puck.querySelectorAll('[class*="tg9Iiv9oAOo="]');
         const airports = Array.from(stationNodes)
             .map(n => n.textContent.trim())
             .filter(txt => /^[A-Z]{3}$/.test(txt));
-        const depAirport = airports[0] || null;
+        var depAirport = airports[0] || (fromLink && fromLink.depAirport) || null;
+        var arrAirport = airports[1] || (fromLink && fromLink.arrAirport) || null;
 
         let flight = null;
         const flightWrapper = puck.querySelector('[class*="u8OLVYUVzvY="]');
@@ -81,17 +151,44 @@
             }
         }
 
+        if (!flight && fromLink && fromLink.opFlight) {
+            flight = fromLink.opFlight;
+        }
+        if (!flight && fromLink && fromLink.legFlight) {
+            flight = fromLink.legFlight;
+        }
+
         if (!/^\d+$/.test(flight)) {
             flight = null;
         }
 
-        const date = extractDate(puck);
+        var legFlight = (fromLink && fromLink.legFlight) || flight;
+        var opFlight = (fromLink && fromLink.opFlight) || flight;
+
+        const date = (fromLink && fromLink.dateCompact) || extractDate(puck);
 
         if (!depAirport || !flight) {
             return null;
         }
 
-        return { depAirport, flight, date };
+        var goTurnSlug = (fromLink && fromLink.slug) || buildGoTurnSlugFallback({
+            date: date,
+            depAirport: depAirport,
+            arrAirport: arrAirport,
+            flight: flight,
+            legFlight: legFlight,
+            opFlight: opFlight
+        });
+
+        return {
+            depAirport: depAirport,
+            arrAirport: arrAirport,
+            flight: flight,
+            legFlight: legFlight,
+            opFlight: opFlight,
+            date: date,
+            goTurnSlug: goTurnSlug
+        };
     }
 
     function buildPaxUrl(data) {
@@ -100,8 +197,11 @@
     }
 
     function buildGoTurnUrl(data) {
+        if (!data.goTurnSlug) {
+            return '';
+        }
         return 'https://opssuitemain.swacorp.com/widgets/go-turn-details/' +
-            data.date + '-' + data.depAirport + '-' + data.flight + '-WN-NULL';
+            data.goTurnSlug + '/overview';
     }
 
     function buildCustomUrl(data) {
@@ -133,8 +233,21 @@
         }
     }
 
+    function getMultiWindowSizeCap() {
+        var mw = Number(getPref('midClickMultiMaxWidth', 780));
+        var mh = Number(getPref('midClickMultiMaxHeight', 720));
+        if (!isFinite(mw) || mw < 400) {
+            mw = 780;
+        }
+        if (!isFinite(mh) || mh < 320) {
+            mh = 720;
+        }
+        return { maxW: mw, maxH: mh };
+    }
+
     function getLayoutRect(index, total, layout) {
         var gap = 8;
+        var cap = getMultiWindowSizeCap();
         var ax = typeof window.screen.availLeft === 'number' ? window.screen.availLeft : 0;
         var ay = typeof window.screen.availTop === 'number' ? window.screen.availTop : 0;
         var aw = typeof window.screen.availWidth === 'number' ? window.screen.availWidth : window.screen.width;
@@ -151,27 +264,36 @@
         if (layout === 'cascade') {
             var off = 36;
             var base = getSavedPosition();
+            var cw = Math.min(WINDOW_WIDTH, cap.maxW);
+            var ch = Math.min(WINDOW_HEIGHT, cap.maxH);
             return {
                 left: Math.round(base.x + index * off),
                 top: Math.round(base.y + index * off),
-                width: WINDOW_WIDTH,
-                height: WINDOW_HEIGHT
+                width: cw,
+                height: ch
             };
         }
         if (layout === 'vertical') {
             var rows = total;
-            var h = Math.max(320, Math.floor((ah - gap * (rows + 1)) / rows));
-            var w = Math.max(400, aw - gap * 2);
-            var left = ax + gap;
-            var top = ay + gap + index * (h + gap);
+            var rawH = Math.floor((ah - gap * (rows + 1)) / rows);
+            var h = Math.min(Math.max(320, rawH), cap.maxH);
+            var rawW = aw - gap * 2;
+            var w = Math.min(Math.max(400, rawW), cap.maxW);
+            var left = ax + gap + Math.max(0, Math.floor((rawW - w) / 2));
+            var totalBlockH = rows * h + gap * (rows - 1);
+            var top = ay + gap + Math.max(0, Math.floor((ah - gap * 2 - totalBlockH) / 2)) + index * (h + gap);
             return { left: left, top: top, width: w, height: h };
         }
         /* horizontal (default for multi) */
         var cols = total;
-        var w = Math.max(360, Math.floor((aw - gap * (cols + 1)) / cols));
-        var h = Math.max(400, ah - gap * 2);
-        var left = ax + gap + index * (w + gap);
-        var top = ay + gap;
+        var rawColW = Math.floor((aw - gap * (cols + 1)) / cols);
+        var w = Math.min(Math.max(360, rawColW), cap.maxW);
+        var rawH2 = ah - gap * 2;
+        var h = Math.min(Math.max(400, rawH2), cap.maxH);
+        var totalRowW = cols * w + gap * (cols - 1);
+        var left0 = ax + gap + Math.max(0, Math.floor((aw - gap * 2 - totalRowW) / 2));
+        var left = left0 + index * (w + gap);
+        var top = ay + gap + Math.max(0, Math.floor((ah - gap * 2 - h) / 2));
         return { left: left, top: top, width: w, height: h };
     }
 
@@ -202,6 +324,28 @@
         midIntervals.push(interval);
     }
 
+    function orderLaunchItems(items, topPref) {
+        var p = String(topPref || 'go_turn');
+        if (p === 'order' || items.length < 2) {
+            return items;
+        }
+        var lastKind = p;
+        var lastIdx = -1;
+        var i;
+        for (i = 0; i < items.length; i++) {
+            if (items[i].kind === lastKind) {
+                lastIdx = i;
+            }
+        }
+        if (lastIdx <= 0) {
+            return items;
+        }
+        var last = items[lastIdx];
+        var out = items.filter(function(_, j) { return j !== lastIdx; });
+        out.push(last);
+        return out;
+    }
+
     function launchAll(data) {
         var pax = !!getPref('midClickLaunchPax', true);
         var go = !!getPref('midClickLaunchGoTurn', false);
@@ -212,27 +356,34 @@
             return;
         }
 
-        var urls = [];
+        var items = [];
         if (pax) {
-            urls.push(buildPaxUrl(data));
+            items.push({ kind: 'pax', url: buildPaxUrl(data) });
         }
         if (go) {
-            urls.push(buildGoTurnUrl(data));
+            var gUrl = buildGoTurnUrl(data);
+            if (!gUrl) {
+                log('Go turn URL could not be built (missing route slug)');
+            } else {
+                items.push({ kind: 'go_turn', url: gUrl });
+            }
         }
         if (cust) {
             var u = buildCustomUrl(data);
             if (u) {
-                urls.push(u);
+                items.push({ kind: 'custom', url: u });
             } else {
                 log('Custom URL template empty');
             }
         }
 
+        items = orderLaunchItems(items, getPref('midClickOverlapTopTarget', 'go_turn'));
+
         var layout = String(getPref('midClickMultiLayout', 'horizontal') || 'horizontal');
-        var n = urls.length;
+        var n = items.length;
         var i;
-        for (i = 0; i < urls.length; i++) {
-            openWindow(urls[i], i, n, layout);
+        for (i = 0; i < items.length; i++) {
+            openWindow(items[i].url, i, n, layout);
         }
     }
 
