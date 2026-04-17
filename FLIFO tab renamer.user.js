@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         FLIFO tab renamer
 // @namespace    Wolf 2.0
-// @version      1.0
+// @version      1.1
 // @description  Rename FLIFO tabs once per load; {base} = title when the page loaded; optional favicon
 // @match        https://opssuitemain.swacorp.com/flifo*
 // @grant        none
-// @donkeycode-pref {"flifoTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"{base} = browser title when the tab loaded. Reload to refresh. Extra path after /flifo is ignored for matching.","default":"FLIFO · {base}","placeholder":"FLIFO · {base}"},"flifoTabFavicon":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Emoji or https://… URL. Empty = site default.","default":"","placeholder":"🛫"}}
+// @donkeycode-pref {"flifoTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Include {base} only if you want the original page title in the tab. Plain text uses only your text. Reload to refresh {base}.","default":"FLIFO · {base}","placeholder":"FLIFO · {base}"},"flifoTabFavicon":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Emoji or https://… URL. Empty = site default.","default":"","placeholder":"🛫"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/FLIFO%20tab%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/FLIFO%20tab%20renamer.user.js
 // ==/UserScript==
@@ -71,9 +71,6 @@
 
     function applyOnce() {
         var tpl = String(getPref('flifoTabTitleTemplate', 'FLIFO · {base}') || 'FLIFO · {base}');
-        if (tpl.indexOf('{base}') === -1) {
-            tpl = tpl + '{base}';
-        }
         var rawBase = baseTitleAtInject;
         writeStoredRaw(rawBase);
         var next = tpl.split('{base}').join(rawBase).replace(/\s+/g, ' ').trim();

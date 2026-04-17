@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Related flights tab renamer
 // @namespace    Wolf 2.0
-// @version      1.0
+// @version      1.1
 // @description  Rename related-flights widget tabs once per load; {base} = title when the page loaded; optional favicon
 // @match        https://opssuitemain.swacorp.com/widgets/related-flights*
 // @grant        none
-// @donkeycode-pref {"relatedFlightsTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"{base} = browser title when the tab loaded. Reload to refresh. Extra path after /related-flights/ is ignored for matching.","default":"Related flights · {base}","placeholder":"Related flights · {base}"},"relatedFlightsTabFavicon":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Emoji or https://… URL. Empty = site default.","default":"","placeholder":"🔗"}}
+// @donkeycode-pref {"relatedFlightsTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Include {base} only if you want the original page title in the tab. Plain text uses only your text. Reload to refresh {base}.","default":"Related flights · {base}","placeholder":"Related flights · {base}"},"relatedFlightsTabFavicon":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Emoji or https://… URL. Empty = site default.","default":"","placeholder":"🔗"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Related%20flights%20tab%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Related%20flights%20tab%20renamer.user.js
 // ==/UserScript==
@@ -71,9 +71,6 @@
 
     function applyOnce() {
         var tpl = String(getPref('relatedFlightsTabTitleTemplate', 'Related flights · {base}') || 'Related flights · {base}');
-        if (tpl.indexOf('{base}') === -1) {
-            tpl = tpl + '{base}';
-        }
         var rawBase = baseTitleAtInject;
         writeStoredRaw(rawBase);
         var next = tpl.split('{base}').join(rawBase).replace(/\s+/g, ' ').trim();

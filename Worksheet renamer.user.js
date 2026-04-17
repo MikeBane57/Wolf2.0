@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Worksheet renamer
 // @namespace    Wolf 2.0
-// @version      2.4
+// @version      2.5
 // @description  Rename worksheet widget tab title; placeholders in prefs; optional favicon
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
-// @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} for worksheet number, {base} for the rest of the title (dates/boilerplate stripped). Example: WS {num} — {base}","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📋) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📋 or https://…"}}
+// @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} and optionally {base} (rest of title, dates stripped). Omit {base} for a fixed label only, e.g. WS {num}.","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📋) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📋 or https://…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js
 // ==/UserScript==
@@ -78,11 +78,7 @@
     }
 
     function getTemplate() {
-        var t = String(getPref('worksheetTitleTemplate', '{num} · {base}') || '{num} · {base}');
-        if (t.indexOf('{base}') === -1) {
-            t = t + '{base}';
-        }
-        return t;
+        return String(getPref('worksheetTitleTemplate', '{num} · {base}') || '{num} · {base}');
     }
 
     function stripDatesAndBoilerplate(s) {

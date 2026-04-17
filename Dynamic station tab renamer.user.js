@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Dynamic station tab renamer
 // @namespace    Wolf 2.0
-// @version      2.3
+// @version      2.4
 // @description  Reflect schedule station (3-letter code) in the tab title; template in prefs; optional tab icon
 // @match        https://opssuitemain.swacorp.com/schedule*
-// @donkeycode-pref {"stationTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {station} for the IATA code and {base} for the page title without this prefix. Example: {station} · {base}","default":"{station} · {base}"},"stationTabFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📅) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📅 or https://…"}}
+// @donkeycode-pref {"stationTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {station} and optionally {base}. Omit {base} for station-only titles, e.g. {station} only.","default":"{station} · {base}"},"stationTabFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📅) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📅 or https://…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Dynamic%20station%20tab%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Dynamic%20station%20tab%20renamer.user.js
 // ==/UserScript==
@@ -29,11 +29,7 @@
     }
 
     function getTemplate() {
-        var t = String(getPref('stationTabTitleTemplate', '{station} · {base}') || '{station} · {base}');
-        if (t.indexOf('{base}') === -1) {
-            t = t + '{base}';
-        }
-        return t;
+        return String(getPref('stationTabTitleTemplate', '{station} · {base}') || '{station} · {base}');
     }
 
     var bodyRefreshTimer = null;
