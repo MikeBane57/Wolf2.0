@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet renamer
 // @namespace    Wolf 2.0
-// @version      2.2
+// @version      2.3
 // @description  Rename worksheet widget tab title; placeholders in prefs; optional favicon
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} for worksheet number, {base} for the rest of the title (dates/boilerplate stripped). Example: WS {num} — {base}","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📋) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📋 or https://…"}}
@@ -31,6 +31,8 @@
 
     let titleElObserver = null;
     var faviconLinkEl = null;
+    var headMo = null;
+    var refreshDebounceTimer = null;
 
     function readStoredRawTitle() {
         try {
@@ -218,14 +220,30 @@
         }
     }
 
+    function scheduleRefresh() {
+        if (refreshDebounceTimer) {
+            clearTimeout(refreshDebounceTimer);
+        }
+        refreshDebounceTimer = setTimeout(function() {
+            refreshDebounceTimer = null;
+            wireTitleElement();
+            applyTitle();
+            applyFavicon();
+        }, 120);
+    }
+
     function wireTitleElement() {
         const el = document.querySelector('title');
         if (!el || el.dataset.worksheetRenamerWired) {
             return;
         }
+        if (titleElObserver) {
+            titleElObserver.disconnect();
+            titleElObserver = null;
+        }
         el.dataset.worksheetRenamerWired = '1';
         titleElObserver = new MutationObserver(function() {
-            requestAnimationFrame(applyTitle);
+            scheduleRefresh();
         });
         titleElObserver.observe(el, {
             childList: true,
@@ -234,29 +252,26 @@
         });
     }
 
-    const headMo = new MutationObserver(function() {
-        wireTitleElement();
-        applyTitle();
-        applyFavicon();
+    headMo = new MutationObserver(function() {
+        scheduleRefresh();
     });
 
-    const bodyMo = new MutationObserver(function() {
-        wireTitleElement();
-        applyTitle();
-        applyFavicon();
-    });
-
-    bodyMo.observe(document.body, { childList: true, subtree: true });
     if (document.head) {
-        headMo.observe(document.head, { childList: true, subtree: true });
+        headMo.observe(document.head, { childList: true, subtree: false });
     }
     wireTitleElement();
     applyTitle();
     applyFavicon();
 
     window.__myScriptCleanup = function() {
-        bodyMo.disconnect();
-        headMo.disconnect();
+        if (refreshDebounceTimer) {
+            clearTimeout(refreshDebounceTimer);
+            refreshDebounceTimer = null;
+        }
+        if (headMo) {
+            headMo.disconnect();
+            headMo = null;
+        }
         if (titleElObserver) {
             titleElObserver.disconnect();
             titleElObserver = null;
