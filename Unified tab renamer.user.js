@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Unified tab renamer
 // @namespace    Wolf 2.0
-// @version      1.1
-// @description  Per-URL tab title + favicon: worksheet, schedule station, templates, pass-through; configure in DonkeyCODE prefs
+// @version      1.2
+// @description  Per-URL tab title + favicon: worksheet, schedule station, templates, pass-through; configure in DonkeyCODE prefs (mirrored locally)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"tabRenamerUseCustomRules":{"type":"boolean","group":"Tab rules","label":"Use custom rules below","description":"When off, built-in rules apply (worksheet, schedule, /alerts, /ots). When on, only the rules you fill in (Rule 1–8) are used—first matching path wins. Leave a rule’s path empty to skip that slot.","default":false}}
+// @donkeycode-pref {"tabRenamerUseCustomRules":{"type":"boolean","group":"Tab rules","label":"Use custom rules below","description":"When off, built-in rules apply (worksheet, schedule, /alerts, /ots). When on, only the rules you fill in (Rule 1–8) are used—first matching path wins. Leave a rule’s path empty to skip that slot. Saving in DonkeyCODE stores these values; this script also keeps a backup copy in the browser for this site.","default":false}}
 // @donkeycode-pref {"tabRenamerRule1Path":{"type":"string","group":"Rule 1","label":"Path contains","description":"Tab URL path must start with this (e.g. /widgets/worksheet). Empty = skip this slot.","default":"","placeholder":"/widgets/worksheet"},"tabRenamerRule1Mode":{"type":"select","group":"Rule 1","label":"Mode","description":"Worksheet: {num} {base}. Station: {station} {base}. Template: any placeholders. Pass-through: title unchanged; set favicon only.","default":"worksheet","options":[{"value":"worksheet","label":"Worksheet"},{"value":"station","label":"Schedule station"},{"value":"template","label":"Template"},{"value":"pass_through","label":"Pass-through (favicon only)"}]},"tabRenamerRule1Title":{"type":"string","group":"Rule 1","label":"Title template","description":"Placeholders: {num} {base} {station}. Worksheet/station defaults apply if left empty.","default":"","placeholder":"{num} · {base}"},"tabRenamerRule1Favicon":{"type":"string","group":"Rule 1","label":"Tab icon","description":"Emoji or image URL. Empty = site default.","default":"","placeholder":"📋"}}
 // @donkeycode-pref {"tabRenamerRule2Path":{"type":"string","group":"Rule 2","label":"Path contains","default":"","placeholder":"/schedule"},"tabRenamerRule2Mode":{"type":"select","group":"Rule 2","label":"Mode","default":"station","options":[{"value":"worksheet","label":"Worksheet"},{"value":"station","label":"Schedule station"},{"value":"template","label":"Template"},{"value":"pass_through","label":"Pass-through (favicon only)"}]},"tabRenamerRule2Title":{"type":"string","group":"Rule 2","label":"Title template","default":"","placeholder":"{station} · {base}"},"tabRenamerRule2Favicon":{"type":"string","group":"Rule 2","label":"Tab icon","default":"","placeholder":""}}
 // @donkeycode-pref {"tabRenamerRule3Path":{"type":"string","group":"Rule 3","label":"Path contains","default":"","placeholder":"/alerts"},"tabRenamerRule3Mode":{"type":"select","group":"Rule 3","label":"Mode","default":"pass_through","options":[{"value":"worksheet","label":"Worksheet"},{"value":"station","label":"Schedule station"},{"value":"template","label":"Template"},{"value":"pass_through","label":"Pass-through (favicon only)"}]},"tabRenamerRule3Title":{"type":"string","group":"Rule 3","label":"Title template","default":"","placeholder":"{base}"},"tabRenamerRule3Favicon":{"type":"string","group":"Rule 3","label":"Tab icon","default":"","placeholder":"🔔"}}
@@ -59,37 +59,98 @@
     var popStateHandler = null;
     var hashChangeHandler = null;
 
-    function getPref(key, def) {
+    var PREF_MIRROR_KEY = 'dc_unified_tab_renamer_prefs_mirror';
+
+    var ALL_PREF_KEYS = [
+        'tabRenamerUseCustomRules',
+        'tabRenamerRule1Path', 'tabRenamerRule1Mode', 'tabRenamerRule1Title', 'tabRenamerRule1Favicon',
+        'tabRenamerRule2Path', 'tabRenamerRule2Mode', 'tabRenamerRule2Title', 'tabRenamerRule2Favicon',
+        'tabRenamerRule3Path', 'tabRenamerRule3Mode', 'tabRenamerRule3Title', 'tabRenamerRule3Favicon',
+        'tabRenamerRule4Path', 'tabRenamerRule4Mode', 'tabRenamerRule4Title', 'tabRenamerRule4Favicon',
+        'tabRenamerRule5Path', 'tabRenamerRule5Mode', 'tabRenamerRule5Title', 'tabRenamerRule5Favicon',
+        'tabRenamerRule6Path', 'tabRenamerRule6Mode', 'tabRenamerRule6Title', 'tabRenamerRule6Favicon',
+        'tabRenamerRule7Path', 'tabRenamerRule7Mode', 'tabRenamerRule7Title', 'tabRenamerRule7Favicon',
+        'tabRenamerRule8Path', 'tabRenamerRule8Mode', 'tabRenamerRule8Title', 'tabRenamerRule8Favicon'
+    ];
+
+    function readPrefMirror() {
+        try {
+            var raw = localStorage.getItem(PREF_MIRROR_KEY);
+            if (!raw) {
+                return null;
+            }
+            var o = JSON.parse(raw);
+            return o && typeof o === 'object' ? o : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /** Raw value from DonkeyCODE, or undefined if missing / no API */
+    function getPrefRaw(key) {
         if (typeof donkeycodeGetPref !== 'function') {
-            return def;
+            return undefined;
         }
-        var v = donkeycodeGetPref(key);
-        if (v === undefined || v === null || v === '') {
-            return def;
+        return donkeycodeGetPref(key);
+    }
+
+    /**
+     * Prefer injected prefs; if a key is missing (undefined/null), use last saved mirror so
+     * rules survive across sessions and when prefs sync is delayed.
+     */
+    function getPrefMirrored(key, def) {
+        var v = getPrefRaw(key);
+        if (v !== undefined && v !== null) {
+            if (typeof v === 'boolean') {
+                return v;
+            }
+            return v;
         }
-        return v;
+        var snap = readPrefMirror();
+        if (snap && Object.prototype.hasOwnProperty.call(snap, key)) {
+            var m = snap[key];
+            if (m !== undefined && m !== null) {
+                return m;
+            }
+        }
+        return def;
+    }
+
+    function persistPrefMirror() {
+        var snap = readPrefMirror() || {};
+        var i;
+        for (i = 0; i < ALL_PREF_KEYS.length; i++) {
+            var k = ALL_PREF_KEYS[i];
+            var v = getPrefRaw(k);
+            if (v !== undefined && v !== null) {
+                snap[k] = v;
+            }
+        }
+        try {
+            localStorage.setItem(PREF_MIRROR_KEY, JSON.stringify(snap));
+        } catch (e) {}
     }
 
     function loadRulesFromPrefs() {
-        var useCustom = !!getPref('tabRenamerUseCustomRules', false);
+        var useCustom = !!getPrefMirrored('tabRenamerUseCustomRules', false);
         if (!useCustom) {
             return DEFAULT_RULES.slice();
         }
         var rules = [];
         var i;
         for (i = 1; i <= 8; i++) {
-            var path = String(getPref('tabRenamerRule' + i + 'Path', '') || '').trim();
+            var path = String(getPrefMirrored('tabRenamerRule' + i + 'Path', '') || '').trim();
             if (!path) {
                 continue;
             }
-            var mode = String(getPref('tabRenamerRule' + i + 'Mode', 'template') || 'template')
+            var mode = String(getPrefMirrored('tabRenamerRule' + i + 'Mode', 'template') || 'template')
                 .toLowerCase()
                 .replace(/-/g, '_');
             rules.push({
                 pathPrefix: path,
                 mode: mode,
-                titleTemplate: String(getPref('tabRenamerRule' + i + 'Title', '') || '').trim(),
-                favicon: String(getPref('tabRenamerRule' + i + 'Favicon', '') || '').trim()
+                titleTemplate: String(getPrefMirrored('tabRenamerRule' + i + 'Title', '') || '').trim(),
+                favicon: String(getPrefMirrored('tabRenamerRule' + i + 'Favicon', '') || '').trim()
             });
         }
         if (rules.length === 0) {
@@ -562,6 +623,7 @@
     }
 
     function reinit() {
+        persistPrefMirror();
         var rules = loadRulesFromPrefs();
         var rule = findRuleForPath(location.pathname, rules);
         currentRule = rule;
