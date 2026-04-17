@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Related flights columns
 // @namespace    Wolf 2.0
-// @version      2.0
+// @version      2.1
 // @description  Show/hide and width for related-flights table columns (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -49,7 +49,19 @@
         return !!getPref(meta.key, meta.defVisible);
     }
 
+    var debounceTimer = null;
+    var DEBOUNCE_MS = 150;
+
     function applyAll() {
+        var tables = document.querySelectorAll('table[data-testid="related-flights-table"]');
+        if (!tables.length) {
+            var orphan = document.getElementById(STYLE_ID);
+            if (orphan) {
+                orphan.remove();
+            }
+            return;
+        }
+
         document.querySelectorAll('table[data-testid="related-flights-table"] thead th').forEach(function(th) {
             th.style.width = '';
         });
@@ -59,7 +71,7 @@
 
         var cssParts = [];
 
-        document.querySelectorAll('table[data-testid="related-flights-table"]').forEach(function(table) {
+        tables.forEach(function(table) {
             var headers = table.querySelectorAll('thead th');
             headers.forEach(function(th, idx) {
                 var label = th.getAttribute('label') || th.textContent.trim();
@@ -103,21 +115,31 @@
         }
     }
 
+    function scheduleApplyAll() {
+        if (debounceTimer) {
+            clearTimeout(debounceTimer);
+        }
+        debounceTimer = setTimeout(function() {
+            debounceTimer = null;
+            applyAll();
+        }, DEBOUNCE_MS);
+    }
+
     applyAll();
 
-    var observer = new MutationObserver(function(muts) {
-        muts.forEach(function(m) {
-            m.addedNodes.forEach(function(n) {
-                if (n.nodeType === 1) {
-                    applyAll();
-                }
-            });
-        });
+    var observer = new MutationObserver(function() {
+        scheduleApplyAll();
     });
 
-    observer.observe(document.body, { childList: true, subtree: true });
+    if (document.body) {
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
 
     window.__myScriptCleanup = function() {
+        if (debounceTimer) {
+            clearTimeout(debounceTimer);
+            debounceTimer = null;
+        }
         observer.disconnect();
         clearTableStyles();
     };
