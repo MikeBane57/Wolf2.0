@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dynamic station tab renamer
 // @namespace    Wolf 2.0
-// @version      2.2
+// @version      2.3
 // @description  Reflect schedule station (3-letter code) in the tab title; template in prefs; optional tab icon
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @donkeycode-pref {"stationTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {station} for the IATA code and {base} for the page title without this prefix. Example: {station} · {base}","default":"{station} · {base}"},"stationTabFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📅) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📅 or https://…"}}
@@ -37,6 +37,8 @@
     }
 
     var bodyRefreshTimer = null;
+    var titlePollTimer = null;
+    var TITLE_POLL_MS = 3000;
 
     function scheduleBodyRefresh() {
         if (bodyRefreshTimer) {
@@ -45,23 +47,16 @@
         bodyRefreshTimer = setTimeout(function() {
             bodyRefreshTimer = null;
             wireCombos();
-            wireTitleElement();
             syncTitle();
             applyFavicon();
         }, 120);
     }
-
-    const headMo = new MutationObserver(function() {
-        wireTitleElement();
-        applyFavicon();
-    });
 
     const bodyMo = new MutationObserver(function() {
         scheduleBodyRefresh();
     });
 
     const comboObservers = [];
-    let titleElObserver = null;
     var faviconLinkEl = null;
 
     function escapeXml(s) {
@@ -208,17 +203,7 @@
         var code = readStationCode();
         var base = baseTitle();
         if (!shouldPrefixTitle(code)) {
-            document.title = base;
-            return;
-        }
-        document.title = applyTitle(code, base);
-    }
-
-    function ensurePrefixedTitle() {
-        var code = readStationCode();
-        var base = baseTitle();
-        if (!shouldPrefixTitle(code)) {
-            if (TITLE_PREFIX_RE.test(document.title)) {
+            if (document.title !== base) {
                 document.title = base;
             }
             return;
@@ -229,57 +214,32 @@
         }
     }
 
-    function wireTitleElement() {
-        const el = document.querySelector('title');
-        if (!el || el.dataset.dynamicStationTabRenamerTitle) {
-            return;
-        }
-        if (titleElObserver) {
-            titleElObserver.disconnect();
-            titleElObserver = null;
-        }
-        el.dataset.dynamicStationTabRenamerTitle = '1';
-        titleElObserver = new MutationObserver(function() {
-            requestAnimationFrame(ensurePrefixedTitle);
-        });
-        titleElObserver.observe(el, {
-            childList: true,
-            subtree: true,
-            characterData: true
-        });
-    }
-
     bodyMo.observe(document.body, { childList: true, subtree: true });
-    if (document.head) {
-        headMo.observe(document.head, { childList: true, subtree: false });
-    }
     wireCombos();
-    wireTitleElement();
     syncTitle();
     applyFavicon();
+    titlePollTimer = setInterval(function() {
+        syncTitle();
+        applyFavicon();
+    }, TITLE_POLL_MS);
 
     window.__myScriptCleanup = function() {
         if (bodyRefreshTimer) {
             clearTimeout(bodyRefreshTimer);
             bodyRefreshTimer = null;
         }
+        if (titlePollTimer) {
+            clearInterval(titlePollTimer);
+            titlePollTimer = null;
+        }
         bodyMo.disconnect();
-        headMo.disconnect();
         comboObservers.forEach(function(o) {
             o.disconnect();
         });
         comboObservers.length = 0;
-        if (titleElObserver) {
-            titleElObserver.disconnect();
-            titleElObserver = null;
-        }
         document.querySelectorAll(COMBO + '[data-dynamic-station-tab-renamer-wired]').forEach(function(el) {
             delete el.dataset.dynamicStationTabRenamerWired;
         });
-        var te = document.querySelector('title');
-        if (te) {
-            delete te.dataset.dynamicStationTabRenamerTitle;
-        }
         document.title = baseTitle();
         if (faviconLinkEl && faviconLinkEl.parentNode) {
             faviconLinkEl.parentNode.removeChild(faviconLinkEl);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Alerts tab renamer
 // @namespace    Wolf 2.0
-// @version      1.1
+// @version      1.2
 // @description  Rename /alerts tabs by instance (1, 2, 3…) with optional favicon; prefs in DonkeyCODE
 // @match        https://opssuitemain.swacorp.com/alerts*
 // @grant        none
@@ -30,12 +30,8 @@
 
     var joinedAt = Date.now();
     var baseTitleAtInject = document.title;
-    var titleElObserver = null;
-    var headMo = null;
     var faviconLinkEl = null;
     var heartbeatTimer = null;
-    var tickScheduled = false;
-    var tickDebounceTimer = null;
     var cachedInstanceN = 1;
     var rawTitleStorageKey = 'dc_alerts_raw_title_' + location.pathname + location.search;
 
@@ -212,37 +208,6 @@
         applyVisuals();
     }
 
-    function scheduleDebouncedApply() {
-        if (tickScheduled) {
-            return;
-        }
-        tickScheduled = true;
-        if (tickDebounceTimer) {
-            clearTimeout(tickDebounceTimer);
-        }
-        tickDebounceTimer = setTimeout(function() {
-            tickDebounceTimer = null;
-            tickScheduled = false;
-            applyVisuals();
-        }, 120);
-    }
-
-    function wireTitleElement() {
-        var el = document.querySelector('title');
-        if (!el || el.dataset.dcAlertsTabRenamer) {
-            return;
-        }
-        if (titleElObserver) {
-            titleElObserver.disconnect();
-            titleElObserver = null;
-        }
-        el.dataset.dcAlertsTabRenamer = '1';
-        titleElObserver = new MutationObserver(function() {
-            scheduleDebouncedApply();
-        });
-        titleElObserver.observe(el, { childList: true, subtree: true, characterData: true });
-    }
-
     function removeFromRegistry() {
         var list = readRegistry().filter(function(e) {
             return e && e.id !== tabId;
@@ -254,15 +219,7 @@
         if (!readStoredRawTitle()) {
             writeStoredRawTitle(baseTitleAtInject);
         }
-        wireTitleElement();
         heartbeat();
-        headMo = new MutationObserver(function() {
-            wireTitleElement();
-            scheduleDebouncedApply();
-        });
-        if (document.head) {
-            headMo.observe(document.head, { childList: true, subtree: false });
-        }
         heartbeatTimer = setInterval(heartbeat, HEARTBEAT_MS);
         window.addEventListener('beforeunload', removeFromRegistry);
         window.addEventListener('pagehide', removeFromRegistry);
@@ -275,25 +232,9 @@
             clearInterval(heartbeatTimer);
             heartbeatTimer = null;
         }
-        if (tickDebounceTimer) {
-            clearTimeout(tickDebounceTimer);
-            tickDebounceTimer = null;
-        }
         removeFromRegistry();
         window.removeEventListener('beforeunload', removeFromRegistry);
         window.removeEventListener('pagehide', removeFromRegistry);
-        if (headMo) {
-            headMo.disconnect();
-            headMo = null;
-        }
-        if (titleElObserver) {
-            titleElObserver.disconnect();
-            titleElObserver = null;
-        }
-        var te = document.querySelector('title');
-        if (te) {
-            delete te.dataset.dcAlertsTabRenamer;
-        }
         if (faviconLinkEl && faviconLinkEl.parentNode) {
             faviconLinkEl.parentNode.removeChild(faviconLinkEl);
         }

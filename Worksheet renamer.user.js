@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet renamer
 // @namespace    Wolf 2.0
-// @version      2.3
+// @version      2.4
 // @description  Rename worksheet widget tab title; placeholders in prefs; optional favicon
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} for worksheet number, {base} for the rest of the title (dates/boilerplate stripped). Example: WS {num} — {base}","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📋) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📋 or https://…"}}
@@ -33,6 +33,8 @@
     var faviconLinkEl = null;
     var headMo = null;
     var refreshDebounceTimer = null;
+    /** After a successful rename we disconnect observers — title only needs one apply until navigation reloads the page. */
+    var renameComplete = false;
 
     function readStoredRawTitle() {
         try {
@@ -164,12 +166,18 @@
     }
 
     function applyTitle() {
+        if (renameComplete) {
+            return;
+        }
         var raw = getRawTitleForTransform();
+        if (!shouldRewrite(raw)) {
+            return;
+        }
         writeStoredRawTitle(raw);
         var next = transformTitle(raw);
-        if (next !== document.title) {
-            document.title = next;
-        }
+        document.title = next;
+        renameComplete = true;
+        stopObservers();
     }
 
     function escapeXml(s) {
@@ -220,7 +228,25 @@
         }
     }
 
+    function stopObservers() {
+        if (refreshDebounceTimer) {
+            clearTimeout(refreshDebounceTimer);
+            refreshDebounceTimer = null;
+        }
+        if (headMo) {
+            headMo.disconnect();
+            headMo = null;
+        }
+        if (titleElObserver) {
+            titleElObserver.disconnect();
+            titleElObserver = null;
+        }
+    }
+
     function scheduleRefresh() {
+        if (renameComplete) {
+            return;
+        }
         if (refreshDebounceTimer) {
             clearTimeout(refreshDebounceTimer);
         }
@@ -264,18 +290,7 @@
     applyFavicon();
 
     window.__myScriptCleanup = function() {
-        if (refreshDebounceTimer) {
-            clearTimeout(refreshDebounceTimer);
-            refreshDebounceTimer = null;
-        }
-        if (headMo) {
-            headMo.disconnect();
-            headMo = null;
-        }
-        if (titleElObserver) {
-            titleElObserver.disconnect();
-            titleElObserver = null;
-        }
+        stopObservers();
         const t = document.querySelector('title');
         if (t) {
             delete t.dataset.worksheetRenamerWired;
