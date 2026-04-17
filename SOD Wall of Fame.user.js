@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.3.0
+// @version      1.3.1
 // @description  FIMS tab: wall of fame accolades; password to edit; GitHub file sync or legacy URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -801,24 +801,20 @@
         render(panel);
     }
 
-    /** Capture on menu so clicks on inner div/emoji still open WoF (React/Semantic UI can swallow bubble). */
-    function onWofMenuCaptureClick(e) {
-        var ourTab = document.getElementById(TAB_ID);
-        if (!ourTab || !ourTab.contains(e.target)) {
-            return;
-        }
+    /** Capture on our tab anchor only (menu + contains() unreliable with retargeting). */
+    function onWofTabCapture(e) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
         showWallOfFame();
     }
 
-    function wireTabMenuCapture(menu) {
-        if (!menu || menu.dataset.dcWofMenuCapture) {
+    function wireWofTabCapture(tabEl) {
+        if (!tabEl || tabEl.dataset.dcWofTabCapture) {
             return;
         }
-        menu.dataset.dcWofMenuCapture = '1';
-        menu.addEventListener('click', onWofMenuCaptureClick, true);
+        tabEl.dataset.dcWofTabCapture = '1';
+        tabEl.addEventListener('click', onWofTabCapture, true);
     }
 
     function wireTabs(menu) {
@@ -926,10 +922,7 @@
         }
         var existing = document.getElementById(TAB_ID);
         if (existing) {
-            var foundEarly = findTabMenu();
-            if (foundEarly && foundEarly.menu) {
-                wireTabMenuCapture(foundEarly.menu);
-            }
+            wireWofTabCapture(existing);
             return existing;
         }
         var found = findTabMenu();
@@ -944,7 +937,7 @@
         a.innerHTML = '<div>\u{1F3DB}\u{FE0F} Wall of Fame</div>';
         var insertAfter = document.getElementById('dc-fims-top-clickers-host') || found.advisoriesTab;
         insertAfter.insertAdjacentElement('afterend', a);
-        wireTabMenuCapture(found.menu);
+        wireWofTabCapture(a);
         return a;
     }
 
@@ -994,8 +987,12 @@
             rootMo = null;
         }
         var tab = document.getElementById(TAB_ID);
-        if (tab && tab.parentNode) {
-            tab.parentNode.removeChild(tab);
+        if (tab) {
+            tab.removeEventListener('click', onWofTabCapture, true);
+            delete tab.dataset.dcWofTabCapture;
+            if (tab.parentNode) {
+                tab.parentNode.removeChild(tab);
+            }
         }
         var panel = document.getElementById(PANEL_ID);
         if (panel && panel.parentNode) {
@@ -1007,10 +1004,6 @@
         }
         var menuInfo = findTabMenu();
         if (menuInfo && menuInfo.menu) {
-            if (menuInfo.menu.dataset.dcWofMenuCapture) {
-                menuInfo.menu.removeEventListener('click', onWofMenuCaptureClick, true);
-                delete menuInfo.menu.dataset.dcWofMenuCapture;
-            }
             delete menuInfo.menu.dataset.dcWofTabWire;
         }
         window.__myScriptCleanup = undefined;

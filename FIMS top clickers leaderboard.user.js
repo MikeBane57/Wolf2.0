@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.3.6
+// @version      1.3.7
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersMaxNames":{"type":"number","group":"Leaderboard","label":"Max names shown","description":"0 = show everyone with a count. Set a positive number only if you want to cap a very long list.","default":0,"min":0,"max":500,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
@@ -560,24 +560,20 @@
         return out;
     }
 
-    /** Capture on menu so clicks on inner div/span still open the panel (React/Semantic UI can swallow bubble). */
-    function onFimsMenuCaptureClick(e) {
-        var ourTab = document.getElementById(TAB_ID);
-        if (!ourTab || !ourTab.contains(e.target)) {
-            return;
-        }
+    /** Capture on our tab anchor only (menu delegation + contains() fails with shadow/retargeting). */
+    function onTopClickersTabCapture(e) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
         showLeaderboardInFimsArea();
     }
 
-    function wireTabMenuCapture(menu) {
-        if (!menu || menu.dataset.dcFimsTcMenuCapture) {
+    function wireOurTabCapture(tabEl) {
+        if (!tabEl || tabEl.dataset.dcFimsTcCapture) {
             return;
         }
-        menu.dataset.dcFimsTcMenuCapture = '1';
-        menu.addEventListener('click', onFimsMenuCaptureClick, true);
+        tabEl.dataset.dcFimsTcCapture = '1';
+        tabEl.addEventListener('click', onTopClickersTabCapture, true);
     }
 
     function onFimsTabClick() {
@@ -735,10 +731,7 @@
     function ensureTab() {
         var existing = document.getElementById(TAB_ID);
         if (existing) {
-            var foundEarly = findTabMenu();
-            if (foundEarly && foundEarly.menu) {
-                wireTabMenuCapture(foundEarly.menu);
-            }
+            wireOurTabCapture(existing);
             return existing;
         }
         var found = findTabMenu();
@@ -753,7 +746,7 @@
         a.href = '#';
         a.innerHTML = '<div><span aria-hidden="true">\u{1F3C6}</span> Top clickers</div>';
         found.advisoriesTab.insertAdjacentElement('afterend', a);
-        wireTabMenuCapture(found.menu);
+        wireOurTabCapture(a);
         return a;
     }
 
@@ -837,10 +830,6 @@
         }
         var menuInfo = findTabMenu();
         if (menuInfo && menuInfo.menu) {
-            if (menuInfo.menu.dataset.dcFimsTcMenuCapture) {
-                menuInfo.menu.removeEventListener('click', onFimsMenuCaptureClick, true);
-                delete menuInfo.menu.dataset.dcFimsTcMenuCapture;
-            }
             delete menuInfo.menu.dataset.dcFimsTopClickersTabWire;
             var links = menuInfo.menu.querySelectorAll('a.item');
             var i;
@@ -858,8 +847,12 @@
             }
         }
         var tab = document.getElementById(TAB_ID);
-        if (tab && tab.parentNode) {
-            tab.parentNode.removeChild(tab);
+        if (tab) {
+            tab.removeEventListener('click', onTopClickersTabCapture, true);
+            delete tab.dataset.dcFimsTcCapture;
+            if (tab.parentNode) {
+                tab.parentNode.removeChild(tab);
+            }
         }
         var panel = document.getElementById(PANEL_ID);
         if (panel && panel.parentNode) {
