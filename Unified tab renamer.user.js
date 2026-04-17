@@ -1,19 +1,25 @@
 // ==UserScript==
 // @name         Unified tab renamer
 // @namespace    Wolf 2.0
-// @version      1.0
-// @description  Per-URL tab title + favicon: worksheet, schedule station, templates, pass-through; rules in prefs or saved locally
+// @version      1.1
+// @description  Per-URL tab title + favicon: worksheet, schedule station, templates, pass-through; configure in DonkeyCODE prefs
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"tabRenamerRulesJson":{"type":"string","group":"Rules","label":"Rules (JSON array)","description":"Array of {pathPrefix, mode, titleTemplate?, favicon?}. Modes: worksheet | station | template | pass_through. First matching pathPrefix wins—list specific paths first. Leave empty to use built-in defaults + any copy in local storage.","default":"","placeholder":"[{\"pathPrefix\":\"/alerts\",\"mode\":\"pass_through\",\"favicon\":\"🔔\"}]"},"tabRenamerShowEditor":{"type":"boolean","group":"Editor","label":"Show \"Tab rules\" button","description":"Floating button to edit rules and save to this browser (local storage).","default":true}}
+// @donkeycode-pref {"tabRenamerUseCustomRules":{"type":"boolean","group":"Tab rules","label":"Use custom rules below","description":"When off, built-in rules apply (worksheet, schedule, /alerts, /ots). When on, only the rules you fill in (Rule 1–8) are used—first matching path wins. Leave a rule’s path empty to skip that slot.","default":false}}
+// @donkeycode-pref {"tabRenamerRule1Path":{"type":"string","group":"Rule 1","label":"Path contains","description":"Tab URL path must start with this (e.g. /widgets/worksheet). Empty = skip this slot.","default":"","placeholder":"/widgets/worksheet"},"tabRenamerRule1Mode":{"type":"select","group":"Rule 1","label":"Mode","description":"Worksheet: {num} {base}. Station: {station} {base}. Template: any placeholders. Pass-through: title unchanged; set favicon only.","default":"worksheet","options":[{"value":"worksheet","label":"Worksheet"},{"value":"station","label":"Schedule station"},{"value":"template","label":"Template"},{"value":"pass_through","label":"Pass-through (favicon only)"}]},"tabRenamerRule1Title":{"type":"string","group":"Rule 1","label":"Title template","description":"Placeholders: {num} {base} {station}. Worksheet/station defaults apply if left empty.","default":"","placeholder":"{num} · {base}"},"tabRenamerRule1Favicon":{"type":"string","group":"Rule 1","label":"Tab icon","description":"Emoji or image URL. Empty = site default.","default":"","placeholder":"📋"}}
+// @donkeycode-pref {"tabRenamerRule2Path":{"type":"string","group":"Rule 2","label":"Path contains","default":"","placeholder":"/schedule"},"tabRenamerRule2Mode":{"type":"select","group":"Rule 2","label":"Mode","default":"station","options":[{"value":"worksheet","label":"Worksheet"},{"value":"station","label":"Schedule station"},{"value":"template","label":"Template"},{"value":"pass_through","label":"Pass-through (favicon only)"}]},"tabRenamerRule2Title":{"type":"string","group":"Rule 2","label":"Title template","default":"","placeholder":"{station} · {base}"},"tabRenamerRule2Favicon":{"type":"string","group":"Rule 2","label":"Tab icon","default":"","placeholder":""}}
+// @donkeycode-pref {"tabRenamerRule3Path":{"type":"string","group":"Rule 3","label":"Path contains","default":"","placeholder":"/alerts"},"tabRenamerRule3Mode":{"type":"select","group":"Rule 3","label":"Mode","default":"pass_through","options":[{"value":"worksheet","label":"Worksheet"},{"value":"station","label":"Schedule station"},{"value":"template","label":"Template"},{"value":"pass_through","label":"Pass-through (favicon only)"}]},"tabRenamerRule3Title":{"type":"string","group":"Rule 3","label":"Title template","default":"","placeholder":"{base}"},"tabRenamerRule3Favicon":{"type":"string","group":"Rule 3","label":"Tab icon","default":"","placeholder":"🔔"}}
+// @donkeycode-pref {"tabRenamerRule4Path":{"type":"string","group":"Rule 4","label":"Path contains","default":"","placeholder":"/ots"},"tabRenamerRule4Mode":{"type":"select","group":"Rule 4","label":"Mode","default":"pass_through","options":[{"value":"worksheet","label":"Worksheet"},{"value":"station","label":"Schedule station"},{"value":"template","label":"Template"},{"value":"pass_through","label":"Pass-through (favicon only)"}]},"tabRenamerRule4Title":{"type":"string","group":"Rule 4","label":"Title template","default":"","placeholder":"{base}"},"tabRenamerRule4Favicon":{"type":"string","group":"Rule 4","label":"Tab icon","default":"","placeholder":""}}
+// @donkeycode-pref {"tabRenamerRule5Path":{"type":"string","group":"Rule 5","label":"Path contains","default":"","placeholder":""},"tabRenamerRule5Mode":{"type":"select","group":"Rule 5","label":"Mode","default":"template","options":[{"value":"worksheet","label":"Worksheet"},{"value":"station","label":"Schedule station"},{"value":"template","label":"Template"},{"value":"pass_through","label":"Pass-through (favicon only)"}]},"tabRenamerRule5Title":{"type":"string","group":"Rule 5","label":"Title template","default":"","placeholder":"{base}"},"tabRenamerRule5Favicon":{"type":"string","group":"Rule 5","label":"Tab icon","default":"","placeholder":""}}
+// @donkeycode-pref {"tabRenamerRule6Path":{"type":"string","group":"Rule 6","label":"Path contains","default":"","placeholder":""},"tabRenamerRule6Mode":{"type":"select","group":"Rule 6","label":"Mode","default":"template","options":[{"value":"worksheet","label":"Worksheet"},{"value":"station","label":"Schedule station"},{"value":"template","label":"Template"},{"value":"pass_through","label":"Pass-through (favicon only)"}]},"tabRenamerRule6Title":{"type":"string","group":"Rule 6","label":"Title template","default":"","placeholder":"{base}"},"tabRenamerRule6Favicon":{"type":"string","group":"Rule 6","label":"Tab icon","default":"","placeholder":""}}
+// @donkeycode-pref {"tabRenamerRule7Path":{"type":"string","group":"Rule 7","label":"Path contains","default":"","placeholder":""},"tabRenamerRule7Mode":{"type":"select","group":"Rule 7","label":"Mode","default":"template","options":[{"value":"worksheet","label":"Worksheet"},{"value":"station","label":"Schedule station"},{"value":"template","label":"Template"},{"value":"pass_through","label":"Pass-through (favicon only)"}]},"tabRenamerRule7Title":{"type":"string","group":"Rule 7","label":"Title template","default":"","placeholder":"{base}"},"tabRenamerRule7Favicon":{"type":"string","group":"Rule 7","label":"Tab icon","default":"","placeholder":""}}
+// @donkeycode-pref {"tabRenamerRule8Path":{"type":"string","group":"Rule 8","label":"Path contains","default":"","placeholder":""},"tabRenamerRule8Mode":{"type":"select","group":"Rule 8","label":"Mode","default":"template","options":[{"value":"worksheet","label":"Worksheet"},{"value":"station","label":"Schedule station"},{"value":"template","label":"Template"},{"value":"pass_through","label":"Pass-through (favicon only)"}]},"tabRenamerRule8Title":{"type":"string","group":"Rule 8","label":"Title template","default":"","placeholder":"{base}"},"tabRenamerRule8Favicon":{"type":"string","group":"Rule 8","label":"Tab icon","default":"","placeholder":""}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Unified%20tab%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Unified%20tab%20renamer.user.js
 // ==/UserScript==
 
 (function() {
     'use strict';
-
-    var LS_RULES_KEY = 'dc_unified_tab_renamer_rules';
 
     var DEFAULT_RULES = [
         { pathPrefix: '/widgets/worksheet', mode: 'worksheet', titleTemplate: '{num} · {base}', favicon: '' },
@@ -49,8 +55,6 @@
     var titleElObserver = null;
     var comboObservers = [];
     var faviconLinkEl = null;
-    var editorEl = null;
-    var editorBtn = null;
     var pathCheckTimer = null;
     var popStateHandler = null;
     var hashChangeHandler = null;
@@ -66,32 +70,32 @@
         return v;
     }
 
-    function loadRules() {
-        try {
-            var ls = localStorage.getItem(LS_RULES_KEY);
-            if (ls) {
-                var a = JSON.parse(ls);
-                if (Array.isArray(a) && a.length) {
-                    return a;
-                }
-            }
-        } catch (e) {}
-        var pref = String(getPref('tabRenamerRulesJson', '') || '').trim();
-        if (pref) {
-            try {
-                var b = JSON.parse(pref);
-                if (Array.isArray(b)) {
-                    return b;
-                }
-            } catch (e2) {}
+    function loadRulesFromPrefs() {
+        var useCustom = !!getPref('tabRenamerUseCustomRules', false);
+        if (!useCustom) {
+            return DEFAULT_RULES.slice();
         }
-        return DEFAULT_RULES.slice();
-    }
-
-    function saveRulesToLocal(rules) {
-        try {
-            localStorage.setItem(LS_RULES_KEY, JSON.stringify(rules));
-        } catch (e) {}
+        var rules = [];
+        var i;
+        for (i = 1; i <= 8; i++) {
+            var path = String(getPref('tabRenamerRule' + i + 'Path', '') || '').trim();
+            if (!path) {
+                continue;
+            }
+            var mode = String(getPref('tabRenamerRule' + i + 'Mode', 'template') || 'template')
+                .toLowerCase()
+                .replace(/-/g, '_');
+            rules.push({
+                pathPrefix: path,
+                mode: mode,
+                titleTemplate: String(getPref('tabRenamerRule' + i + 'Title', '') || '').trim(),
+                favicon: String(getPref('tabRenamerRule' + i + 'Favicon', '') || '').trim()
+            });
+        }
+        if (rules.length === 0) {
+            return DEFAULT_RULES.slice();
+        }
+        return rules;
     }
 
     function findRuleForPath(pathname, rules) {
@@ -189,7 +193,10 @@
     }
 
     function getWorksheetTemplate(rule) {
-        var t = String((rule && rule.titleTemplate) || '{num} · {base}');
+        var t = (rule && rule.titleTemplate) ? String(rule.titleTemplate).trim() : '';
+        if (!t) {
+            t = '{num} · {base}';
+        }
         if (t.indexOf('{base}') === -1) {
             t = t + '{base}';
         }
@@ -283,7 +290,10 @@
 
     /* ——— Station helpers ——— */
     function getStationTemplate(rule) {
-        var t = String((rule && rule.titleTemplate) || '{station} · {base}');
+        var t = (rule && rule.titleTemplate) ? String(rule.titleTemplate).trim() : '';
+        if (!t) {
+            t = '{station} · {base}';
+        }
         if (t.indexOf('{base}') === -1) {
             t = t + '{base}';
         }
@@ -385,7 +395,8 @@
 
     /* ——— Template / generic ——— */
     function getGenericTemplate(rule) {
-        return String((rule && rule.titleTemplate) || '{base}');
+        var t = (rule && rule.titleTemplate) ? String(rule.titleTemplate).trim() : '';
+        return t || '{base}';
     }
 
     function applyTemplateMode(rule) {
@@ -550,111 +561,8 @@
         tick(rule);
     }
 
-    function teardownUi() {
-        if (editorBtn && editorBtn.parentNode) {
-            editorBtn.parentNode.removeChild(editorBtn);
-        }
-        editorBtn = null;
-        if (editorEl && editorEl.parentNode) {
-            editorEl.parentNode.removeChild(editorEl);
-        }
-        editorEl = null;
-    }
-
-    function buildEditor(ruleList) {
-        teardownUi();
-        if (!getPref('tabRenamerShowEditor', true)) {
-            return;
-        }
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.textContent = 'Tab rules';
-        btn.setAttribute('aria-label', 'Edit unified tab renamer rules');
-        btn.id = 'dc-unified-tab-renamer-open';
-        btn.style.cssText = [
-            'position:fixed', 'bottom:12px', 'right:12px', 'z-index:2147483646',
-            'padding:8px 12px', 'font:13px system-ui,sans-serif', 'cursor:pointer',
-            'border-radius:8px', 'border:1px solid #444', 'background:#1e1e2e', 'color:#eee',
-            'box-shadow:0 2px 8px rgba(0,0,0,.35)'
-        ].join(';');
-        btn.addEventListener('click', function() {
-            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-        });
-        var panel = document.createElement('div');
-        panel.id = 'dc-unified-tab-renamer-panel';
-        panel.style.cssText = [
-            'display:none', 'position:fixed', 'bottom:52px', 'right:12px', 'z-index:2147483646',
-            'width:min(520px,calc(100vw - 24px))', 'max-height:70vh', 'overflow:auto',
-            'padding:12px', 'background:#111', 'color:#eee', 'border:1px solid #444',
-            'border-radius:10px', 'font:13px/1.4 system-ui,sans-serif',
-            'box-shadow:0 4px 24px rgba(0,0,0,.45)'
-        ].join(';');
-        var ta = document.createElement('textarea');
-        ta.value = JSON.stringify(ruleList, null, 2);
-        ta.style.cssText = 'width:100%;min-height:220px;box-sizing:border-box;font:12px monospace;background:#1a1a1a;color:#ddd;border:1px solid #555;border-radius:6px;padding:8px';
-        var hint = document.createElement('p');
-        hint.style.margin = '8px 0 0 0';
-        hint.innerHTML = 'Modes: <code>worksheet</code>, <code>station</code>, <code>template</code>, <code>pass_through</code> (title unchanged; favicon only). ' +
-            'Save stores to <strong>local storage</strong> for this site and overrides the pref until cleared.';
-        var row = document.createElement('div');
-        row.style.cssText = 'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap';
-        var save = document.createElement('button');
-        save.type = 'button';
-        save.textContent = 'Save';
-        save.style.cssText = 'padding:6px 14px;cursor:pointer';
-        var reset = document.createElement('button');
-        reset.type = 'button';
-        reset.textContent = 'Reset to built-in defaults';
-        reset.style.cssText = 'padding:6px 14px;cursor:pointer';
-        var clearLs = document.createElement('button');
-        clearLs.type = 'button';
-        clearLs.textContent = 'Clear local storage';
-        clearLs.style.cssText = 'padding:6px 14px;cursor:pointer';
-        var close = document.createElement('button');
-        close.type = 'button';
-        close.textContent = 'Close';
-        close.style.cssText = 'padding:6px 14px;cursor:pointer;margin-left:auto';
-        save.addEventListener('click', function() {
-            try {
-                var parsed = JSON.parse(ta.value);
-                if (!Array.isArray(parsed)) {
-                    throw new Error('JSON must be an array');
-                }
-                saveRulesToLocal(parsed);
-                panel.style.display = 'none';
-                reinit();
-            } catch (err) {
-                alert('Invalid JSON: ' + (err && err.message));
-            }
-        });
-        reset.addEventListener('click', function() {
-            ta.value = JSON.stringify(DEFAULT_RULES, null, 2);
-        });
-        clearLs.addEventListener('click', function() {
-            try {
-                localStorage.removeItem(LS_RULES_KEY);
-            } catch (e) {}
-            ta.value = JSON.stringify(loadRules(), null, 2);
-            reinit();
-        });
-        close.addEventListener('click', function() {
-            panel.style.display = 'none';
-        });
-        row.appendChild(save);
-        row.appendChild(reset);
-        row.appendChild(clearLs);
-        row.appendChild(close);
-        panel.appendChild(hint);
-        panel.appendChild(ta);
-        panel.appendChild(row);
-        document.body.appendChild(panel);
-        document.body.appendChild(btn);
-        editorEl = panel;
-        editorBtn = btn;
-    }
-
     function reinit() {
-        var rules = loadRules();
+        var rules = loadRulesFromPrefs();
         var rule = findRuleForPath(location.pathname, rules);
         currentRule = rule;
         currentPathKey = location.pathname + location.search;
@@ -668,14 +576,11 @@
         faviconLinkEl = null;
 
         if (!rule) {
-            teardownUi();
-            buildEditor(rules);
             return;
         }
 
         baseTitleAtInject = document.title;
         setupObservers(rule);
-        buildEditor(rules);
     }
 
     function checkPathChanged() {
@@ -717,7 +622,6 @@
             faviconLinkEl.parentNode.removeChild(faviconLinkEl);
         }
         faviconLinkEl = null;
-        teardownUi();
 
         var rule = currentRule;
         if (!rule) {
