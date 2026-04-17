@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.2.1
-// @description  FIMS tab: wall of fame accolades; password to edit; optional JSON sync URL
+// @version      1.3.0
+// @description  FIMS tab: wall of fame accolades; password to edit; GitHub file sync or legacy URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
+// @connect      api.github.com
 // @connect      *
-// @donkeycode-pref {"wallOfFameSyncUrl":{"type":"url","group":"Wall of Fame","label":"Cloud JSON URL (optional)","description":"GET loads accolades (JSON array or {entries:[]}). Use Publish after unlock to POST the same URL if your server accepts it. Leave empty for local-only.","default":"","placeholder":"https://…/wall-of-fame.json"},"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true}}
+// @donkeycode-pref {"wallOfFameSyncUrl":{"type":"url","group":"Wall of Fame — legacy URL","label":"Cloud JSON URL (optional)","description":"If GitHub prefs below are not set: GET merges accolades; POST on Publish (server must accept POST).","default":"","placeholder":"https://…/wall-of-fame.json"},"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true}}
+// @donkeycode-pref {"githubOwner":{"type":"string","group":"Wall of Fame — GitHub","label":"Owner","description":"GitHub org or username for the repo.","default":"","placeholder":"my-org"},"githubRepo":{"type":"string","group":"Wall of Fame — GitHub","label":"Repo","description":"Repository name.","default":"","placeholder":"my-repo"},"githubBranch":{"type":"string","group":"Wall of Fame — GitHub","label":"Branch","default":"main","placeholder":"main"},"githubToken":{"type":"string","group":"Wall of Fame — GitHub","label":"PAT (repo scope)","description":"Classic PAT with repo scope, or fine-grained Contents read/write. Stored in DonkeyCODE prefs.","default":"","placeholder":"ghp_…"},"wallPath":{"type":"string","group":"Wall of Fame — GitHub","label":"File path in repo","description":"Creates path on first publish. Example: WALL_OF_FAME/wall-of-fame.json","default":"WALL_OF_FAME/wall-of-fame.json","placeholder":"WALL_OF_FAME/wall-of-fame.json"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // ==/UserScript==
@@ -83,6 +85,154 @@
     function getSyncUrl() {
         var u = getPref('wallOfFameSyncUrl', '');
         return typeof u === 'string' ? u.trim() : '';
+    }
+
+    /** Last blob SHA for GitHub Contents API (updates require SHA). */
+    var githubFileSha = null;
+
+    function githubConfigured() {
+        var owner = String(getPref('githubOwner', '') || '').trim();
+        var repo = String(getPref('githubRepo', '') || '').trim();
+        var tok = String(getPref('githubToken', '') || '').trim();
+        return !!(owner && repo && tok);
+    }
+
+    function githubContentsApiUrl() {
+        var owner = encodeURIComponent(String(getPref('githubOwner', '') || '').trim());
+        var repo = encodeURIComponent(String(getPref('githubRepo', '') || '').trim());
+        var path = String(getPref('wallPath', 'WALL_OF_FAME/wall-of-fame.json') || 'WALL_OF_FAME/wall-of-fame.json')
+            .replace(/^\/+/, '')
+            .split('/')
+            .map(encodeURIComponent)
+            .join('/');
+        return 'https://api.github.com/repos/' + owner + '/' + repo + '/contents/' + path;
+    }
+
+    function githubApiHeaders() {
+        return {
+            Authorization: 'Bearer ' + String(getPref('githubToken', '') || '').trim(),
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28'
+        };
+    }
+
+    function utf8ToBase64(str) {
+        return btoa(unescape(encodeURIComponent(str)));
+    }
+
+    function decodeGithubFileContent(b64) {
+        if (!b64) {
+            return '';
+        }
+        var clean = String(b64).replace(/\s/g, '');
+        var bin = atob(clean);
+        try {
+            return decodeURIComponent(escape(bin));
+        } catch (e) {
+            return bin;
+        }
+    }
+
+    function parseEntriesFromJsonText(text) {
+        try {
+            var data = JSON.parse(text);
+            var arr = Array.isArray(data) ? data : (data.entries || []);
+            return arr.map(normalizeEntry).filter(Boolean);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function githubXhr(method, url, bodyObj, cb) {
+        if (typeof GM_xmlhttpRequest !== 'function') {
+            cb(0, '');
+            return;
+        }
+        var headers = githubApiHeaders();
+        if (bodyObj !== undefined && bodyObj !== null) {
+            headers['Content-Type'] = 'application/json';
+        }
+        GM_xmlhttpRequest({
+            method: method,
+            url: url,
+            headers: headers,
+            data: bodyObj !== undefined && bodyObj !== null ? JSON.stringify(bodyObj) : undefined,
+            onload: function(res) {
+                cb(res.status || 0, res.responseText || '');
+            },
+            onerror: function() {
+                cb(0, '');
+            }
+        });
+    }
+
+    function githubGetFile(cb) {
+        var branch = encodeURIComponent(String(getPref('githubBranch', 'main') || 'main').trim() || 'main');
+        var url = githubContentsApiUrl() + '?ref=' + branch;
+        githubXhr('GET', url, null, function(status, text) {
+            if (status === 404) {
+                githubFileSha = null;
+                cb(null, null);
+                return;
+            }
+            if (status < 200 || status >= 300) {
+                cb(null, null);
+                return;
+            }
+            try {
+                var meta = JSON.parse(text);
+                githubFileSha = meta.sha || null;
+                var raw = decodeGithubFileContent(meta.content || '');
+                var entries = parseEntriesFromJsonText(raw);
+                cb(entries, githubFileSha);
+            } catch (e) {
+                cb(null, githubFileSha);
+            }
+        });
+    }
+
+    function githubPutFile(entries, sha, cb) {
+        var branch = String(getPref('githubBranch', 'main') || 'main').trim() || 'main';
+        var payload = {
+            entries: entries,
+            updatedAt: Date.now()
+        };
+        var bodyStr = JSON.stringify(payload, null, 2);
+        var body = {
+            message: 'Wall of Fame sync (DonkeyCODE)',
+            content: utf8ToBase64(bodyStr),
+            branch: branch
+        };
+        if (sha) {
+            body.sha = sha;
+        }
+        var url = githubContentsApiUrl();
+        githubXhr('PUT', url, body, function(status, text) {
+            if (status === 200 || status === 201) {
+                try {
+                    var meta = JSON.parse(text);
+                    if (meta.content && meta.content.sha) {
+                        githubFileSha = meta.content.sha;
+                    } else if (meta.commit && meta.commit.sha) {
+                        githubFileSha = meta.commit.sha;
+                    }
+                } catch (e) {}
+                cb(true, null);
+                return;
+            }
+            if (status === 409) {
+                cb(false, 'conflict');
+                return;
+            }
+            var err = 'HTTP ' + status;
+            try {
+                var j = JSON.parse(text);
+                if (j.message) {
+                    err = j.message;
+                }
+            } catch (e) {}
+            cb(false, err);
+        });
     }
 
     function isUnlocked() {
@@ -184,6 +334,12 @@
     }
 
     function fetchCloud(cb) {
+        if (githubConfigured()) {
+            githubGetFile(function(entries) {
+                cb(entries);
+            });
+            return;
+        }
         var url = getSyncUrl();
         if (!url || typeof GM_xmlhttpRequest !== 'function') {
             cb(null);
@@ -209,6 +365,39 @@
     }
 
     function postCloud(entries, cb) {
+        if (githubConfigured()) {
+            githubGetFile(function(remote, sha) {
+                var merged = mergeEntries(entries, remote || []);
+                entriesState = merged;
+                saveLocal(entriesState);
+                var panel = document.getElementById(PANEL_ID);
+                if (panel) {
+                    render(panel);
+                }
+                githubPutFile(merged, sha, function(ok, err) {
+                    if (ok) {
+                        cb(true, null);
+                        return;
+                    }
+                    if (err === 'conflict') {
+                        githubGetFile(function(remote2, sha2) {
+                            var merged2 = mergeEntries(entriesState, remote2 || []);
+                            entriesState = merged2;
+                            saveLocal(entriesState);
+                            if (panel) {
+                                render(panel);
+                            }
+                            githubPutFile(merged2, sha2, function(ok2, err2) {
+                                cb(ok2, err2 || null);
+                            });
+                        });
+                        return;
+                    }
+                    cb(false, err || 'GitHub PUT failed');
+                });
+            });
+            return;
+        }
         var url = getSyncUrl();
         if (!url || typeof GM_xmlhttpRequest !== 'function') {
             cb(false, 'No sync URL or GM_xmlhttpRequest');
@@ -439,12 +628,14 @@
         var pub = document.createElement('button');
         pub.type = 'button';
         pub.className = 'dc-wof-btn-sec';
-        pub.textContent = 'Publish to cloud URL';
-        pub.title = 'POST JSON to the URL in prefs (server must accept POST)';
+        pub.textContent = githubConfigured() ? 'Publish to GitHub' : 'Publish to cloud URL';
+        pub.title = githubConfigured()
+            ? 'PUT wall-of-fame JSON via GitHub Contents API (owner, repo, token, path in prefs)'
+            : 'POST JSON to the legacy URL in prefs (server must accept POST)';
         pub.addEventListener('click', function(ev) {
             ev.preventDefault();
-            if (!getSyncUrl()) {
-                alert('Set Wall of Fame → Cloud JSON URL in DonkeyCODE prefs first.');
+            if (!githubConfigured() && !getSyncUrl()) {
+                alert('Set GitHub owner/repo/token/path in prefs, or set a legacy Cloud JSON URL.');
                 return;
             }
             postCloud(entriesState, function(ok, err) {
@@ -460,7 +651,7 @@
         var imp = document.createElement('button');
         imp.type = 'button';
         imp.className = 'dc-wof-btn-sec';
-        imp.textContent = 'Fetch from cloud now';
+        imp.textContent = githubConfigured() ? 'Fetch from GitHub now' : 'Fetch from cloud now';
         imp.addEventListener('click', function(ev) {
             ev.preventDefault();
             fetchCloud(function(remote) {
@@ -479,7 +670,9 @@
 
         var hint = document.createElement('div');
         hint.className = 'dc-wof-hint';
-        hint.textContent = 'Cloud: host a JSON file and set the URL in prefs. GET merges on fetch; POST sends { entries, updatedAt }. Raw static hosts often reject POST—use your own endpoint or team shared storage.';
+        hint.textContent = githubConfigured()
+            ? 'GitHub: file at wallPath stores { entries, updatedAt }. Classic PAT needs repo scope; fine-grained needs Contents read/write. @connect api.github.com required.'
+            : 'Legacy URL: GET merges on fetch; POST on publish. Or configure GitHub owner/repo/branch/token/wallPath for Contents API sync.';
         wrap.appendChild(hint);
 
         syncEditPanelVisibility(panel);
@@ -675,7 +868,7 @@
         title.textContent = 'Wall of Fame';
         var sub = document.createElement('div');
         sub.className = 'dc-wof-sub';
-        sub.textContent = 'SOD accolades (local + optional cloud URL in prefs)';
+        sub.textContent = 'SOD accolades (local + GitHub file or legacy URL in prefs)';
         ht.appendChild(title);
         ht.appendChild(sub);
         var actions = document.createElement('div');
