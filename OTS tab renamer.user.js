@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OTS tab renamer
 // @namespace    Wolf 2.0
-// @version      1.0
+// @version      1.1
 // @description  Rename /ots tabs by instance (1, 2, 3…) with optional favicon; prefs in DonkeyCODE
 // @match        https://opssuitemain.swacorp.com/ots*
 // @grant        none
@@ -32,9 +32,11 @@
     var baseTitleAtInject = document.title;
     var titleElObserver = null;
     var headMo = null;
-    var bodyMo = null;
     var faviconLinkEl = null;
     var heartbeatTimer = null;
+    var tickScheduled = false;
+    var tickDebounceTimer = null;
+    var cachedInstanceN = 1;
     var rawTitleStorageKey = 'dc_ots_raw_title_' + location.pathname + location.search;
 
     function getPref(key, def) {
@@ -119,8 +121,7 @@
         return list;
     }
 
-    function getInstanceNumber() {
-        var list = pruneAndUpsert();
+    function computeInstanceFromList(list) {
         list.sort(function(a, b) {
             return (a.joinedAt || 0) - (b.joinedAt || 0);
         });
@@ -133,6 +134,10 @@
             }
         }
         return idx >= 0 ? idx + 1 : 1;
+    }
+
+    function getInstanceNumber() {
+        return cachedInstanceN;
     }
 
     function readStoredRawTitle() {
@@ -196,10 +201,32 @@
         }
     }
 
-    function tick() {
-        pruneAndUpsert();
+    /** Title + favicon only (cheap; safe to run often) */
+    function applyVisuals() {
         applyTitle();
         applyFavicon();
+    }
+
+    /** Registry heartbeat: call only from interval, not on every DOM tick */
+    function heartbeat() {
+        var list = pruneAndUpsert();
+        cachedInstanceN = computeInstanceFromList(list);
+        applyVisuals();
+    }
+
+    function scheduleDebouncedApply() {
+        if (tickScheduled) {
+            return;
+        }
+        tickScheduled = true;
+        if (tickDebounceTimer) {
+            clearTimeout(tickDebounceTimer);
+        }
+        tickDebounceTimer = setTimeout(function() {
+            tickDebounceTimer = null;
+            tickScheduled = false;
+            applyVisuals();
+        }, 120);
     }
 
     function wireTitleElement() {
@@ -207,9 +234,13 @@
         if (!el || el.dataset.dcOtsTabRenamer) {
             return;
         }
+        if (titleElObserver) {
+            titleElObserver.disconnect();
+            titleElObserver = null;
+        }
         el.dataset.dcOtsTabRenamer = '1';
         titleElObserver = new MutationObserver(function() {
-            requestAnimationFrame(tick);
+            scheduleDebouncedApply();
         });
         titleElObserver.observe(el, { childList: true, subtree: true, characterData: true });
     }
@@ -226,22 +257,16 @@
             writeStoredRawTitle(baseTitleAtInject);
         }
         wireTitleElement();
-        tick();
-        bodyMo = new MutationObserver(function() {
-            wireTitleElement();
-            tick();
-        });
-        bodyMo.observe(document.body, { childList: true, subtree: true });
+        heartbeat();
+        /* Do not observe document.body — OTS updates the DOM constantly and would spike memory/CPU. */
         headMo = new MutationObserver(function() {
             wireTitleElement();
-            tick();
+            scheduleDebouncedApply();
         });
         if (document.head) {
-            headMo.observe(document.head, { childList: true, subtree: true });
+            headMo.observe(document.head, { childList: true, subtree: false });
         }
-        heartbeatTimer = setInterval(function() {
-            tick();
-        }, HEARTBEAT_MS);
+        heartbeatTimer = setInterval(heartbeat, HEARTBEAT_MS);
         window.addEventListener('beforeunload', removeFromRegistry);
         window.addEventListener('pagehide', removeFromRegistry);
     }
@@ -253,13 +278,13 @@
             clearInterval(heartbeatTimer);
             heartbeatTimer = null;
         }
+        if (tickDebounceTimer) {
+            clearTimeout(tickDebounceTimer);
+            tickDebounceTimer = null;
+        }
         removeFromRegistry();
         window.removeEventListener('beforeunload', removeFromRegistry);
         window.removeEventListener('pagehide', removeFromRegistry);
-        if (bodyMo) {
-            bodyMo.disconnect();
-            bodyMo = null;
-        }
         if (headMo) {
             headMo.disconnect();
             headMo = null;
