@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.3.5
+// @version      1.3.6
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersMaxNames":{"type":"number","group":"Leaderboard","label":"Max names shown","description":"0 = show everyone with a count. Set a positive number only if you want to cap a very long list.","default":0,"min":0,"max":500,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
@@ -560,10 +560,24 @@
         return out;
     }
 
-    function onTopClickersTabClick(e) {
+    /** Capture on menu so clicks on inner div/span still open the panel (React/Semantic UI can swallow bubble). */
+    function onFimsMenuCaptureClick(e) {
+        var ourTab = document.getElementById(TAB_ID);
+        if (!ourTab || !ourTab.contains(e.target)) {
+            return;
+        }
         e.preventDefault();
         e.stopPropagation();
+        e.stopImmediatePropagation();
         showLeaderboardInFimsArea();
+    }
+
+    function wireTabMenuCapture(menu) {
+        if (!menu || menu.dataset.dcFimsTcMenuCapture) {
+            return;
+        }
+        menu.dataset.dcFimsTcMenuCapture = '1';
+        menu.addEventListener('click', onFimsMenuCaptureClick, true);
     }
 
     function onFimsTabClick() {
@@ -721,6 +735,10 @@
     function ensureTab() {
         var existing = document.getElementById(TAB_ID);
         if (existing) {
+            var foundEarly = findTabMenu();
+            if (foundEarly && foundEarly.menu) {
+                wireTabMenuCapture(foundEarly.menu);
+            }
             return existing;
         }
         var found = findTabMenu();
@@ -734,8 +752,8 @@
         a.className = 'item';
         a.href = '#';
         a.innerHTML = '<div><span aria-hidden="true">\u{1F3C6}</span> Top clickers</div>';
-        a.addEventListener('click', onTopClickersTabClick);
         found.advisoriesTab.insertAdjacentElement('afterend', a);
+        wireTabMenuCapture(found.menu);
         return a;
     }
 
@@ -819,6 +837,10 @@
         }
         var menuInfo = findTabMenu();
         if (menuInfo && menuInfo.menu) {
+            if (menuInfo.menu.dataset.dcFimsTcMenuCapture) {
+                menuInfo.menu.removeEventListener('click', onFimsMenuCaptureClick, true);
+                delete menuInfo.menu.dataset.dcFimsTcMenuCapture;
+            }
             delete menuInfo.menu.dataset.dcFimsTopClickersTabWire;
             var links = menuInfo.menu.querySelectorAll('a.item');
             var i;
@@ -836,11 +858,8 @@
             }
         }
         var tab = document.getElementById(TAB_ID);
-        if (tab) {
-            tab.removeEventListener('click', onTopClickersTabClick);
-            if (tab.parentNode) {
-                tab.parentNode.removeChild(tab);
-            }
+        if (tab && tab.parentNode) {
+            tab.parentNode.removeChild(tab);
         }
         var panel = document.getElementById(PANEL_ID);
         if (panel && panel.parentNode) {

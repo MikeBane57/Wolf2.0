@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.2.0
+// @version      1.2.1
 // @description  FIMS tab: wall of fame accolades; password to edit; optional JSON sync URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -608,10 +608,24 @@
         render(panel);
     }
 
-    function onWofTabClick(e) {
+    /** Capture on menu so clicks on inner div/emoji still open WoF (React/Semantic UI can swallow bubble). */
+    function onWofMenuCaptureClick(e) {
+        var ourTab = document.getElementById(TAB_ID);
+        if (!ourTab || !ourTab.contains(e.target)) {
+            return;
+        }
         e.preventDefault();
         e.stopPropagation();
+        e.stopImmediatePropagation();
         showWallOfFame();
+    }
+
+    function wireTabMenuCapture(menu) {
+        if (!menu || menu.dataset.dcWofMenuCapture) {
+            return;
+        }
+        menu.dataset.dcWofMenuCapture = '1';
+        menu.addEventListener('click', onWofMenuCaptureClick, true);
     }
 
     function wireTabs(menu) {
@@ -719,6 +733,10 @@
         }
         var existing = document.getElementById(TAB_ID);
         if (existing) {
+            var foundEarly = findTabMenu();
+            if (foundEarly && foundEarly.menu) {
+                wireTabMenuCapture(foundEarly.menu);
+            }
             return existing;
         }
         var found = findTabMenu();
@@ -731,9 +749,9 @@
         a.className = 'item';
         a.href = '#';
         a.innerHTML = '<div>\u{1F3DB}\u{FE0F} Wall of Fame</div>';
-        a.addEventListener('click', onWofTabClick);
         var insertAfter = document.getElementById('dc-fims-top-clickers-host') || found.advisoriesTab;
         insertAfter.insertAdjacentElement('afterend', a);
+        wireTabMenuCapture(found.menu);
         return a;
     }
 
@@ -796,6 +814,10 @@
         }
         var menuInfo = findTabMenu();
         if (menuInfo && menuInfo.menu) {
+            if (menuInfo.menu.dataset.dcWofMenuCapture) {
+                menuInfo.menu.removeEventListener('click', onWofMenuCaptureClick, true);
+                delete menuInfo.menu.dataset.dcWofMenuCapture;
+            }
             delete menuInfo.menu.dataset.dcWofTabWire;
         }
         window.__myScriptCleanup = undefined;
