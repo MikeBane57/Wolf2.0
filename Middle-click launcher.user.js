@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Middle-click launcher
 // @namespace    Wolf 2.0
-// @version      2.5
+// @version      2.6
 // @description  Middle-click a flight puck to open Pax connections, Go turn details, and/or a custom URL (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"Slug order: data-linked-hover-id on puck/ancestors (canonical leg route) over any in-DOM go-turn link or rebuilt slug. Turn Details href in a portal may not exist at middle-click.","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Position/size for multiple popups. Side by side uses capped width so windows are not full screen.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]},"midClickMultiMaxWidth":{"type":"number","group":"Middle-click — multiple windows","label":"Max width per window (px)","description":"Caps each popup width when several are open (side by side / vertical).","default":780,"min":400,"max":2000,"step":10},"midClickMultiMaxHeight":{"type":"number","group":"Middle-click — multiple windows","label":"Max height per window (px)","description":"Caps each popup height when several are open.","default":720,"min":320,"max":2000,"step":10},"midClickOverlapTopTarget":{"type":"select","group":"Middle-click — multiple windows","label":"Which window is on top (overlap / cascade)","description":"The last opened popup usually stacks on top. Choose which target opens last.","default":"go_turn","options":[{"value":"pax","label":"Pax connections"},{"value":"go_turn","label":"Go turn details"},{"value":"custom","label":"Custom URL"},{"value":"order","label":"Order in Pref (Pax → Go → Custom)"}]}}
+// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"If data-linked-hover-id is a short key (not a full route), briefly opens the puck context menu to read the same Turn Details URL as the app, then dismisses it.","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Position/size for multiple popups. Side by side uses capped width so windows are not full screen.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]},"midClickMultiMaxWidth":{"type":"number","group":"Middle-click — multiple windows","label":"Max width per window (px)","description":"Caps each popup width when several are open (side by side / vertical).","default":780,"min":400,"max":2000,"step":10},"midClickMultiMaxHeight":{"type":"number","group":"Middle-click — multiple windows","label":"Max height per window (px)","description":"Caps each popup height when several are open.","default":720,"min":320,"max":2000,"step":10},"midClickOverlapTopTarget":{"type":"select","group":"Middle-click — multiple windows","label":"Which window is on top (overlap / cascade)","description":"The last opened popup usually stacks on top. Choose which target opens last.","default":"go_turn","options":[{"value":"pax","label":"Pax connections"},{"value":"go_turn","label":"Go turn details"},{"value":"custom","label":"Custom URL"},{"value":"order","label":"Order in Pref (Pax → Go → Custom)"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // ==/UserScript==
@@ -194,7 +194,67 @@
         return data.date + '-' + leg + '-' + dep + '-NULL-' + op + '-' + arr + '-NULL';
     }
 
-    function findFlightData(puck) {
+    /**
+     * Short internal keys (e.g. 2026-04-17-335-6) are not the go-turn slug; the real href only
+     * appears in the context-menu portal after contextmenu — see probeGoTurnSlugFromContextMenu.
+     */
+    function hasFullRouteFromLinkedHover(linkedRaw) {
+        return parseLinkedHoverRoute(linkedRaw) !== null;
+    }
+
+    /**
+     * Dispatch contextmenu on the puck so React mounts the menu; read Turn Details href from portal.
+     * Dismisses with Escape. Async — use callback.
+     */
+    function probeGoTurnSlugFromContextMenu(puck, cb) {
+        if (!puck || typeof puck.getBoundingClientRect !== 'function') {
+            cb(null);
+            return;
+        }
+        var rect = puck.getBoundingClientRect();
+        var x = rect.left + rect.width / 2;
+        var y = rect.top + rect.height / 2;
+        try {
+            var ev = new MouseEvent('contextmenu', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: x,
+                clientY: y,
+                button: 2,
+                buttons: 2
+            });
+            puck.dispatchEvent(ev);
+        } catch (err) {
+            cb(null);
+            return;
+        }
+        window.setTimeout(function() {
+            var slug = null;
+            var menu = document.querySelector('[data-testid="puck-context-menu"]');
+            var a = menu && menu.querySelector('a[href*="go-turn-details"]');
+            if (!a) {
+                a = document.querySelector('a[href*="go-turn-details"]');
+            }
+            if (a) {
+                slug = slugFromGoTurnHref(a.getAttribute('href') || a.href);
+            }
+            try {
+                document.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'Escape',
+                    code: 'Escape',
+                    keyCode: 27,
+                    bubbles: true,
+                    cancelable: true
+                }));
+            } catch (e) {}
+            window.setTimeout(function() {
+                cb(slug);
+            }, 40);
+        }, 60);
+    }
+
+    function findFlightData(puck, probedGoSlug) {
         var linkedRaw = getLinkedHoverIdFromAncestors(puck);
         var fromLink = parseLinkedHoverRoute(linkedRaw);
 
@@ -203,9 +263,8 @@
             log('Go turn: ignoring stale in-puck href; using data-linked-hover-id slug');
             domSlug = null;
         }
-        var fromDom = (fromLink && fromLink.slug)
-            ? parseGoTurnSlugEnrichment(fromLink.slug)
-            : (domSlug ? parseGoTurnSlugEnrichment(domSlug) : null);
+        var slugForEnrich = probedGoSlug || (fromLink && fromLink.slug) || domSlug;
+        var fromDom = slugForEnrich ? parseGoTurnSlugEnrichment(slugForEnrich) : null;
 
         const stationNodes = puck.querySelectorAll('[class*="tg9Iiv9oAOo="]');
         const airports = Array.from(stationNodes)
@@ -255,8 +314,9 @@
 
         var date = (fromLink && fromLink.dateCompact) || (fromDom && fromDom.dateCompact) || extractDate(linkedRaw);
 
-        /* Canonical route lives in data-linked-hover-id (leg vs marketing differs); prefer it over rebuilt slug. */
-        var goTurnSlug = (fromLink && fromLink.slug) ||
+        /* probedGoSlug = portal Turn Details; full data-linked-hover-id slug; in-puck link; else rebuild. */
+        var goTurnSlug = probedGoSlug ||
+            (fromLink && fromLink.slug) ||
             domSlug ||
             buildGoTurnSlugFallback({
                 date: date,
@@ -498,12 +558,30 @@
             e.preventDefault();
             e.stopPropagation();
 
-            const data = findFlightData(puck);
-            if (!data) {
-                log('Flight parse failed');
-                return;
+            var wantGo = !!getPref('midClickLaunchGoTurn', false);
+            var linkedRaw = getLinkedHoverIdFromAncestors(puck);
+            var needProbe = wantGo && !hasFullRouteFromLinkedHover(linkedRaw);
+
+            function run(data) {
+                if (!data) {
+                    log('Flight parse failed');
+                    return;
+                }
+                launchAll(data);
             }
-            launchAll(data);
+
+            if (needProbe) {
+                probeGoTurnSlugFromContextMenu(puck, function(probedSlug) {
+                    if (probedSlug) {
+                        log('Go turn: slug from context menu portal');
+                    } else if (wantGo) {
+                        log('Go turn: context menu probe missed; using fallback slug if any');
+                    }
+                    run(findFlightData(puck, probedSlug));
+                });
+            } else {
+                run(findFlightData(puck, null));
+            }
         };
 
         puckHandlers.set(puck, onMid);
