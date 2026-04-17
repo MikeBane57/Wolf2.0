@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Middle-click launcher
 // @namespace    Wolf 2.0
-// @version      2.7
+// @version      2.8
 // @description  Middle-click a flight puck to open Pax connections, Go turn details, and/or a custom URL (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"If data-linked-hover-id is a short key (not a full route), briefly opens the puck context menu to read the same Turn Details URL as the app, then dismisses it.","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Position/size for multiple popups. Side by side uses capped width so windows are not full screen.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]},"midClickMultiMaxWidth":{"type":"number","group":"Middle-click — multiple windows","label":"Max width per window (px)","description":"Caps each popup width when several are open (side by side / vertical).","default":780,"min":400,"max":2000,"step":10},"midClickMultiMaxHeight":{"type":"number","group":"Middle-click — multiple windows","label":"Max height per window (px)","description":"Caps each popup height when several are open.","default":720,"min":320,"max":2000,"step":10},"midClickOverlapTopTarget":{"type":"select","group":"Middle-click — multiple windows","label":"Which window is on top (overlap / cascade)","description":"The last opened popup usually stacks on top. Choose which target opens last.","default":"go_turn","options":[{"value":"pax","label":"Pax connections"},{"value":"go_turn","label":"Go turn details"},{"value":"custom","label":"Custom URL"},{"value":"order","label":"Order in Pref (Pax → Go → Custom)"}]}}
+// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"Short hover-id: first tries React internal props for go-turn-details URL; else synthetic right-click + menu read. SES may block synthetic menu — fiber path avoids that.","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Position/size for multiple popups. Side by side uses capped width so windows are not full screen.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]},"midClickMultiMaxWidth":{"type":"number","group":"Middle-click — multiple windows","label":"Max width per window (px)","description":"Caps each popup width when several are open (side by side / vertical).","default":780,"min":400,"max":2000,"step":10},"midClickMultiMaxHeight":{"type":"number","group":"Middle-click — multiple windows","label":"Max height per window (px)","description":"Caps each popup height when several are open.","default":720,"min":320,"max":2000,"step":10},"midClickOverlapTopTarget":{"type":"select","group":"Middle-click — multiple windows","label":"Which window is on top (overlap / cascade)","description":"The last opened popup usually stacks on top. Choose which target opens last.","default":"go_turn","options":[{"value":"pax","label":"Pax connections"},{"value":"go_turn","label":"Go turn details"},{"value":"custom","label":"Custom URL"},{"value":"order","label":"Order in Pref (Pax → Go → Custom)"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // ==/UserScript==
@@ -202,6 +202,125 @@
         return parseLinkedHoverRoute(linkedRaw) !== null;
     }
 
+    /**
+     * React 18+ stores fiber on DOM nodes (__reactFiber$...). Props often contain href/to
+     * before the context menu exists — works when synthetic contextmenu is ignored (SES / isTrusted).
+     */
+    function getReactFiberFromNode(node) {
+        if (!node || node.nodeType !== 1) {
+            return null;
+        }
+        var k;
+        try {
+            var names = Object.getOwnPropertyNames(node);
+            for (k = 0; k < names.length; k++) {
+                var name = names[k];
+                if (name.indexOf('__reactFiber') === 0 || name.indexOf('__reactInternalInstance') === 0) {
+                    return node[name];
+                }
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    function scanValueForGoTurnSlug(val, depth) {
+        if (depth > 8) {
+            return null;
+        }
+        if (val == null) {
+            return null;
+        }
+        if (typeof val === 'string') {
+            if (val.indexOf('go-turn-details') !== -1) {
+                return slugFromGoTurnHref(val);
+            }
+            return null;
+        }
+        if (typeof val !== 'object') {
+            return null;
+        }
+        if (Array.isArray(val)) {
+            var i;
+            for (i = 0; i < val.length; i++) {
+                var s = scanValueForGoTurnSlug(val[i], depth + 1);
+                if (s) {
+                    return s;
+                }
+            }
+            return null;
+        }
+        var key;
+        for (key in val) {
+            if (!Object.prototype.hasOwnProperty.call(val, key)) {
+                continue;
+            }
+            try {
+                var s2 = scanValueForGoTurnSlug(val[key], depth + 1);
+                if (s2) {
+                    return s2;
+                }
+            } catch (e) {}
+        }
+        return null;
+    }
+
+    function walkFiberForGoTurnSlug(fiber, seen, depth) {
+        if (!fiber || depth > 120 || seen.has(fiber)) {
+            return null;
+        }
+        seen.add(fiber);
+        var props = fiber.memoizedProps || fiber.pendingProps;
+        if (props) {
+            var fromProps = scanValueForGoTurnSlug(props, 0);
+            if (fromProps) {
+                return fromProps;
+            }
+        }
+        var child = fiber.child;
+        while (child) {
+            var r = walkFiberForGoTurnSlug(child, seen, depth + 1);
+            if (r) {
+                return r;
+            }
+            child = child.sibling;
+        }
+        return null;
+    }
+
+    function walkFiberAncestorsForGoTurnSlug(fiber, seen) {
+        var cur = fiber;
+        var hops = 0;
+        while (cur && hops < 24) {
+            var r = walkFiberForGoTurnSlug(cur, seen, 0);
+            if (r) {
+                return r;
+            }
+            cur = cur.return;
+            hops++;
+        }
+        return null;
+    }
+
+    function extractGoTurnSlugFromReactInternals(rootEl) {
+        if (!rootEl || !rootEl.querySelectorAll) {
+            return null;
+        }
+        var seen = new WeakSet();
+        var nodes = [rootEl].concat(Array.prototype.slice.call(rootEl.querySelectorAll('*')));
+        var j;
+        for (j = 0; j < nodes.length; j++) {
+            var fib = getReactFiberFromNode(nodes[j]);
+            if (!fib) {
+                continue;
+            }
+            var slug = walkFiberAncestorsForGoTurnSlug(fib, seen);
+            if (slug) {
+                return slug;
+            }
+        }
+        return null;
+    }
+
     function readGoTurnSlugFromOpenMenu() {
         var menu = document.querySelector('[data-testid="puck-context-menu"]');
         var a = menu && menu.querySelector('a[href*="go-turn-details"]');
@@ -275,20 +394,42 @@
             var rect = el.getBoundingClientRect();
             var x = rect.left + Math.max(4, Math.min(rect.width / 2, rect.width - 4));
             var y = rect.top + Math.max(4, Math.min(rect.height / 2, rect.height - 4));
+            var common = {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: x,
+                clientY: y,
+                button: 2,
+                buttons: 2
+            };
             try {
-                var ev = new MouseEvent('contextmenu', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    clientX: x,
-                    clientY: y,
-                    button: 2,
-                    buttons: 2
-                });
-                return el.dispatchEvent(ev);
-            } catch (err) {
+                el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({
+                    pointerId: 1,
+                    pointerType: 'mouse',
+                    isPrimary: true
+                }, common)));
+            } catch (e1) {}
+            try {
+                el.dispatchEvent(new MouseEvent('mousedown', common));
+            } catch (e2) {
                 return false;
             }
+            try {
+                el.dispatchEvent(new MouseEvent('contextmenu', common));
+            } catch (e3) {}
+            try {
+                el.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, common, { buttons: 0 })));
+            } catch (e4) {}
+            try {
+                el.dispatchEvent(new PointerEvent('pointerup', Object.assign({
+                    pointerId: 1,
+                    pointerType: 'mouse',
+                    isPrimary: true,
+                    buttons: 0
+                }, common)));
+            } catch (e5) {}
+            return true;
         }
 
         var targetIdx = 0;
@@ -691,6 +832,12 @@
             }
 
             if (needProbe) {
+                var fromReact = extractGoTurnSlugFromReactInternals(puck);
+                if (fromReact) {
+                    log('Go turn: slug from React props (fiber)');
+                    run(findFlightData(puck, fromReact));
+                    return;
+                }
                 probeGoTurnSlugFromContextMenu(puck, function(probedSlug) {
                     if (probedSlug) {
                         log('Go turn: slug from context menu portal');
