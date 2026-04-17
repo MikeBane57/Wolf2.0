@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Middle-click launcher
 // @namespace    Wolf 2.0
-// @version      2.6
+// @version      2.7
 // @description  Middle-click a flight puck to open Pax connections, Go turn details, and/or a custom URL (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -202,56 +202,176 @@
         return parseLinkedHoverRoute(linkedRaw) !== null;
     }
 
+    function readGoTurnSlugFromOpenMenu() {
+        var menu = document.querySelector('[data-testid="puck-context-menu"]');
+        var a = menu && menu.querySelector('a[href*="go-turn-details"]');
+        if (!a) {
+            a = document.querySelector('a[href*="go-turn-details"]');
+        }
+        if (!a) {
+            var links = document.querySelectorAll('a[href*="go-turn-details"]');
+            var i;
+            for (i = 0; i < links.length; i++) {
+                var t = (links[i].textContent || '').trim();
+                if (/turn\s*details/i.test(t)) {
+                    a = links[i];
+                    break;
+                }
+            }
+        }
+        return a ? slugFromGoTurnHref(a.getAttribute('href') || a.href) : null;
+    }
+
+    function dismissContextMenuProbe() {
+        var i;
+        for (i = 0; i < 3; i++) {
+            try {
+                document.body && document.body.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'Escape',
+                    code: 'Escape',
+                    keyCode: 27,
+                    which: 27,
+                    bubbles: true,
+                    cancelable: true
+                }));
+                window.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'Escape',
+                    code: 'Escape',
+                    keyCode: 27,
+                    which: 27,
+                    bubbles: true,
+                    cancelable: true
+                }));
+            } catch (e) {}
+        }
+    }
+
     /**
-     * Dispatch contextmenu on the puck so React mounts the menu; read Turn Details href from portal.
-     * Dismisses with Escape. Async — use callback.
+     * React mounts the menu in a portal after contextmenu — 60ms was too short.
+     * Prefer the leg pop-target (schedule handlers often bind there, not the outer puck).
      */
     function probeGoTurnSlugFromContextMenu(puck, cb) {
         if (!puck || typeof puck.getBoundingClientRect !== 'function') {
             cb(null);
             return;
         }
-        var rect = puck.getBoundingClientRect();
-        var x = rect.left + rect.width / 2;
-        var y = rect.top + rect.height / 2;
-        try {
-            var ev = new MouseEvent('contextmenu', {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                clientX: x,
-                clientY: y,
-                button: 2,
-                buttons: 2
-            });
-            puck.dispatchEvent(ev);
-        } catch (err) {
-            cb(null);
-            return;
+
+        var targets = [];
+        var pop = puck.querySelector('[data-qe-id="as-flight-leg-pop-target"]');
+        var depT = puck.querySelector('[data-qe-id="as-flight-leg-dep-station-pop-target"]');
+        var arrT = puck.querySelector('[data-qe-id="as-flight-leg-arr-station-pop-target"]');
+        if (pop) {
+            targets.push(pop);
         }
-        window.setTimeout(function() {
-            var slug = null;
-            var menu = document.querySelector('[data-testid="puck-context-menu"]');
-            var a = menu && menu.querySelector('a[href*="go-turn-details"]');
-            if (!a) {
-                a = document.querySelector('a[href*="go-turn-details"]');
-            }
-            if (a) {
-                slug = slugFromGoTurnHref(a.getAttribute('href') || a.href);
-            }
+        if (depT) {
+            targets.push(depT);
+        }
+        if (arrT) {
+            targets.push(arrT);
+        }
+        targets.push(puck);
+
+        function dispatchOn(el) {
+            var rect = el.getBoundingClientRect();
+            var x = rect.left + Math.max(4, Math.min(rect.width / 2, rect.width - 4));
+            var y = rect.top + Math.max(4, Math.min(rect.height / 2, rect.height - 4));
             try {
-                document.dispatchEvent(new KeyboardEvent('keydown', {
-                    key: 'Escape',
-                    code: 'Escape',
-                    keyCode: 27,
+                var ev = new MouseEvent('contextmenu', {
                     bubbles: true,
-                    cancelable: true
-                }));
-            } catch (e) {}
+                    cancelable: true,
+                    view: window,
+                    clientX: x,
+                    clientY: y,
+                    button: 2,
+                    buttons: 2
+                });
+                return el.dispatchEvent(ev);
+            } catch (err) {
+                return false;
+            }
+        }
+
+        var targetIdx = 0;
+        var mo = null;
+        var rafId = null;
+        var done = false;
+
+        function finish(slug) {
+            if (done) {
+                return;
+            }
+            done = true;
+            if (mo) {
+                try {
+                    mo.disconnect();
+                } catch (e) {}
+                mo = null;
+            }
+            if (rafId !== null) {
+                try {
+                    cancelAnimationFrame(rafId);
+                } catch (e) {}
+                rafId = null;
+            }
+            dismissContextMenuProbe();
             window.setTimeout(function() {
-                cb(slug);
-            }, 40);
-        }, 60);
+                cb(slug || null);
+            }, 50);
+        }
+
+        function tryNextTarget() {
+            if (targetIdx >= targets.length) {
+                finish(null);
+                return;
+            }
+            var el = targets[targetIdx++];
+            if (!dispatchOn(el)) {
+                tryNextTarget();
+                return;
+            }
+
+            var deadline = Date.now() + 1200;
+            mo = new MutationObserver(function() {
+                var slug = readGoTurnSlugFromOpenMenu();
+                if (slug) {
+                    finish(slug);
+                }
+            });
+            try {
+                mo.observe(document.documentElement, { childList: true, subtree: true });
+            } catch (e) {}
+
+            function poll() {
+                if (done) {
+                    return;
+                }
+                var slug = readGoTurnSlugFromOpenMenu();
+                if (slug) {
+                    finish(slug);
+                    return;
+                }
+                if (Date.now() > deadline) {
+                    if (mo) {
+                        try {
+                            mo.disconnect();
+                        } catch (e) {}
+                        mo = null;
+                    }
+                    if (rafId !== null) {
+                        try {
+                            cancelAnimationFrame(rafId);
+                        } catch (e) {}
+                        rafId = null;
+                    }
+                    tryNextTarget();
+                    return;
+                }
+                rafId = requestAnimationFrame(poll);
+            }
+            rafId = requestAnimationFrame(poll);
+        }
+
+        tryNextTarget();
     }
 
     function findFlightData(puck, probedGoSlug) {
