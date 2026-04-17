@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.3.7
+// @version      1.3.8
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersMaxNames":{"type":"number","group":"Leaderboard","label":"Max names shown","description":"0 = show everyone with a count. Set a positive number only if you want to cap a very long list.","default":0,"min":0,"max":500,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
@@ -560,8 +560,19 @@
         return out;
     }
 
-    /** Capture on our tab anchor only (menu delegation + contains() fails with shadow/retargeting). */
-    function onTopClickersTabCapture(e) {
+    /**
+     * Document capture: parent Semantic UI menu can stopPropagation in capture
+     * before the event reaches our <a>, so anchor-only listeners never run.
+     */
+    var docCaptureWired = false;
+    function onTopClickersDocCapture(e) {
+        var t = e.target;
+        if (!t || typeof t.closest !== 'function') {
+            return;
+        }
+        if (!t.closest('#' + TAB_ID)) {
+            return;
+        }
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
@@ -569,11 +580,13 @@
     }
 
     function wireOurTabCapture(tabEl) {
-        if (!tabEl || tabEl.dataset.dcFimsTcCapture) {
+        if (!tabEl) {
             return;
         }
-        tabEl.dataset.dcFimsTcCapture = '1';
-        tabEl.addEventListener('click', onTopClickersTabCapture, true);
+        if (!docCaptureWired) {
+            docCaptureWired = true;
+            document.addEventListener('click', onTopClickersDocCapture, true);
+        }
     }
 
     function onFimsTabClick() {
@@ -846,13 +859,13 @@
                 }
             }
         }
+        if (docCaptureWired) {
+            document.removeEventListener('click', onTopClickersDocCapture, true);
+            docCaptureWired = false;
+        }
         var tab = document.getElementById(TAB_ID);
-        if (tab) {
-            tab.removeEventListener('click', onTopClickersTabCapture, true);
-            delete tab.dataset.dcFimsTcCapture;
-            if (tab.parentNode) {
-                tab.parentNode.removeChild(tab);
-            }
+        if (tab && tab.parentNode) {
+            tab.parentNode.removeChild(tab);
         }
         var panel = document.getElementById(PANEL_ID);
         if (panel && panel.parentNode) {

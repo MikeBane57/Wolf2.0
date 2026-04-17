@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.3.1
+// @version      1.3.2
 // @description  FIMS tab: wall of fame accolades; password to edit; GitHub file sync or legacy URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -801,8 +801,18 @@
         render(panel);
     }
 
-    /** Capture on our tab anchor only (menu + contains() unreliable with retargeting). */
-    function onWofTabCapture(e) {
+    /**
+     * Document capture: Semantic menu may stopPropagation before the event reaches our <a>.
+     */
+    var wofDocCaptureWired = false;
+    function onWofDocCapture(e) {
+        var t = e.target;
+        if (!t || typeof t.closest !== 'function') {
+            return;
+        }
+        if (!t.closest('#' + TAB_ID)) {
+            return;
+        }
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
@@ -810,11 +820,13 @@
     }
 
     function wireWofTabCapture(tabEl) {
-        if (!tabEl || tabEl.dataset.dcWofTabCapture) {
+        if (!tabEl) {
             return;
         }
-        tabEl.dataset.dcWofTabCapture = '1';
-        tabEl.addEventListener('click', onWofTabCapture, true);
+        if (!wofDocCaptureWired) {
+            wofDocCaptureWired = true;
+            document.addEventListener('click', onWofDocCapture, true);
+        }
     }
 
     function wireTabs(menu) {
@@ -986,13 +998,13 @@
             rootMo.disconnect();
             rootMo = null;
         }
+        if (wofDocCaptureWired) {
+            document.removeEventListener('click', onWofDocCapture, true);
+            wofDocCaptureWired = false;
+        }
         var tab = document.getElementById(TAB_ID);
-        if (tab) {
-            tab.removeEventListener('click', onWofTabCapture, true);
-            delete tab.dataset.dcWofTabCapture;
-            if (tab.parentNode) {
-                tab.parentNode.removeChild(tab);
-            }
+        if (tab && tab.parentNode) {
+            tab.parentNode.removeChild(tab);
         }
         var panel = document.getElementById(PANEL_ID);
         if (panel && panel.parentNode) {
