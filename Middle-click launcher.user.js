@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Middle-click launcher
 // @namespace    Wolf 2.0
-// @version      2.4
+// @version      2.5
 // @description  Middle-click a flight puck to open Pax connections, Go turn details, and/or a custom URL (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"…/widgets/go-turn-details/{slug}/overview. Slug prefers any a[href*=go-turn-details] inside the puck (same as app Turn Details); else data-linked-hover-id / parsed fields.","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Position/size for multiple popups. Side by side uses capped width so windows are not full screen.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]},"midClickMultiMaxWidth":{"type":"number","group":"Middle-click — multiple windows","label":"Max width per window (px)","description":"Caps each popup width when several are open (side by side / vertical).","default":780,"min":400,"max":2000,"step":10},"midClickMultiMaxHeight":{"type":"number","group":"Middle-click — multiple windows","label":"Max height per window (px)","description":"Caps each popup height when several are open.","default":720,"min":320,"max":2000,"step":10},"midClickOverlapTopTarget":{"type":"select","group":"Middle-click — multiple windows","label":"Which window is on top (overlap / cascade)","description":"The last opened popup usually stacks on top. Choose which target opens last.","default":"go_turn","options":[{"value":"pax","label":"Pax connections"},{"value":"go_turn","label":"Go turn details"},{"value":"custom","label":"Custom URL"},{"value":"order","label":"Order in Pref (Pax → Go → Custom)"}]}}
+// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"Slug order: data-linked-hover-id on puck/ancestors (canonical leg route) over any in-DOM go-turn link or rebuilt slug. Turn Details href in a portal may not exist at middle-click.","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Position/size for multiple popups. Side by side uses capped width so windows are not full screen.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]},"midClickMultiMaxWidth":{"type":"number","group":"Middle-click — multiple windows","label":"Max width per window (px)","description":"Caps each popup width when several are open (side by side / vertical).","default":780,"min":400,"max":2000,"step":10},"midClickMultiMaxHeight":{"type":"number","group":"Middle-click — multiple windows","label":"Max height per window (px)","description":"Caps each popup height when several are open.","default":720,"min":320,"max":2000,"step":10},"midClickOverlapTopTarget":{"type":"select","group":"Middle-click — multiple windows","label":"Which window is on top (overlap / cascade)","description":"The last opened popup usually stacks on top. Choose which target opens last.","default":"go_turn","options":[{"value":"pax","label":"Pax connections"},{"value":"go_turn","label":"Go turn details"},{"value":"custom","label":"Custom URL"},{"value":"order","label":"Order in Pref (Pax → Go → Custom)"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // ==/UserScript==
@@ -44,8 +44,7 @@
         console.log.apply(console, ['%c[MID-CLICK]', 'color:#00bfff'].concat([].slice.call(arguments)));
     }
 
-    function extractDate(puck) {
-        const linked = puck.getAttribute('data-linked-hover-id');
+    function extractDate(linked) {
         if (linked) {
             const match = linked.match(/^(\d{4}-\d{2}-\d{2})/);
             if (match) {
@@ -65,25 +64,57 @@
      * or 20260416-1201-MCI-NULL-719-SAT-NULL
      */
     /**
-     * Prefer the same href the app uses for Turn Details (anchor in or near the puck).
-     * Matches schedule DOM (e.g. virtuoso row + puck-context-menu) better than parsing alone.
+     * Turn Details often lives in a React portal (body/div[…]), not under the puck — so on
+     * middle-click we cannot read that href. Prefer data-linked-hover-id on the puck or an
+     * ancestor; optional a[href*=go-turn-details] only under the puck/ancestors (may be absent).
      */
-    function extractGoTurnSlugFromDom(puck) {
-        if (!puck || typeof puck.querySelectorAll !== 'function') {
+    function slugFromGoTurnHref(href) {
+        var m = String(href || '').match(/go-turn-details\/([^/?#]+)/i);
+        if (!m || !m[1]) {
             return null;
         }
-        var nodes = puck.querySelectorAll('a[href*="go-turn-details"]');
-        var i;
-        for (i = 0; i < nodes.length; i++) {
-            var href = nodes[i].getAttribute('href') || nodes[i].href || '';
-            var m = String(href).match(/go-turn-details\/([^/?#]+)/i);
-            if (m && m[1]) {
-                try {
-                    return decodeURIComponent(m[1]);
-                } catch (e) {
-                    return m[1];
+        try {
+            return decodeURIComponent(m[1]);
+        } catch (e) {
+            return m[1];
+        }
+    }
+
+    function getLinkedHoverIdFromAncestors(el) {
+        var cur = el;
+        var depth = 0;
+        while (cur && depth < 16) {
+            if (cur.nodeType === 1 && cur.getAttribute) {
+                var v = cur.getAttribute('data-linked-hover-id');
+                if (v && String(v).trim()) {
+                    return String(v).trim();
                 }
             }
+            cur = cur.parentElement;
+            depth++;
+        }
+        return '';
+    }
+
+    function extractGoTurnSlugFromDom(puck) {
+        if (!puck) {
+            return null;
+        }
+        var cur = puck;
+        var depth = 0;
+        while (cur && depth < 16) {
+            if (cur.querySelectorAll) {
+                var nodes = cur.querySelectorAll('a[href*="go-turn-details"]');
+                var i;
+                for (i = 0; i < nodes.length; i++) {
+                    var slug = slugFromGoTurnHref(nodes[i].getAttribute('href') || nodes[i].href);
+                    if (slug) {
+                        return slug;
+                    }
+                }
+            }
+            cur = cur.parentElement;
+            depth++;
         }
         return null;
     }
@@ -106,8 +137,7 @@
         };
     }
 
-    function parseLinkedHoverRoute(puck) {
-        const linked = puck.getAttribute('data-linked-hover-id');
+    function parseLinkedHoverRoute(linked) {
         if (!linked || typeof linked !== 'string') {
             return null;
         }
@@ -165,9 +195,17 @@
     }
 
     function findFlightData(puck) {
+        var linkedRaw = getLinkedHoverIdFromAncestors(puck);
+        var fromLink = parseLinkedHoverRoute(linkedRaw);
+
         var domSlug = extractGoTurnSlugFromDom(puck);
-        var fromDom = domSlug ? parseGoTurnSlugEnrichment(domSlug) : null;
-        var fromLink = parseLinkedHoverRoute(puck);
+        if (fromLink && fromLink.slug && domSlug && domSlug !== fromLink.slug) {
+            log('Go turn: ignoring stale in-puck href; using data-linked-hover-id slug');
+            domSlug = null;
+        }
+        var fromDom = (fromLink && fromLink.slug)
+            ? parseGoTurnSlugEnrichment(fromLink.slug)
+            : (domSlug ? parseGoTurnSlugEnrichment(domSlug) : null);
 
         const stationNodes = puck.querySelectorAll('[class*="tg9Iiv9oAOo="]');
         const airports = Array.from(stationNodes)
@@ -192,8 +230,7 @@
         }
 
         if (!flight) {
-            const linked = puck.getAttribute('data-linked-hover-id');
-            const match = linked && linked.match(/^\d{4}-\d{2}-\d{2}-(\d+)-/);
+            const match = linkedRaw && linkedRaw.match(/^\d{4}-\d{2}-\d{2}-(\d+)-/);
             if (match) {
                 flight = match[1];
             }
@@ -216,10 +253,11 @@
         var legFlight = (fromLink && fromLink.legFlight) || (fromDom && fromDom.legFlight) || flight;
         var opFlight = (fromLink && fromLink.opFlight) || (fromDom && fromDom.opFlight) || flight;
 
-        var date = (fromLink && fromLink.dateCompact) || (fromDom && fromDom.dateCompact) || extractDate(puck);
+        var date = (fromLink && fromLink.dateCompact) || (fromDom && fromDom.dateCompact) || extractDate(linkedRaw);
 
-        var goTurnSlug = domSlug ||
-            (fromLink && fromLink.slug) ||
+        /* Canonical route lives in data-linked-hover-id (leg vs marketing differs); prefer it over rebuilt slug. */
+        var goTurnSlug = (fromLink && fromLink.slug) ||
+            domSlug ||
             buildGoTurnSlugFallback({
                 date: date,
                 depAirport: depAirport,
