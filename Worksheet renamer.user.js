@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Worksheet renamer
 // @namespace    Wolf 2.0
-// @version      2.5
-// @description  Rename worksheet widget tab title; placeholders in prefs; optional favicon
+// @version      2.6
+// @description  Rename worksheet widget tab title; placeholders in prefs; optional favicon; short poll only (no DOM observers)
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} and optionally {base} (rest of title, dates stripped). Omit {base} for a fixed label only, e.g. WS {num}.","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📋) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📋 or https://…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js
@@ -17,7 +17,6 @@
 
     var baseTitleAtInject = document.title;
 
-    /** Last app-emitted title before our rename; survives script refresh so prefs re-apply correctly. */
     var rawTitleStorageKey = 'dc_worksheet_raw_title_' + location.pathname + location.search;
 
     const FOR_CURRENT_DATE_RE = /\s*for\s+current\s+date\s*/gi;
@@ -29,12 +28,13 @@
         /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*\d{2,4}\b/gi
     ];
 
-    let titleElObserver = null;
     var faviconLinkEl = null;
-    var headMo = null;
-    var refreshDebounceTimer = null;
-    /** After a successful rename we disconnect observers — title only needs one apply until navigation reloads the page. */
     var renameComplete = false;
+    var pollTimer = null;
+    var pollAttempts = 0;
+    /** ~12s window to catch async app title; no MutationObservers after this. */
+    var POLL_MS = 300;
+    var MAX_POLLS = 40;
 
     function readStoredRawTitle() {
         try {
@@ -53,7 +53,6 @@
         } catch (e) {}
     }
 
-    /** Prefer live app title; if the tab already shows our formatted title, use stored raw. */
     function getRawTitleForTransform() {
         var cur = document.title;
         if (shouldRewrite(cur)) {
@@ -173,7 +172,7 @@
         var next = transformTitle(raw);
         document.title = next;
         renameComplete = true;
-        stopObservers();
+        stopPoll();
     }
 
     function escapeXml(s) {
@@ -184,7 +183,6 @@
             .replace(/"/g, '&quot;');
     }
 
-    /** Emoji or short label → SVG data URL; already a URL → unchanged */
     function resolveTabIconHref(raw) {
         var s = String(raw || '').trim();
         if (!s) {
@@ -224,73 +222,32 @@
         }
     }
 
-    function stopObservers() {
-        if (refreshDebounceTimer) {
-            clearTimeout(refreshDebounceTimer);
-            refreshDebounceTimer = null;
-        }
-        if (headMo) {
-            headMo.disconnect();
-            headMo = null;
-        }
-        if (titleElObserver) {
-            titleElObserver.disconnect();
-            titleElObserver = null;
+    function stopPoll() {
+        if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
         }
     }
 
-    function scheduleRefresh() {
+    function pollTick() {
+        applyTitle();
+        applyFavicon();
         if (renameComplete) {
             return;
         }
-        if (refreshDebounceTimer) {
-            clearTimeout(refreshDebounceTimer);
+        pollAttempts++;
+        if (pollAttempts >= MAX_POLLS) {
+            stopPoll();
         }
-        refreshDebounceTimer = setTimeout(function() {
-            refreshDebounceTimer = null;
-            wireTitleElement();
-            applyTitle();
-            applyFavicon();
-        }, 120);
     }
 
-    function wireTitleElement() {
-        const el = document.querySelector('title');
-        if (!el || el.dataset.worksheetRenamerWired) {
-            return;
-        }
-        if (titleElObserver) {
-            titleElObserver.disconnect();
-            titleElObserver = null;
-        }
-        el.dataset.worksheetRenamerWired = '1';
-        titleElObserver = new MutationObserver(function() {
-            scheduleRefresh();
-        });
-        titleElObserver.observe(el, {
-            childList: true,
-            subtree: true,
-            characterData: true
-        });
+    pollTick();
+    if (!renameComplete) {
+        pollTimer = setInterval(pollTick, POLL_MS);
     }
-
-    headMo = new MutationObserver(function() {
-        scheduleRefresh();
-    });
-
-    if (document.head) {
-        headMo.observe(document.head, { childList: true, subtree: false });
-    }
-    wireTitleElement();
-    applyTitle();
-    applyFavicon();
 
     window.__myScriptCleanup = function() {
-        stopObservers();
-        const t = document.querySelector('title');
-        if (t) {
-            delete t.dataset.worksheetRenamerWired;
-        }
+        stopPoll();
         var stored = readStoredRawTitle();
         if (stored && shouldRewrite(stored)) {
             document.title = stored;
