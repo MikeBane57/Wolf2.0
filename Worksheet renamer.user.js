@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Worksheet renamer
 // @namespace    Wolf 2.0
-// @version      2.6
-// @description  Rename worksheet widget tab title; placeholders in prefs; optional favicon; short poll only (no DOM observers)
+// @version      2.7
+// @description  Rename worksheet tab title; short poll then lightweight <title> watch; optional favicon
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} and optionally {base} (rest of title, dates stripped). Omit {base} for a fixed label only, e.g. WS {num}.","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📋) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📋 or https://…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js
@@ -30,8 +30,11 @@
 
     var faviconLinkEl = null;
     var renameComplete = false;
+    var lastTitleSetByUs = '';
     var pollTimer = null;
     var pollAttempts = 0;
+    var titleMo = null;
+    var titleDebounce = null;
     /** ~12s window to catch async app title; no MutationObservers after this. */
     var POLL_MS = 300;
     var MAX_POLLS = 40;
@@ -161,18 +164,36 @@
     }
 
     function applyTitle() {
-        if (renameComplete) {
-            return;
-        }
         var raw = getRawTitleForTransform();
         if (!shouldRewrite(raw)) {
             return;
         }
         writeStoredRawTitle(raw);
         var next = transformTitle(raw);
+        if (!next) {
+            return;
+        }
+        lastTitleSetByUs = next;
         document.title = next;
-        renameComplete = true;
-        stopPoll();
+        if (!renameComplete) {
+            renameComplete = true;
+            stopPoll();
+        }
+    }
+
+    function scheduleTitleReapply() {
+        if (titleDebounce) {
+            clearTimeout(titleDebounce);
+        }
+        titleDebounce = setTimeout(function() {
+            titleDebounce = null;
+            var cur = document.title;
+            if (cur === lastTitleSetByUs) {
+                return;
+            }
+            applyTitle();
+            applyFavicon();
+        }, 200);
     }
 
     function escapeXml(s) {
@@ -246,8 +267,24 @@
         pollTimer = setInterval(pollTick, POLL_MS);
     }
 
+    var titleEl = document.querySelector('title');
+    if (titleEl) {
+        titleMo = new MutationObserver(function() {
+            scheduleTitleReapply();
+        });
+        titleMo.observe(titleEl, { childList: true, subtree: true, characterData: true });
+    }
+
     window.__myScriptCleanup = function() {
         stopPoll();
+        if (titleMo) {
+            titleMo.disconnect();
+            titleMo = null;
+        }
+        if (titleDebounce) {
+            clearTimeout(titleDebounce);
+            titleDebounce = null;
+        }
         var stored = readStoredRawTitle();
         if (stored && shouldRewrite(stored)) {
             document.title = stored;

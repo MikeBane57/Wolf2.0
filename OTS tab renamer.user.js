@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         OTS tab renamer
 // @namespace    Wolf 2.0
-// @version      1.3
-// @description  Rename /ots tabs by instance (1, 2, 3…) once per page load; optional favicon; full reload re-runs
+// @version      1.4
+// @description  Rename /ots tabs by instance (1, 2, 3…); debounced title + registry sync; optional favicon
 // @match        https://opssuitemain.swacorp.com/ots*
 // @grant        none
-// @donkeycode-pref {"otsTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"{n} = tab instance (1, 2, 3…) by open order. {base} = title when the page loaded. Refresh the tab to pick up app title changes.","default":"OTS {n} · {base}","placeholder":"OTS {n} · {base}"},"otsTabFavicon":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Emoji or https://… image URL. Empty = keep site icon.","default":"","placeholder":"📊"}}
+// @donkeycode-pref {"otsTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"{n} = instance by open order (duplicate tabs get distinct numbers). {base} updates when the app changes the page title.","default":"OTS {n} · {base}","placeholder":"OTS {n} · {base}"},"otsTabFavicon":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Emoji or https://… image URL. Empty = keep site icon.","default":"","placeholder":"📊"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/OTS%20tab%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/OTS%20tab%20renamer.user.js
 // ==/UserScript==
@@ -15,21 +15,34 @@
 
     var REGISTRY_KEY = 'dc_ots_tab_registry_v1';
 
+    var TAB_HANDOFF_KEY = 'dc_ots_tab_id_handoff';
     var tabId = null;
     try {
-        tabId = sessionStorage.getItem('dc_ots_tab_id');
-        if (!tabId) {
+        var handed = sessionStorage.getItem(TAB_HANDOFF_KEY);
+        if (handed) {
+            sessionStorage.removeItem(TAB_HANDOFF_KEY);
+            tabId = handed;
+        } else {
             tabId = 'o-' + Date.now() + '-' + Math.random().toString(36).slice(2, 12);
-            sessionStorage.setItem('dc_ots_tab_id', tabId);
         }
     } catch (e) {
         tabId = 'o-fallback';
     }
 
+    function persistTabIdForRefresh() {
+        try {
+            sessionStorage.setItem(TAB_HANDOFF_KEY, tabId);
+        } catch (e) {}
+    }
+
     var joinedAt = Date.now();
     var baseTitleAtInject = document.title;
+    var lastTitleSetByUs = '';
     var faviconLinkEl = null;
     var rawTitleStorageKey = 'dc_ots_raw_title_' + location.pathname + location.search;
+    var titleMo = null;
+    var titleDebounce = null;
+    var onStorageBound = null;
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -137,18 +150,23 @@
             .trim();
     }
 
-    function applyOnce(instanceN) {
+    function applyOnce(instanceN, rawBaseOverride) {
         var n = String(instanceN);
         var tpl = String(getPref('otsTabTitleTemplate', 'OTS {n} · {base}') || 'OTS {n} · {base}');
-        var rawBase = baseTitleAtInject;
+        var rawBase = rawBaseOverride !== undefined ? rawBaseOverride : baseTitleAtInject;
         writeStoredRawTitle(rawBase);
         var next = buildTitleFromParts(tpl, n, rawBase);
         if (next) {
+            lastTitleSetByUs = next;
             document.title = next;
         }
 
         var href = resolveTabIconHref(getPref('otsTabFavicon', ''));
         if (!href) {
+            if (faviconLinkEl && faviconLinkEl.parentNode) {
+                faviconLinkEl.parentNode.removeChild(faviconLinkEl);
+            }
+            faviconLinkEl = null;
             return;
         }
         if (!faviconLinkEl) {
@@ -158,6 +176,21 @@
             (document.head || document.documentElement).appendChild(faviconLinkEl);
         }
         faviconLinkEl.setAttribute('href', href);
+    }
+
+    function scheduleReapply() {
+        if (titleDebounce) {
+            clearTimeout(titleDebounce);
+        }
+        titleDebounce = setTimeout(function() {
+            titleDebounce = null;
+            var cur = document.title;
+            if (cur && cur !== lastTitleSetByUs) {
+                baseTitleAtInject = cur;
+            }
+            var inst = registerAndGetInstance();
+            applyOnce(inst);
+        }, 200);
     }
 
     function removeFromRegistry() {
@@ -172,6 +205,23 @@
         applyOnce(instanceN);
         window.addEventListener('beforeunload', removeFromRegistry);
         window.addEventListener('pagehide', removeFromRegistry);
+        window.addEventListener('beforeunload', persistTabIdForRefresh);
+        window.addEventListener('pagehide', persistTabIdForRefresh);
+
+        var titleEl = document.querySelector('title');
+        if (titleEl) {
+            titleMo = new MutationObserver(function() {
+                scheduleReapply();
+            });
+            titleMo.observe(titleEl, { childList: true, subtree: true, characterData: true });
+        }
+
+        onStorageBound = function(ev) {
+            if (ev.key === REGISTRY_KEY) {
+                scheduleReapply();
+            }
+        };
+        window.addEventListener('storage', onStorageBound);
     }
 
     init();
@@ -180,10 +230,27 @@
         removeFromRegistry();
         window.removeEventListener('beforeunload', removeFromRegistry);
         window.removeEventListener('pagehide', removeFromRegistry);
+        window.removeEventListener('beforeunload', persistTabIdForRefresh);
+        window.removeEventListener('pagehide', persistTabIdForRefresh);
+        if (onStorageBound) {
+            window.removeEventListener('storage', onStorageBound);
+            onStorageBound = null;
+        }
+        if (titleMo) {
+            titleMo.disconnect();
+            titleMo = null;
+        }
+        if (titleDebounce) {
+            clearTimeout(titleDebounce);
+            titleDebounce = null;
+        }
         if (faviconLinkEl && faviconLinkEl.parentNode) {
             faviconLinkEl.parentNode.removeChild(faviconLinkEl);
         }
         faviconLinkEl = null;
+        try {
+            sessionStorage.removeItem(TAB_HANDOFF_KEY);
+        } catch (e) {}
         document.title = readStoredRawTitle() || baseTitleAtInject;
     };
 })();

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FLIFO tab renamer
 // @namespace    Wolf 2.0
-// @version      1.1
-// @description  Rename FLIFO tabs once per load; {base} = title when the page loaded; optional favicon
+// @version      1.2
+// @description  Rename FLIFO tabs; debounced title watch; {base} from app title; optional favicon
 // @match        https://opssuitemain.swacorp.com/flifo*
 // @grant        none
 // @donkeycode-pref {"flifoTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Include {base} only if you want the original page title in the tab. Plain text uses only your text. Reload to refresh {base}.","default":"FLIFO · {base}","placeholder":"FLIFO · {base}"},"flifoTabFavicon":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Emoji or https://… URL. Empty = site default.","default":"","placeholder":"🛫"}}
@@ -14,8 +14,11 @@
     'use strict';
 
     var baseTitleAtInject = document.title;
+    var lastTitleSetByUs = '';
     var faviconLinkEl = null;
     var rawTitleKey = 'dc_flifo_tab_raw_' + location.pathname + location.search;
+    var titleMo = null;
+    var titleDebounce = null;
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -75,23 +78,60 @@
         writeStoredRaw(rawBase);
         var next = tpl.split('{base}').join(rawBase).replace(/\s+/g, ' ').trim();
         if (next) {
+            lastTitleSetByUs = next;
             document.title = next;
         }
 
         var href = resolveTabIconHref(getPref('flifoTabFavicon', ''));
         if (!href) {
+            if (faviconLinkEl && faviconLinkEl.parentNode) {
+                faviconLinkEl.parentNode.removeChild(faviconLinkEl);
+            }
+            faviconLinkEl = null;
             return;
         }
-        faviconLinkEl = document.createElement('link');
-        faviconLinkEl.id = 'dc-flifo-tab-favicon';
-        faviconLinkEl.rel = 'icon';
+        if (!faviconLinkEl) {
+            faviconLinkEl = document.createElement('link');
+            faviconLinkEl.id = 'dc-flifo-tab-favicon';
+            faviconLinkEl.rel = 'icon';
+            (document.head || document.documentElement).appendChild(faviconLinkEl);
+        }
         faviconLinkEl.setAttribute('href', href);
-        (document.head || document.documentElement).appendChild(faviconLinkEl);
+    }
+
+    function scheduleReapply() {
+        if (titleDebounce) {
+            clearTimeout(titleDebounce);
+        }
+        titleDebounce = setTimeout(function() {
+            titleDebounce = null;
+            var cur = document.title;
+            if (cur && cur !== lastTitleSetByUs) {
+                baseTitleAtInject = cur;
+            }
+            applyOnce();
+        }, 200);
     }
 
     applyOnce();
 
+    var titleEl = document.querySelector('title');
+    if (titleEl) {
+        titleMo = new MutationObserver(function() {
+            scheduleReapply();
+        });
+        titleMo.observe(titleEl, { childList: true, subtree: true, characterData: true });
+    }
+
     window.__myScriptCleanup = function() {
+        if (titleMo) {
+            titleMo.disconnect();
+            titleMo = null;
+        }
+        if (titleDebounce) {
+            clearTimeout(titleDebounce);
+            titleDebounce = null;
+        }
         if (faviconLinkEl && faviconLinkEl.parentNode) {
             faviconLinkEl.parentNode.removeChild(faviconLinkEl);
         }
