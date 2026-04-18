@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Middle-click launcher
 // @namespace    Wolf 2.0
-// @version      2.8
+// @version      2.9
 // @description  Middle-click a flight puck to open Pax connections, Go turn details, and/or a custom URL (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"Short hover-id: first tries React internal props for go-turn-details URL; else synthetic right-click + menu read. SES may block synthetic menu — fiber path avoids that.","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Position/size for multiple popups. Side by side uses capped width so windows are not full screen.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]},"midClickMultiMaxWidth":{"type":"number","group":"Middle-click — multiple windows","label":"Max width per window (px)","description":"Caps each popup width when several are open (side by side / vertical).","default":780,"min":400,"max":2000,"step":10},"midClickMultiMaxHeight":{"type":"number","group":"Middle-click — multiple windows","label":"Max height per window (px)","description":"Caps each popup height when several are open.","default":720,"min":320,"max":2000,"step":10},"midClickOverlapTopTarget":{"type":"select","group":"Middle-click — multiple windows","label":"Which window is on top (overlap / cascade)","description":"The last opened popup usually stacks on top. Choose which target opens last.","default":"go_turn","options":[{"value":"pax","label":"Pax connections"},{"value":"go_turn","label":"Go turn details"},{"value":"custom","label":"Custom URL"},{"value":"order","label":"Order in Pref (Pax → Go → Custom)"}]}}
+// @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"Short hover-id: React fiber scan, then synthetic menu read.","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Position/size for multiple popups. Side by side uses capped width so windows are not full screen.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]},"midClickMultiMaxWidth":{"type":"number","group":"Middle-click — multiple windows","label":"Max width per window (px)","description":"Caps each popup width when several are open (side by side / vertical).","default":780,"min":400,"max":2000,"step":10},"midClickMultiMaxHeight":{"type":"number","group":"Middle-click — multiple windows","label":"Max height per window (px)","description":"Caps each popup height when several are open.","default":720,"min":320,"max":2000,"step":10},"midClickOverlapTopTarget":{"type":"select","group":"Middle-click — multiple windows","label":"Which window is on top (overlap / cascade)","description":"The last opened popup usually stacks on top. Choose which target opens last.","default":"go_turn","options":[{"value":"pax","label":"Pax connections"},{"value":"go_turn","label":"Go turn details"},{"value":"custom","label":"Custom URL"},{"value":"order","label":"Order in Pref (Pax → Go → Custom)"}]}}
+// @donkeycode-pref {"midClickMonitorOffsetX":{"type":"number","group":"Middle-click — screen","label":"Popup offset X (px)","description":"Added to every popup left position. Use e.g. 1920 or 2560 to shift popups to another monitor (depends on your OS layout). 0 = no extra offset.","default":0,"min":-8000,"max":8000,"step":1},"midClickMonitorOffsetY":{"type":"number","group":"Middle-click — screen","label":"Popup offset Y (px)","description":"Added to every popup top position.","default":0,"min":-8000,"max":8000,"step":1},"midClickWindowMode":{"type":"select","group":"Middle-click — screen","label":"Window mode","description":"New: each target gets its own window. Reuse: one named window — multiple targets replace it in order (only the last URL stays visible).","default":"new","options":[{"value":"new","label":"New window per target"},{"value":"reuse","label":"Reuse one window (same tab)"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // ==/UserScript==
@@ -23,6 +24,7 @@
     const WINDOW_WIDTH = 1400;
     const WINDOW_HEIGHT = 900;
     const STORAGE_KEY = 'paxConnWindowPos';
+    const REUSE_WINDOW_NAME = 'donkeycode_midclick_reuse';
 
     const puckHandlers = new WeakMap();
     const midIntervals = [];
@@ -276,6 +278,12 @@
                 return fromProps;
             }
         }
+        if (fiber.memoizedState !== undefined && fiber.memoizedState !== null) {
+            var fromSt = scanValueForGoTurnSlug(fiber.memoizedState, 0);
+            if (fromSt) {
+                return fromSt;
+            }
+        }
         var child = fiber.child;
         while (child) {
             var r = walkFiberForGoTurnSlug(child, seen, depth + 1);
@@ -322,23 +330,36 @@
     }
 
     function readGoTurnSlugFromOpenMenu() {
+        function slugFromAnchor(node) {
+            if (!node) {
+                return null;
+            }
+            var href = node.getAttribute('href') || node.href || '';
+            return slugFromGoTurnHref(href);
+        }
         var menu = document.querySelector('[data-testid="puck-context-menu"]');
-        var a = menu && menu.querySelector('a[href*="go-turn-details"]');
-        if (!a) {
-            a = document.querySelector('a[href*="go-turn-details"]');
+        var a = menu && menu.querySelector('a[href*="go-turn-details"], a[href*="/widgets/go-turn-details"]');
+        if (!a && menu && menu.shadowRoot) {
+            a = menu.shadowRoot.querySelector('a[href*="go-turn-details"], a[href*="/widgets/go-turn-details"]');
         }
         if (!a) {
-            var links = document.querySelectorAll('a[href*="go-turn-details"]');
-            var i;
-            for (i = 0; i < links.length; i++) {
-                var t = (links[i].textContent || '').trim();
-                if (/turn\s*details/i.test(t)) {
-                    a = links[i];
-                    break;
-                }
+            a = document.querySelector('a[href*="go-turn-details"], a[href*="/widgets/go-turn-details"]');
+        }
+        if (a) {
+            return slugFromAnchor(a);
+        }
+        var links = document.querySelectorAll('a[href*="go-turn-details"], a[href*="/widgets/go-turn-details"]');
+        var i;
+        for (i = 0; i < links.length; i++) {
+            var t = ((links[i].textContent || '') + ' ' + (links[i].getAttribute('aria-label') || '')).replace(/\s+/g, ' ');
+            if (/turn\s*details/i.test(t) || /go\s*turn/i.test(t)) {
+                return slugFromAnchor(links[i]);
             }
         }
-        return a ? slugFromGoTurnHref(a.getAttribute('href') || a.href) : null;
+        if (links.length === 1) {
+            return slugFromAnchor(links[0]);
+        }
+        return null;
     }
 
     function dismissContextMenuProbe() {
@@ -471,7 +492,7 @@
                 return;
             }
 
-            var deadline = Date.now() + 1200;
+            var deadline = Date.now() + 2800;
             mo = new MutationObserver(function() {
                 var slug = readGoTurnSlugFromOpenMenu();
                 if (slug) {
@@ -504,7 +525,22 @@
                         } catch (e) {}
                         rafId = null;
                     }
-                    tryNextTarget();
+                    var late = readGoTurnSlugFromOpenMenu();
+                    if (late) {
+                        finish(late);
+                        return;
+                    }
+                    window.setTimeout(function() {
+                        if (done) {
+                            return;
+                        }
+                        late = readGoTurnSlugFromOpenMenu();
+                        if (late) {
+                            finish(late);
+                            return;
+                        }
+                        tryNextTarget();
+                    }, 320);
                     return;
                 }
                 rafId = requestAnimationFrame(poll);
@@ -664,35 +700,47 @@
         return { maxW: mw, maxH: mh };
     }
 
+    function getMonitorOffsets() {
+        var ox = Number(getPref('midClickMonitorOffsetX', 0));
+        var oy = Number(getPref('midClickMonitorOffsetY', 0));
+        if (!isFinite(ox)) {
+            ox = 0;
+        }
+        if (!isFinite(oy)) {
+            oy = 0;
+        }
+        return { ox: ox, oy: oy };
+    }
+
     function getLayoutRect(index, total, layout) {
         var gap = 8;
         var cap = getMultiWindowSizeCap();
+        var mo = getMonitorOffsets();
         var ax = typeof window.screen.availLeft === 'number' ? window.screen.availLeft : 0;
         var ay = typeof window.screen.availTop === 'number' ? window.screen.availTop : 0;
         var aw = typeof window.screen.availWidth === 'number' ? window.screen.availWidth : window.screen.width;
         var ah = typeof window.screen.availHeight === 'number' ? window.screen.availHeight : window.screen.height;
+        var out;
         if (total <= 1 || layout === 'same') {
             var pos = getSavedPosition();
-            return {
-                left: Math.round(pos.x),
-                top: Math.round(pos.y),
+            out = {
+                left: Math.round(pos.x + mo.ox),
+                top: Math.round(pos.y + mo.oy),
                 width: WINDOW_WIDTH,
                 height: WINDOW_HEIGHT
             };
-        }
-        if (layout === 'cascade') {
+        } else if (layout === 'cascade') {
             var off = 36;
             var base = getSavedPosition();
             var cw = Math.min(WINDOW_WIDTH, cap.maxW);
             var ch = Math.min(WINDOW_HEIGHT, cap.maxH);
-            return {
-                left: Math.round(base.x + index * off),
-                top: Math.round(base.y + index * off),
+            out = {
+                left: Math.round(base.x + index * off + mo.ox),
+                top: Math.round(base.y + index * off + mo.oy),
                 width: cw,
                 height: ch
             };
-        }
-        if (layout === 'vertical') {
+        } else if (layout === 'vertical') {
             var rows = total;
             var rawH = Math.floor((ah - gap * (rows + 1)) / rows);
             var h = Math.min(Math.max(320, rawH), cap.maxH);
@@ -701,27 +749,31 @@
             var left = ax + gap + Math.max(0, Math.floor((rawW - w) / 2));
             var totalBlockH = rows * h + gap * (rows - 1);
             var top = ay + gap + Math.max(0, Math.floor((ah - gap * 2 - totalBlockH) / 2)) + index * (h + gap);
-            return { left: left, top: top, width: w, height: h };
+            out = { left: left + mo.ox, top: top + mo.oy, width: w, height: h };
+        } else {
+            /* horizontal (default for multi) */
+            var cols = total;
+            var rawColW = Math.floor((aw - gap * (cols + 1)) / cols);
+            var w2 = Math.min(Math.max(360, rawColW), cap.maxW);
+            var rawH2 = ah - gap * 2;
+            var h2 = Math.min(Math.max(400, rawH2), cap.maxH);
+            var totalRowW = cols * w2 + gap * (cols - 1);
+            var left0 = ax + gap + Math.max(0, Math.floor((aw - gap * 2 - totalRowW) / 2));
+            var left2 = left0 + index * (w2 + gap);
+            var top2 = ay + gap + Math.max(0, Math.floor((ah - gap * 2 - h2) / 2));
+            out = { left: left2 + mo.ox, top: top2 + mo.oy, width: w2, height: h2 };
         }
-        /* horizontal (default for multi) */
-        var cols = total;
-        var rawColW = Math.floor((aw - gap * (cols + 1)) / cols);
-        var w = Math.min(Math.max(360, rawColW), cap.maxW);
-        var rawH2 = ah - gap * 2;
-        var h = Math.min(Math.max(400, rawH2), cap.maxH);
-        var totalRowW = cols * w + gap * (cols - 1);
-        var left0 = ax + gap + Math.max(0, Math.floor((aw - gap * 2 - totalRowW) / 2));
-        var left = left0 + index * (w + gap);
-        var top = ay + gap + Math.max(0, Math.floor((ah - gap * 2 - h) / 2));
-        return { left: left, top: top, width: w, height: h };
+        return out;
     }
 
     function openWindow(url, index, total, layout) {
         var layoutKey = layout || 'same';
         var r = getLayoutRect(typeof index === 'number' ? index : 0, typeof total === 'number' ? total : 1, layoutKey);
+        var mode = String(getPref('midClickWindowMode', 'new') || 'new');
+        var targetName = mode === 'reuse' ? REUSE_WINDOW_NAME : '_blank';
         const win = window.open(
             url,
-            '_blank',
+            targetName,
             'width=' + r.width + ',height=' + r.height +
             ',left=' + r.left + ',top=' + r.top +
             ',resizable=yes,scrollbars=yes'
@@ -730,7 +782,9 @@
             log('Popup blocked');
             return;
         }
-        win.name = 'mid_' + Date.now();
+        if (mode !== 'reuse') {
+            win.name = 'mid_' + Date.now();
+        }
         const interval = setInterval(function() {
             if (win.closed) {
                 clearInterval(interval);
