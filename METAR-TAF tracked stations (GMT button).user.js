@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.3.0
+// @version      1.3.1
 // @description  Button near GMT clock: modal with full METAR/TAF for tracked stations, alerts when text changes since you last viewed, optional notifications
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -121,6 +121,8 @@
     var pollTimer = null;
     var domObserver = null;
     var notifyShownForCurrent = {};
+    /** After first successful fetch this session, baseline is set — then we alert only on later changes. */
+    var alertsPrimed = false;
 
     function icaoFor(iata) {
         return IATA_TO_ICAO[iata.toUpperCase()] || null;
@@ -392,6 +394,13 @@
         if (!btn) {
             return;
         }
+        if (!alertsPrimed) {
+            btn.style.background = '#2c3e50';
+            btn.style.color = '#ecf0f1';
+            btn.removeAttribute('data-dc-metar-alert');
+            badge.style.display = 'none';
+            return;
+        }
         var results = [];
         var i;
         for (i = 0; i < stationList.length; i++) {
@@ -426,7 +435,20 @@
         }
     }
 
-    var bootstrappedViewed = false;
+    function primeAlertsBaseline(results) {
+        if (alertsPrimed) {
+            return;
+        }
+        if (!stationList.length) {
+            alertsPrimed = true;
+            return;
+        }
+        var snap = snapshotFromResults(results);
+        viewedSnapshot = snap;
+        saveViewedSnapshot(viewedSnapshot);
+        notifyShownForCurrent = {};
+        alertsPrimed = true;
+    }
 
     function runPoll() {
         fetchAllStations(stationList, function (results) {
@@ -437,16 +459,7 @@
                     cacheByIcao[r.icao] = r;
                 }
             }
-            if (!bootstrappedViewed) {
-                try {
-                    var raw = localStorage.getItem(STORAGE_VIEWED);
-                    if (!raw || raw === '{}') {
-                        viewedSnapshot = snapshotFromResults(results);
-                        saveViewedSnapshot(viewedSnapshot);
-                    }
-                } catch (e) {}
-                bootstrappedViewed = true;
-            }
+            primeAlertsBaseline(results);
             updateAlertState();
             if (modal && modal.style.display === 'flex' && selectedIata) {
                 renderDetail(selectedIata);
