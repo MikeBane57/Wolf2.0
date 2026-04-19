@@ -46,7 +46,7 @@ Scripts that call **`GM_xmlhttpRequest`** (e.g. GitHub REST API) need all of the
 | **Prefs** | Use **`@donkeycode-pref`** string (etc.) fields and read with **`donkeycodeGetPref("key")`**. Injection is **`new Function("donkeycodeGetPref", …)`** and optionally **`GM_xmlhttpRequest`** — see **`DonkeyCode/DONKEYCODE_SCRIPT_PREFS_AGENT.md`**. |
 | **GitHub auth** | Classic PAT or fine-grained token with **Contents: Read and write** on the repo (and path, for fine-grained). DonkeyCODE does **not** add OAuth for arbitrary userscripts; the token is whatever the user stores in prefs. |
 
-**Known limitation (verify your DonkeyCODE version):** the **`GM_xmlhttpRequest` bridge may not forward `details.data` / body** into `fetch()`. In that case **GET** works but **PUT / POST / PATCH** with a JSON body (e.g. GitHub Contents API **create/update file**) **do not work** until the extension passes the body through. If publish fails with GitHub complaining that **`content` was not supplied**, update DonkeyCODE or wait for a fix that forwards request bodies.
+**Calling GitHub’s REST API (PUT/POST):** set **`headers`** to include **`Authorization`**, **`Accept`**: `application/vnd.github+json`, **`Content-Type`**: `application/json`, **`X-GitHub-Api-Version`**: `2022-11-28` (or current). Pass the JSON body in **`data`**: either **`JSON.stringify({ ... })`** or a **plain object** (DonkeyCODE may stringify objects). Same pattern for **`body`** if your bridge accepts Tampermonkey-style `body`. Older DonkeyCODE builds that never forward `data`/`body` will fail PUT/Publish until updated.
 
 **Debugging:** Chrome/Edge → extension → **Service worker** → **Inspect** → Console. Look for **`GM_xmlhttpRequest`**, **`GM_XHR blocked by @connect`**, **`GM_XHR blocked (no host permission)`**, **`GM_xmlhttpRequest fetch failed`**. Page scripts can use the extension’s **page → service worker log** path (`DONKEYCODE_PAGE_LOG` / `bridge.js`) so logs appear in the background console.
 
@@ -120,4 +120,4 @@ Copy `templates/userscript.template.user.js` when starting a new script.
 - Filled DonkeyCODE section from `background.js` / `bridge.js` / `manifest.json` report (parser fields, GM XHR only, updates via listing, storage).
 - Documented `@donkeycode-pref`: grouped UI, `globalThis.donkeycodeGetPref`, debug log, named session folder vs Default.
 - Documented **`window.__myScriptCleanup`** for DonkeyCODE disable / re-inject; template and repo scripts assign teardown (observers, listeners, injected nodes).
-- Documented **`GM_xmlhttpRequest` checklist** (optional host permission, `@connect`, GitHub PAT, and body-forwarding limitation for PUT/POST).
+- Documented **`GM_xmlhttpRequest` checklist** (optional host permission, `@connect`, GitHub PAT, **`data` + `Content-Type`** for GitHub REST).

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.4.4
+// @version      1.4.5
 // @description  FIMS tab: wall of fame accolades; password to edit; GitHub file sync or legacy URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -144,8 +144,8 @@
     }
 
     /**
-     * DonkeyCODE may not forward GM_xmlhttpRequest `data` into fetch() yet; GitHub then
-     * returns 4xx for PUT/POST with a message about invalid JSON or missing `content`.
+     * Explains GitHub 4xx/0 when publish fails (token, permissions, or very old DonkeyCODE
+     * without request-body forwarding).
      */
     function explainGithubPublishError(status, responseText) {
         var raw = String(responseText || '');
@@ -173,9 +173,8 @@
             blob.indexOf('invalid request') !== -1
         ) {
             return (
-                'GitHub rejected the publish request. If you use DonkeyCODE, its GM_xmlhttpRequest bridge may not send ' +
-                'request bodies yet—PUT/Publish needs the extension to pass details.data into fetch(). ' +
-                '“Fetch from GitHub” can still work. Update DonkeyCODE when a fix ships, or use Tampermonkey for publish. ' +
+                'GitHub rejected the publish request. Update DonkeyCODE to a build that forwards GM_xmlhttpRequest ' +
+                '`data` / `body` into fetch(), set Content-Type: application/json, and use a PAT with Contents write. ' +
                 '(HTTP ' + status + (msg ? ': ' + msg : '') + ')'
             );
         }
@@ -188,20 +187,25 @@
         return 'HTTP ' + status + (msg ? ': ' + msg : '');
     }
 
+    /**
+     * DonkeyCODE: pass `data` (string or object; bridge may stringify objects) and set
+     * Content-Type for GitHub REST JSON bodies. See SCRIPT_STANDARD_PLAN.md GM_xhr section.
+     */
     function githubXhr(method, url, bodyObj, cb) {
         if (typeof GM_xmlhttpRequest !== 'function') {
             cb(0, '');
             return;
         }
         var headers = githubApiHeaders();
-        if (bodyObj !== undefined && bodyObj !== null) {
+        var hasBody = bodyObj !== undefined && bodyObj !== null;
+        if (hasBody) {
             headers['Content-Type'] = 'application/json';
         }
         GM_xmlhttpRequest({
             method: method,
             url: url,
             headers: headers,
-            data: bodyObj !== undefined && bodyObj !== null ? JSON.stringify(bodyObj) : undefined,
+            data: hasBody ? bodyObj : undefined,
             onload: function(res) {
                 cb(res.status || 0, res.responseText || '');
             },
@@ -441,12 +445,11 @@
             cb(false, 'No sync URL or GM_xmlhttpRequest');
             return;
         }
-        var body = JSON.stringify({ entries: entries, updatedAt: Date.now() });
         GM_xmlhttpRequest({
             method: 'POST',
             url: url,
             headers: { 'Content-Type': 'application/json' },
-            data: body,
+            data: { entries: entries, updatedAt: Date.now() },
             onload: function(res) {
                 var st = res.status || 0;
                 if (st >= 200 && st < 300) {
@@ -730,7 +733,7 @@
         var hint = document.createElement('div');
         hint.className = 'dc-wof-hint';
         hint.textContent = githubConfigured()
-            ? 'GitHub: file at wallPath stores { entries, updatedAt }. Classic PAT needs repo scope; fine-grained needs Contents read/write. Grant DonkeyCODE optional site access (https://*/*). In some DonkeyCODE builds, Publish (PUT) may not work until GM_xmlhttpRequest forwards request bodies—Fetch from GitHub still can.'
+            ? 'GitHub: file at wallPath stores { entries, updatedAt }. PAT with Contents read/write; grant DonkeyCODE optional site access (https://*/*). Publish uses GM_xmlhttpRequest with data + Content-Type: application/json (see DonkeyCODE release notes).'
             : 'Legacy URL: GET merges on fetch; POST on publish. Or configure GitHub owner/repo/branch/token/wallPath for Contents API sync.';
         wrap.appendChild(hint);
 
