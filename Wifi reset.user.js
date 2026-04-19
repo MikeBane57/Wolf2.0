@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.2.1
-// @description  Highlight allowlisted tails (color from preset list); double-click to mail Anuvu; skips flight pucks
-// @match        https://opssuitemain.swacorp.com/*
+// @version      1.2.2
+// @description  Schedule & worksheet only: highlight allowlisted tails; double-click to mail Anuvu; skips flight pucks
+// @match        https://opssuitemain.swacorp.com/schedule*
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
 // @donkeycode-pref {"wifiResetHighlightEnabled":{"type":"boolean","group":"Wifi reset highlight","label":"Highlight allowlisted tails","description":"Color aircraft registrations that are in the wifi email list.","default":true},"wifiResetHighlightColor":{"type":"select","group":"Wifi reset highlight","label":"Tail highlight color","description":"Normal weight — only the color changes.","default":"#87CEFA","options":[{"value":"#87CEFA","label":"Sky blue"},{"value":"#ADD8E6","label":"Light blue"},{"value":"#B0E0E6","label":"Powder blue"},{"value":"#AFEEEE","label":"Pale turquoise"},{"value":"#7EC8E3","label":"Carolina blue"},{"value":"#6BB6FF","label":"Soft sky"},{"value":"#5DADE2","label":"Soft cyan"},{"value":"#48CAE4","label":"Bright sky"},{"value":"#89CFF0","label":"Baby blue"},{"value":"#9DD9F3","label":"Light cyan blue"},{"value":"#00BFFF","label":"Deep sky blue"},{"value":"#40E0D0","label":"Turquoise"}]}}
 // @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
@@ -13,6 +14,11 @@
 
 (function() {
     'use strict';
+
+    function isWifiResetPage() {
+        var p = location.pathname || '';
+        return p.indexOf('/schedule') === 0 || p.indexOf('/widgets/worksheet') === 0;
+    }
 
     var TAIL_RE = /\b(N[0-9A-Z]{4,6})\b/g;
 
@@ -253,6 +259,10 @@
     }
 
     function applyTailHighlights() {
+        if (!isWifiResetPage()) {
+            unwrapHighlights();
+            return;
+        }
         if (!highlightEnabled()) {
             unwrapHighlights();
             return;
@@ -263,6 +273,10 @@
     }
 
     function scheduleHighlight() {
+        if (!isWifiResetPage()) {
+            unwrapHighlights();
+            return;
+        }
         if (!highlightEnabled()) {
             unwrapHighlights();
             return;
@@ -309,6 +323,23 @@
     }
 
     function init() {
+        if (!isWifiResetPage()) {
+            window.__myScriptCleanup = function() {
+                window.__myScriptCleanup = undefined;
+            };
+            return;
+        }
+
+        var onNav = function() {
+            if (!isWifiResetPage()) {
+                unwrapHighlights();
+            } else {
+                scheduleHighlight();
+            }
+        };
+        window.addEventListener('popstate', onNav);
+        window.addEventListener('hashchange', onNav);
+
         scheduleHighlight();
         highlightMo = new MutationObserver(function() {
             scheduleHighlight();
@@ -318,6 +349,9 @@
         }
 
         onDblClickCapture = function(e) {
+            if (!isWifiResetPage()) {
+                return;
+            }
             if (e.button !== 0) {
                 return;
             }
@@ -334,11 +368,18 @@
             openMailtoForTail(tail);
         };
         document.addEventListener('dblclick', onDblClickCapture, true);
+
+        window.__wifiResetOnNav = onNav;
     }
 
     init();
 
     window.__myScriptCleanup = function() {
+        if (window.__wifiResetOnNav) {
+            window.removeEventListener('popstate', window.__wifiResetOnNav);
+            window.removeEventListener('hashchange', window.__wifiResetOnNav);
+            window.__wifiResetOnNav = null;
+        }
         if (highlightDebounce) {
             clearTimeout(highlightDebounce);
             highlightDebounce = null;
