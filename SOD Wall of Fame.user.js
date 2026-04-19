@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.6.0
+// @version      2.6.1
 // @description  FIMS tab: Wall of Fame; data from WALL of FAME/wall-of-fame.json + local cache (no baked-in accolades)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -356,6 +356,12 @@
             var arr = Array.isArray(data) ? data : (data.entries || []);
             return arr.map(normalizeEntry).filter(Boolean);
         } catch (e) {
+            try {
+                console.warn(
+                    '[Wall of Fame] Invalid JSON in wall-of-fame.json — fix the file in the repo (commas, trailing commas).',
+                    e && e.message ? e.message : e
+                );
+            } catch (ignore) {}
             return null;
         }
     }
@@ -1344,6 +1350,15 @@
         if (syncConfigured()) {
             fetchCloud(function(remote) {
                 if (remote !== null) {
+                    entriesState = mergeEntries(entriesState, remote);
+                    saveLocal(entriesState);
+                    render(panel);
+                }
+            });
+        } else if (!entriesState.length) {
+            /** Public repo: load from raw.githubusercontent.com without PAT / Actions / proxy. */
+            rawGithubGet(function(remote) {
+                if (remote !== null && remote.length) {
                     entriesState = mergeEntries(entriesState, remote);
                     saveLocal(entriesState);
                     render(panel);
