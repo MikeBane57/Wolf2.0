@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.2
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR hourly, AFD, alerts; new METAR/TAF title highlights
+// @version      2.0.3
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR chart, AFD, alerts; METAR/TAF title highlights
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -445,136 +445,268 @@
         return parts.join(' · ');
     }
 
-    var WMO_WEATHER_DESC = {
-        0: 'Clear',
-        1: 'Mainly clear',
-        2: 'Partly cloudy',
-        3: 'Overcast',
-        45: 'Fog',
-        48: 'Depositing rime fog',
-        51: 'Light drizzle',
-        53: 'Drizzle',
-        55: 'Heavy drizzle',
-        56: 'Freezing drizzle',
-        57: 'Heavy freezing drizzle',
-        61: 'Slight rain',
-        63: 'Rain',
-        65: 'Heavy rain',
-        66: 'Freezing rain',
-        67: 'Heavy freezing rain',
-        71: 'Slight snow',
-        73: 'Snow',
-        75: 'Heavy snow',
-        77: 'Snow grains',
-        80: 'Rain showers',
-        81: 'Rain showers',
-        82: 'Violent rain showers',
-        85: 'Snow showers',
-        86: 'Heavy snow showers',
-        95: 'Thunderstorm',
-        96: 'Thunderstorm w/ hail',
-        99: 'Thunderstorm w/ hail'
-    };
-
-    function wmoWeatherLabel(code) {
-        var c = Number(code);
-        if (!Number.isFinite(c)) {
-            return '';
-        }
-        return WMO_WEATHER_DESC[c] || 'Code ' + c;
-    }
-
     function buildDatisBlockHtml(entries) {
-        if (!entries || !entries.length) {
-            return '';
-        }
         var parts = [];
         var i;
-        for (i = 0; i < entries.length; i++) {
-            var e = entries[i];
-            var lab = escapeHtml(e.label || 'ATIS');
-            if (e.code) {
-                lab += ' <span style="color:#95a5a6;">' + escapeHtml(String(e.code)) + '</span>';
+        var inner = '';
+        if (entries === undefined || entries === null) {
+            inner =
+                '<div style="font-size:11px;color:#95a5a6;font-family:system-ui,sans-serif;">D-ATIS not loaded yet — use Refresh or wait for background load.</div>';
+        } else if (!entries.length) {
+            inner =
+                '<div style="font-size:11px;color:#95a5a6;font-family:system-ui,sans-serif;">No D-ATIS returned for this airport. Try Refresh.</div>';
+        } else {
+            for (i = 0; i < entries.length; i++) {
+                var e = entries[i];
+                var lab = escapeHtml(e.label || 'ATIS');
+                if (e.code) {
+                    lab += ' <span style="color:#95a5a6;">' + escapeHtml(String(e.code)) + '</span>';
+                }
+                parts.push(
+                    '<div style="margin-bottom:12px;">' +
+                    '<div style="font-size:11px;color:#3498db;margin-bottom:4px;font-weight:600;">' +
+                    lab +
+                    '</div>' +
+                    '<div style="font-size:11px;line-height:1.45;color:#bdc3c7;white-space:pre-wrap;word-break:break-word;">' +
+                    escapeHtml(e.text) +
+                    '</div>' +
+                    (e.updatedAt
+                        ? '<div style="font-size:10px;color:#7f8c8d;margin-top:6px;">Updated ' + escapeHtml(e.updatedAt) + '</div>'
+                        : '') +
+                    '</div>'
+                );
             }
-            parts.push(
-                '<div style="margin-bottom:12px;">' +
-                '<div style="font-size:11px;color:#3498db;margin-bottom:4px;font-weight:600;">' +
-                lab +
-                '</div>' +
-                '<div style="font-size:11px;line-height:1.45;color:#bdc3c7;white-space:pre-wrap;word-break:break-word;">' +
-                escapeHtml(e.text) +
-                '</div>' +
-                (e.updatedAt
-                    ? '<div style="font-size:10px;color:#7f8c8d;margin-top:6px;">Updated ' + escapeHtml(e.updatedAt) + '</div>'
-                    : '') +
-                '</div>'
-            );
+            inner = parts.join('');
         }
         return (
             '<div style="margin-bottom:16px;">' +
-            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">Digital ATIS <span style="font-weight:400;color:#95a5a6;font-size:11px;">(third-party)</span></div>' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">' +
+            '<div style="font-weight:600;color:#3498db;">Digital ATIS <span style="font-weight:400;color:#95a5a6;font-size:11px;">(third-party)</span></div>' +
+            '<button type="button" data-dc-datis-refresh="1" style="padding:4px 10px;font-size:11px;border-radius:4px;border:1px solid #444;background:#2a2a32;color:#ecf0f1;cursor:pointer;">Refresh D-ATIS</button>' +
+            '</div>' +
             '<div style="background:#141418;padding:10px;border-radius:6px;max-height:min(40vh,420px);overflow:auto;">' +
-            parts.join('') +
+            inner +
             '</div>' +
             '<div style="font-size:10px;color:#7f8c8d;margin-top:6px;font-family:system-ui,sans-serif;">Source: atis.info — not official FAA; verify with ATIS/AWOS.</div>' +
             '</div>'
         );
     }
 
-    function buildHrrrTableHtml(h) {
+    /** SVG combo chart: temperature (line) + PoP (bars). Open-Meteo hourly blend. */
+    function buildHrrrChartHtml(h) {
         if (!h || !h.times || !h.times.length) {
             return '';
         }
-        var rows = [];
-        var maxRows = 24;
+        var maxPts = 24;
+        var n = Math.min(h.times.length, maxPts);
+        var W = 800;
+        var H = 260;
+        var pl = 52;
+        var pr = 16;
+        var pt = 28;
+        var pb = 44;
+        var pw = W - pl - pr;
+        var ph = H - pt - pb;
+        var tempTop = pt;
+        var tempBot = pt + Math.floor(ph * 0.58);
+        var popTop = tempBot + 6;
+        var popBot = pt + ph;
         var i;
-        var n = Math.min(h.times.length, maxRows);
+        var temps = [];
+        var pops = [];
         for (i = 0; i < n; i++) {
-            var t = h.times[i];
             var tf = h.tempF[i];
-            var pop = h.pop[i];
-            var wc = h.wcode[i];
-            var ws = h.wspd[i];
-            var wd = h.wdir[i];
-            var wdStr = wd !== undefined && wd !== null && Number.isFinite(Number(wd)) ? Math.round(Number(wd)) + '°' : '—';
-            var wlab = wmoWeatherLabel(wc);
-            rows.push(
-                '<tr>' +
-                '<td style="padding:4px 6px;border-bottom:1px solid #2a2a32;white-space:nowrap;">' +
-                escapeHtml(String(t).replace('T', ' ').slice(0, 16)) +
-                '</td>' +
-                '<td style="text-align:right;padding:4px 6px;border-bottom:1px solid #2a2a32;">' +
-                (tf !== undefined && tf !== null ? escapeHtml(String(tf)) + ' ' + escapeHtml(h.unitTemp || '°F') : '—') +
-                '</td>' +
-                '<td style="text-align:right;padding:4px 6px;border-bottom:1px solid #2a2a32;">' +
-                (pop !== undefined && pop !== null ? escapeHtml(String(pop)) + '%' : '—') +
-                '</td>' +
-                '<td style="padding:4px 6px;border-bottom:1px solid #2a2a32;font-size:10px;">' +
-                escapeHtml(wlab) +
-                '</td>' +
-                '<td style="text-align:right;padding:4px 6px;border-bottom:1px solid #2a2a32;white-space:nowrap;">' +
-                (ws !== undefined && ws !== null ? escapeHtml(String(ws)) + ' ' + escapeHtml(h.unitWind || 'mph') : '—') +
-                ' ' +
-                wdStr +
-                '</td>' +
-                '</tr>'
-            );
+            temps.push(tf !== undefined && tf !== null && Number.isFinite(Number(tf)) ? Number(tf) : null);
+            var pp = h.pop[i];
+            pops.push(pp !== undefined && pp !== null && Number.isFinite(Number(pp)) ? Math.max(0, Math.min(100, Number(pp))) : 0);
         }
+        var minT = null;
+        var maxT = null;
+        for (i = 0; i < temps.length; i++) {
+            if (temps[i] === null) {
+                continue;
+            }
+            if (minT === null || temps[i] < minT) {
+                minT = temps[i];
+            }
+            if (maxT === null || temps[i] > maxT) {
+                maxT = temps[i];
+            }
+        }
+        if (minT === null) {
+            minT = 0;
+            maxT = 1;
+        }
+        if (maxT - minT < 1) {
+            minT -= 1;
+            maxT += 1;
+        }
+        var padT = (maxT - minT) * 0.08;
+        minT -= padT;
+        maxT += padT;
+        function xAt(idx) {
+            if (n <= 1) {
+                return pl + pw / 2;
+            }
+            return pl + (pw * idx) / (n - 1);
+        }
+        var linePts = [];
+        for (i = 0; i < n; i++) {
+            if (temps[i] === null) {
+                continue;
+            }
+            var tx = xAt(i);
+            var ty = tempBot - ((temps[i] - minT) / (maxT - minT)) * (tempBot - tempTop);
+            linePts.push(Math.round(tx * 10) / 10 + ',' + Math.round(ty * 10) / 10);
+        }
+        var polyline =
+            linePts.length >= 2
+                ? '<polyline fill="none" stroke="#5dade2" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="' +
+                  linePts.join(' ') +
+                  '" />'
+                : '';
+        var circles = '';
+        for (i = 0; i < n; i++) {
+            if (temps[i] === null) {
+                continue;
+            }
+            var cx = xAt(i);
+            var cy = tempBot - ((temps[i] - minT) / (maxT - minT)) * (tempBot - tempTop);
+            circles +=
+                '<circle cx="' +
+                cx +
+                '" cy="' +
+                cy +
+                '" r="3" fill="#1a5276" stroke="#85c1e9" stroke-width="1" />';
+        }
+        var barW = n > 0 ? Math.min(18, (pw / n) * 0.55) : 0;
+        var bars = '';
+        for (i = 0; i < n; i++) {
+            var bx = xAt(i) - barW / 2;
+            var bh = ((popBot - popTop) * pops[i]) / 100;
+            var by = popBot - bh;
+            bars +=
+                '<rect x="' +
+                bx +
+                '" y="' +
+                by +
+                '" width="' +
+                barW +
+                '" height="' +
+                bh +
+                '" fill="rgba(52,152,219,0.45)" stroke="none" rx="1" />';
+        }
+        var xAxis = '';
+        var step = n > 12 ? 3 : n > 8 ? 2 : 1;
+        for (i = 0; i < n; i += step) {
+            var iso = String(h.times[i] || '');
+            var lab = iso.replace('T', ' ').slice(5, 16);
+            if (!lab) {
+                lab = String(i);
+            }
+            var lx = xAt(i);
+            xAxis +=
+                '<text x="' +
+                lx +
+                '" y="' +
+                (H - 12) +
+                '" text-anchor="middle" fill="#95a5a6" font-size="10" font-family="system-ui,sans-serif">' +
+                escapeHtml(lab) +
+                '</text>';
+        }
+        var yLbl =
+            '<text x="' +
+            (pl - 6) +
+            '" y="' +
+            (tempTop + 4) +
+            '" text-anchor="end" fill="#5dade2" font-size="10" font-family="system-ui,sans-serif">' +
+            escapeHtml(String(Math.round(maxT))) +
+            '°</text>' +
+            '<text x="' +
+            (pl - 6) +
+            '" y="' +
+            (tempBot - 2) +
+            '" text-anchor="end" fill="#5dade2" font-size="10" font-family="system-ui,sans-serif">' +
+            escapeHtml(String(Math.round(minT))) +
+            '°</text>' +
+            '<text x="' +
+            (pl - 6) +
+            '" y="' +
+            (popTop + 12) +
+            '" text-anchor="end" fill="#7f8c8d" font-size="10" font-family="system-ui,sans-serif">100%</text>' +
+            '<text x="' +
+            (pl - 6) +
+            '" y="' +
+            (popBot - 2) +
+            '" text-anchor="end" fill="#7f8c8d" font-size="10" font-family="system-ui,sans-serif">0%</text>';
+        var grid =
+            '<line x1="' +
+            pl +
+            '" y1="' +
+            tempTop +
+            '" x2="' +
+            (pl + pw) +
+            '" y2="' +
+            tempTop +
+            '" stroke="#333" stroke-dasharray="4 4" />' +
+            '<line x1="' +
+            pl +
+            '" y1="' +
+            tempBot +
+            '" x2="' +
+            (pl + pw) +
+            '" y2="' +
+            tempBot +
+            '" stroke="#444" />' +
+            '<line x1="' +
+            pl +
+            '" y1="' +
+            popTop +
+            '" x2="' +
+            (pl + pw) +
+            '" y2="' +
+            popTop +
+            '" stroke="#333" />' +
+            '<line x1="' +
+            pl +
+            '" y1="' +
+            popBot +
+            '" x2="' +
+            (pl + pw) +
+            '" y2="' +
+            popBot +
+            '" stroke="#444" />';
+        var legend =
+            '<text x="' +
+            (pl + pw - 4) +
+            '" y="' +
+            (pt - 8) +
+            '" text-anchor="end" fill="#bdc3c7" font-size="10" font-family="system-ui,sans-serif">' +
+            '── Temp (' +
+            escapeHtml(h.unitTemp || '°F') +
+            ')  ▌ PoP</text>';
         return (
             '<div style="margin-bottom:16px;">' +
-            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">HRRR forecast <span style="font-weight:400;color:#95a5a6;font-size:11px;">(hourly, Open-Meteo GFS+HRRR)</span></div>' +
-            '<div style="overflow:auto;max-height:min(42vh,480px);background:#141418;padding:10px;border-radius:6px;">' +
-            '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#ecf0f1;">' +
-            '<thead><tr style="color:#3498db;">' +
-            '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid #444;">Time (UTC)</th>' +
-            '<th style="text-align:right;padding:4px 6px;border-bottom:1px solid #444;">Temp</th>' +
-            '<th style="text-align:right;padding:4px 6px;border-bottom:1px solid #444;">PoP</th>' +
-            '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid #444;">Wx</th>' +
-            '<th style="text-align:right;padding:4px 6px;border-bottom:1px solid #444;">Wind</th>' +
-            '</tr></thead><tbody>' +
-            rows.join('') +
-            '</tbody></table></div>' +
-            '</div>'
+            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">HRRR forecast <span style="font-weight:400;color:#95a5a6;font-size:11px;">(hourly chart, Open-Meteo GFS+HRRR)</span></div>' +
+            '<div style="max-width:100%;overflow:auto;background:#141418;padding:10px;border-radius:6px;">' +
+            '<svg viewBox="0 0 ' +
+            W +
+            ' ' +
+            H +
+            '" width="100%" height="260" preserveAspectRatio="xMidYMid meet" style="display:block;min-width:280px;">' +
+            '<rect x="0" y="0" width="' +
+            W +
+            '" height="' +
+            H +
+            '" fill="transparent" />' +
+            grid +
+            yLbl +
+            bars +
+            polyline +
+            circles +
+            xAxis +
+            legend +
+            '</svg></div></div>'
         );
     }
 
@@ -786,6 +918,36 @@
         if (modal && modal.style.display === 'flex' && selectedIata === iata) {
             renderDetail(selectedIata);
         }
+    }
+
+    function mergeDatisOnly(icao, iata, datis) {
+        var cur = cacheByIcao[icao];
+        if (!cur || cur.icao !== icao) {
+            return;
+        }
+        cur.datisEntries = datis;
+        cacheByIcao[icao] = cur;
+        if (modal && modal.style.display === 'flex' && selectedIata === iata) {
+            renderDetail(selectedIata);
+        }
+    }
+
+    function refreshDatisOnly() {
+        if (!selectedIata) {
+            return;
+        }
+        var iata = selectedIata;
+        var icao = icaoFor(iata);
+        if (!icao) {
+            return;
+        }
+        setStatusBar('Refreshing D-ATIS ' + stationListLabel(iata) + '…');
+        fetchDatisForIcao(icao, function (datis) {
+            mergeDatisOnly(icao, iata, datis);
+            if (selectedIata === iata) {
+                setStatusBar('D-ATIS updated · ' + stationListLabel(iata) + ' · ' + new Date().toLocaleTimeString());
+            }
+        });
     }
 
     function patchDetailExtras(icao, iata) {
@@ -1704,7 +1866,7 @@
                 '</div>' +
                 '</div>';
         }
-        var hrrrBlock = buildHrrrTableHtml(r.hrrrHourly);
+        var hrrrBlock = buildHrrrChartHtml(r.hrrrHourly);
         var afdBlock = '';
         if (r.afdText && String(r.afdText).trim()) {
             var afdEsc = escapeHtml(r.afdText);
@@ -2176,6 +2338,10 @@
             if (t.getAttribute('data-dc-rvr-refresh') === '1') {
                 e.preventDefault();
                 refreshRvrOnly();
+            }
+            if (t.getAttribute('data-dc-datis-refresh') === '1') {
+                e.preventDefault();
+                refreshDatisOnly();
             }
         });
 
