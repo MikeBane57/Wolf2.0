@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.7.3
+// @version      2.7.4
 // @description  FIMS tab: Wall of Fame; data from WALL of FAME/wall-of-fame.json + local cache (no baked-in accolades)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -925,19 +925,61 @@
         doGithubPut();
     }
 
+    /**
+     * FIMS tab content lives in a sidebar segment; mount the panel there so it fills
+     * the area (structural match — no dependency on obfuscated class suffixes).
+     */
+    function findFimsTabSegmentHost(tableEl) {
+        if (!tableEl || typeof tableEl.closest !== 'function') {
+            return null;
+        }
+        var t =
+            tableEl.closest('#mainApp .pushable .sidebar .ui.bottom.attached.segment') ||
+            tableEl.closest('#mainApp .sidebar .ui.bottom.attached.segment') ||
+            tableEl.closest('#mainApp .ui.segment.bottom.attached.tab') ||
+            tableEl.closest('#mainApp .ui.bottom.attached.segment');
+        return t || null;
+    }
+
+    function mountPanelInFimsTabSegment(panel, tableEl) {
+        if (!panel || !tableEl) {
+            return;
+        }
+        var host = findFimsTabSegmentHost(tableEl);
+        if (!host) {
+            return;
+        }
+        if (panel.parentNode !== host) {
+            host.appendChild(panel);
+        }
+        host.style.display = 'flex';
+        host.style.flexDirection = 'column';
+        host.style.flex = '1 1 auto';
+        host.style.minHeight = '0';
+        host.style.overflow = 'hidden';
+        panel.style.flex = '1 1 auto';
+        panel.style.minHeight = '0';
+        panel.style.maxHeight = 'none';
+        panel.style.width = '100%';
+        panel.style.boxSizing = 'border-box';
+        panel.style.alignSelf = 'stretch';
+    }
+
     function ensureStyles() {
         if (document.getElementById(STYLE_ID)) {
             return;
         }
         var css = [
-            '#' + PANEL_ID + '{display:none;padding:0;width:100%;box-sizing:border-box;min-height:min(75vh,900px);',
+            '#' + PANEL_ID + '{display:none;flex-direction:column;padding:0;width:100%;box-sizing:border-box;min-height:0;',
+            'flex:1 1 auto;',
             'background:radial-gradient(ellipse 120% 80% at 50% -20%,rgba(120,60,180,.25) 0%,transparent 50%),',
             'radial-gradient(ellipse 80% 50% at 100% 100%,rgba(255,180,80,.08) 0%,transparent 45%),',
             'linear-gradient(165deg,#120a18 0%,#1e1432 35%,#152238 70%,#0d1528 100%);',
             'border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,215,0,.12);',
-            'border:1px solid rgba(255,215,0,.22);overflow:hidden;max-height:85vh;position:relative;}',
+            'border:1px solid rgba(255,215,0,.22);overflow:hidden;position:relative;}',
             '#' + PANEL_ID + ' .dc-wof-inner{padding:18px 20px 20px;color:#f5eefc;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;',
-            'width:100%;max-width:none;box-sizing:border-box;position:relative;z-index:1;}',
+            'width:100%;max-width:none;box-sizing:border-box;position:relative;z-index:1;',
+            'flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}',
             '#' + PANEL_ID + ' .dc-wof-h{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px;padding-bottom:14px;',
             'border-bottom:1px solid rgba(255,215,0,.2);background:linear-gradient(180deg,rgba(255,215,0,.06) 0%,transparent 100%);',
             'border-radius:8px 8px 0 0;margin:-4px -4px 18px;padding:12px 12px 14px;}',
@@ -951,8 +993,8 @@
             'background:linear-gradient(92deg,#fff4c4 0%,#ffd24a 25%,#ffb020 50%,#e8a8ff 100%);',
             '-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;',
             'filter:drop-shadow(0 2px 12px rgba(255,200,80,.25));}',
-            '#' + PANEL_ID + ' .dc-wof-sub{font-size:.72rem;opacity:.88;margin-top:6px;color:#c4b0e0;letter-spacing:.04em;text-transform:uppercase;}',
-            '#' + PANEL_ID + ' .dc-wof-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:16px;max-height:calc(85vh - 200px);overflow:auto;padding:6px 4px 8px;}',
+            '#' + PANEL_ID + ' .dc-wof-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:16px;',
+            'flex:1 1 auto;min-height:0;overflow:auto;padding:6px 4px 8px;}',
             '#' + PANEL_ID + ' .dc-wof-card{position:relative;min-height:118px;display:flex;flex-direction:column;',
             'padding:14px 14px 12px;margin-top:2px;',
             'background:linear-gradient(155deg,rgba(55,32,72,.92) 0%,rgba(28,18,48,.96) 48%,rgba(22,28,52,.94) 100%);',
@@ -1615,7 +1657,8 @@
         }
         hideTopClickersPanel();
         table.style.display = 'none';
-        panel.style.display = 'block';
+        mountPanelInFimsTabSegment(panel, table);
+        panel.style.display = 'flex';
         render(panel);
     }
 
@@ -1676,6 +1719,10 @@
     function ensurePanel() {
         var existing = document.getElementById(PANEL_ID);
         if (existing) {
+            var t0 = document.getElementById(TABLE_ID);
+            if (t0) {
+                mountPanelInFimsTabSegment(existing, t0);
+            }
             return existing;
         }
         ensureStyles();
@@ -1696,17 +1743,7 @@
         var title = document.createElement('div');
         title.className = 'dc-wof-title';
         title.textContent = 'Wall of Fame';
-        var sub = document.createElement('div');
-        sub.className = 'dc-wof-sub';
-        sub.textContent =
-            'SOD accolades — ' +
-            resolvedWallOfFameDataOwner() +
-            '/' +
-            resolvedWallOfFameDataRepo() +
-            ' — ' +
-            resolvedGithubFilePath();
         ht.appendChild(title);
-        ht.appendChild(sub);
         var actions = document.createElement('div');
         actions.className = 'dc-wof-head-actions';
         var editToggle = document.createElement('button');
@@ -1746,6 +1783,7 @@
 
         panel.appendChild(inner);
         table.parentNode.insertBefore(panel, table);
+        mountPanelInFimsTabSegment(panel, table);
 
         entriesState = loadLocal();
         render(panel);

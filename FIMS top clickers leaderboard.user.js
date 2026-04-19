@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.4.1
+// @version      1.4.2
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersMaxNames":{"type":"number","group":"Leaderboard","label":"Max names shown","description":"0 = show everyone with a count. Set a positive number only if you want to cap a very long list.","default":0,"min":0,"max":500,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
@@ -254,6 +254,42 @@
         }
     }
 
+    function findFimsTabSegmentHost(tableEl) {
+        if (!tableEl || typeof tableEl.closest !== 'function') {
+            return null;
+        }
+        var t =
+            tableEl.closest('#mainApp .pushable .sidebar .ui.bottom.attached.segment') ||
+            tableEl.closest('#mainApp .sidebar .ui.bottom.attached.segment') ||
+            tableEl.closest('#mainApp .ui.segment.bottom.attached.tab') ||
+            tableEl.closest('#mainApp .ui.bottom.attached.segment');
+        return t || null;
+    }
+
+    function mountPanelInFimsTabSegment(panel, tableEl) {
+        if (!panel || !tableEl) {
+            return;
+        }
+        var host = findFimsTabSegmentHost(tableEl);
+        if (!host) {
+            return;
+        }
+        if (panel.parentNode !== host) {
+            host.appendChild(panel);
+        }
+        host.style.display = 'flex';
+        host.style.flexDirection = 'column';
+        host.style.flex = '1 1 auto';
+        host.style.minHeight = '0';
+        host.style.overflow = 'hidden';
+        panel.style.flex = '1 1 auto';
+        panel.style.minHeight = '0';
+        panel.style.maxHeight = 'none';
+        panel.style.width = '100%';
+        panel.style.boxSizing = 'border-box';
+        panel.style.alignSelf = 'stretch';
+    }
+
     function topList() {
         var pairs = [];
         var k;
@@ -282,15 +318,16 @@
         var css = [
             '#' + PANEL_ID + '.dc-fims-tc-wrap{',
             'display:none;',
+            'flex-direction:column;',
             'padding:0;',
             'width:100%;',
             'box-sizing:border-box;',
-            'min-height:min(75vh,900px);',
+            'min-height:0;',
+            'flex:1 1 auto;',
             'background:linear-gradient(145deg,#1a1a2e 0%,#16213e 45%,#0f3460 100%);',
             'border-radius:12px;',
             'box-shadow:0 8px 32px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);',
             'overflow:hidden;',
-            'max-height:85vh;',
             '}',
             '#' + PANEL_ID + ' .dc-fims-tc-inner{',
             'padding:12px 14px 14px;',
@@ -300,6 +337,10 @@
             'box-sizing:border-box;',
             'color:#e8e8ef;',
             'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;',
+            'flex:1 1 auto;',
+            'min-height:0;',
+            'display:flex;',
+            'flex-direction:column;',
             '}',
             '#' + PANEL_ID + ' .dc-fims-tc-head{',
             'display:flex;',
@@ -338,7 +379,8 @@
             'display:flex;',
             'flex-direction:column;',
             'gap:0;',
-            'max-height:calc(85vh - 120px);',
+            'flex:1 1 auto;',
+            'min-height:0;',
             'overflow:auto;',
             '-webkit-overflow-scrolling:touch;',
             '}',
@@ -683,7 +725,8 @@
 
         hideWallOfFamePanel();
         table.style.display = 'none';
-        panel.style.display = 'block';
+        mountPanelInFimsTabSegment(panel, table);
+        panel.style.display = 'flex';
         render(panel);
     }
 
@@ -730,6 +773,10 @@
     function ensurePanel() {
         var existing = document.getElementById(PANEL_ID);
         if (existing) {
+            var tb = document.getElementById(TABLE_ID);
+            if (tb) {
+                mountPanelInFimsTabSegment(existing, tb);
+            }
             return existing;
         }
         ensureStyles();
@@ -785,6 +832,7 @@
         panel.appendChild(inner);
 
         table.parentNode.insertBefore(panel, table);
+        mountPanelInFimsTabSegment(panel, table);
         render(panel);
         return panel;
     }
