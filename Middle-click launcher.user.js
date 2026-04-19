@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Middle-click launcher
 // @namespace    Wolf 2.0
-// @version      2.9
+// @version      3.0
 // @description  Middle-click a flight puck to open Pax connections, Go turn details, and/or a custom URL (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"midClickLaunchPax":{"type":"boolean","group":"Middle-click","label":"Open Pax connections","description":"opssuitemain …/pax-connections/{date}-{dep}-{flight}-WN-NULL","default":true},"midClickLaunchGoTurn":{"type":"boolean","group":"Middle-click","label":"Open Go turn details","description":"Short hover-id: React fiber scan, then synthetic menu read.","default":false},"midClickLaunchCustom":{"type":"boolean","group":"Middle-click","label":"Open custom URL","description":"Uses the template below when enabled.","default":false},"midClickCustomUrlTemplate":{"type":"string","group":"Middle-click","label":"Custom URL template","description":"Placeholders: {date} yyyymmdd, {depAirport} 3-letter, {flight} digits. Example: https://example.com/track?flt={flight}&dep={depAirport}","default":"","placeholder":"https://…"},"midClickMultiLayout":{"type":"select","group":"Middle-click — multiple windows","label":"When several open at once","description":"Position/size for multiple popups. Side by side uses capped width so windows are not full screen.","default":"horizontal","options":[{"value":"same","label":"Same spot (overlap)"},{"value":"horizontal","label":"Side by side"},{"value":"vertical","label":"Top and bottom"},{"value":"cascade","label":"Cascade (offset)"}]},"midClickMultiMaxWidth":{"type":"number","group":"Middle-click — multiple windows","label":"Max width per window (px)","description":"Caps each popup width when several are open (side by side / vertical).","default":780,"min":400,"max":2000,"step":10},"midClickMultiMaxHeight":{"type":"number","group":"Middle-click — multiple windows","label":"Max height per window (px)","description":"Caps each popup height when several are open.","default":720,"min":320,"max":2000,"step":10},"midClickOverlapTopTarget":{"type":"select","group":"Middle-click — multiple windows","label":"Which window is on top (overlap / cascade)","description":"The last opened popup usually stacks on top. Choose which target opens last.","default":"go_turn","options":[{"value":"pax","label":"Pax connections"},{"value":"go_turn","label":"Go turn details"},{"value":"custom","label":"Custom URL"},{"value":"order","label":"Order in Pref (Pax → Go → Custom)"}]}}
-// @donkeycode-pref {"midClickMonitorOffsetX":{"type":"number","group":"Middle-click — screen","label":"Popup offset X (px)","description":"Added to every popup left position. Use e.g. 1920 or 2560 to shift popups to another monitor (depends on your OS layout). 0 = no extra offset.","default":0,"min":-8000,"max":8000,"step":1},"midClickMonitorOffsetY":{"type":"number","group":"Middle-click — screen","label":"Popup offset Y (px)","description":"Added to every popup top position.","default":0,"min":-8000,"max":8000,"step":1},"midClickWindowMode":{"type":"select","group":"Middle-click — screen","label":"Window mode","description":"New: each target gets its own window. Reuse: one named window — multiple targets replace it in order (only the last URL stays visible).","default":"new","options":[{"value":"new","label":"New window per target"},{"value":"reuse","label":"Reuse one window (same tab)"}]}}
+// @donkeycode-pref {"midClickMonitor":{"type":"select","group":"Middle-click — screen","label":"Monitor","description":"Primary: popups align from this window’s left edge. Secondary: add this window’s width (typical side‑by‑side monitors). Extra offsets below are added on top.","default":1,"options":[{"value":1,"label":"Primary"},{"value":2,"label":"Secondary"}]},"midClickMonitorExtraOffsetX":{"type":"number","group":"Middle-click — screen","label":"Extra offset X (px)","description":"Fine-tune horizontal position after monitor choice. 0 = none.","default":0,"min":-8000,"max":8000,"step":1},"midClickMonitorExtraOffsetY":{"type":"number","group":"Middle-click — screen","label":"Extra offset Y (px)","description":"Fine-tune vertical position after monitor choice.","default":0,"min":-8000,"max":8000,"step":1},"midClickWindowMode":{"type":"select","group":"Middle-click — screen","label":"Window mode","description":"New: each target gets its own window. Reuse: one named window — multiple targets replace it in order (only the last URL stays visible).","default":"new","options":[{"value":"new","label":"New window per target"},{"value":"reuse","label":"Reuse one window (same tab)"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Middle-click%20launcher.user.js
 // ==/UserScript==
@@ -701,10 +701,18 @@
     }
 
     function getMonitorOffsets() {
-        var ox = Number(getPref('midClickMonitorOffsetX', 0));
-        var oy = Number(getPref('midClickMonitorOffsetY', 0));
+        var mon = Number(getPref('midClickMonitor', 1));
+        if (!Number.isFinite(mon) || (mon !== 2 && mon !== 1)) {
+            mon = 1;
+        }
+        var secondaryShift = 0;
+        if (mon === 2) {
+            secondaryShift = typeof window.outerWidth === 'number' ? window.outerWidth : 0;
+        }
+        var ox = secondaryShift + Number(getPref('midClickMonitorExtraOffsetX', 0));
+        var oy = Number(getPref('midClickMonitorExtraOffsetY', 0));
         if (!isFinite(ox)) {
-            ox = 0;
+            ox = secondaryShift;
         }
         if (!isFinite(oy)) {
             oy = 0;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         One window to rule them all
 // @namespace    Wolf 2.0
-// @version      10.6
+// @version      10.7
 // @description  Position popup windows by URL; geometry from DonkeyCODE Pref (Scripts → gear) or defaults below.
 // @match        https://opssuitemain.swacorp.com/*
 // @run-at       document-start
@@ -37,7 +37,7 @@
         return [
             {
                 name: 'Go Turn Details',
-                match: '/widgets/go-turn-details',
+                match: ['/widgets/go-turn-details'],
                 monitor: mon('goTurnMonitor', 1),
                 left: num('goTurnLeft', 0),
                 top: num('goTurnTop', 0),
@@ -46,7 +46,7 @@
             },
             {
                 name: 'related-flights',
-                match: '/widgets/related-flights',
+                match: ['/widgets/related-flights', '/related-flights', 'related-flights'],
                 monitor: mon('relatedFlightsMonitor', 1),
                 left: num('relatedFlightsLeft', 0),
                 top: num('relatedFlightsTop', 0),
@@ -55,7 +55,7 @@
             },
             {
                 name: 'pax-connections',
-                match: '/widgets/pax-connections',
+                match: ['/widgets/pax-connections', '/pax-connections'],
                 monitor: mon('paxConnectionsMonitor', 1),
                 left: num('paxConnectionsLeft', 0),
                 top: num('paxConnectionsTop', 0),
@@ -85,7 +85,14 @@
 
         function findRule(url){
             const n = normalize(url);
-            return RULES.find(r => n.includes(r.match));
+            return RULES.find(r => {
+                const patterns = Array.isArray(r.match) ? r.match : [r.match];
+                return patterns.some(m => n.includes(m));
+            });
+        }
+
+        function windowTargetName(rule){
+            return '_owtrta_' + String(rule.name).replace(/[^a-zA-Z0-9_-]/g, '_');
         }
 
         function openWithRule(url, rule){
@@ -122,7 +129,7 @@
             console.log("URL:", abs);
             console.log("Rule:", rule.name);
 
-            const w = originalOpen.call(window, abs, "_blank", features);
+            const w = originalOpen.call(window, abs, windowTargetName(rule), features);
             windowRefs[rule.name] = w;
 
             // Popup geometry from the features string can be applied late (SPA paint,
