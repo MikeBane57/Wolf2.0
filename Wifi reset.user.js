@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.1.0
-// @description  Double-click an allowlisted tail to mail Anuvu; skips flight pucks (Turns W&B)
+// @version      1.2.0
+// @description  Highlight allowlisted tails (light blue); double-click to mail Anuvu; skips flight pucks
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
+// @donkeycode-pref {"wifiResetHighlightEnabled":{"type":"boolean","group":"Wifi reset highlight","label":"Highlight allowlisted tails","description":"Color aircraft registrations that are in the wifi email list.","default":true},"wifiResetHighlightColor":{"type":"string","group":"Wifi reset highlight","label":"Tail text color","description":"CSS color for highlighted registrations (e.g. #87CEFA or lightblue).","default":"#87CEFA","placeholder":"#87CEFA"}}
 // @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
@@ -87,7 +88,12 @@
     var FLIGHT_PUCK_SELECTOR =
         '[data-qe-id="as-flight-leg-puck"], [data-testid="puck-context-menu"], [class*="CScizp4RisE="]';
 
+    var HIGHLIGHT_CLASS = 'dc-wifi-reset-tail';
+    var HIGHLIGHT_STYLE_ID = 'dc-wifi-reset-highlight-style';
+
     var onDblClickCapture = null;
+    var highlightMo = null;
+    var highlightDebounce = null;
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -124,6 +130,162 @@
         return null;
     }
 
+    function highlightEnabled() {
+        return getPref('wifiResetHighlightEnabled', true) !== false;
+    }
+
+    function highlightColor() {
+        var c = String(getPref('wifiResetHighlightColor', '#87CEFA') || '#87CEFA').trim();
+        return c || '#87CEFA';
+    }
+
+    function ensureHighlightStyle() {
+        if (document.getElementById(HIGHLIGHT_STYLE_ID)) {
+            return;
+        }
+        var st = document.createElement('style');
+        st.id = HIGHLIGHT_STYLE_ID;
+        st.textContent = '.' + HIGHLIGHT_CLASS + '{font-weight:600;}';
+        (document.head || document.documentElement).appendChild(st);
+    }
+
+    function unwrapHighlights() {
+        var nodes = document.querySelectorAll('span.' + HIGHLIGHT_CLASS);
+        var i;
+        for (i = 0; i < nodes.length; i++) {
+            var sp = nodes[i];
+            var parent = sp.parentNode;
+            if (!parent) {
+                continue;
+            }
+            var txt = document.createTextNode(sp.textContent || '');
+            parent.replaceChild(txt, sp);
+        }
+    }
+
+    /**
+     * Split text nodes so allowlisted N-numbers are wrapped in colored spans.
+     */
+    function highlightAllowlistedTailsInTextNode(textNode) {
+        if (!textNode || textNode.nodeType !== 3) {
+            return;
+        }
+        var parent = textNode.parentNode;
+        if (!parent) {
+            return;
+        }
+        if (parent.closest && parent.closest('.' + HIGHLIGHT_CLASS)) {
+            return;
+        }
+        var tag = parent.tagName;
+        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEXTAREA') {
+            return;
+        }
+
+        var text = textNode.nodeValue;
+        if (!text || (text.indexOf('N') === -1 && text.indexOf('n') === -1)) {
+            return;
+        }
+
+        TAIL_RE.lastIndex = 0;
+        var segments = [];
+        var lastIndex = 0;
+        var m;
+        var anyHit = false;
+        while ((m = TAIL_RE.exec(text)) !== null) {
+            if (m.index > lastIndex) {
+                segments.push({ kind: 'plain', value: text.slice(lastIndex, m.index) });
+            }
+            var tail = String(m[1]).toUpperCase();
+            if (WIFI_RESET_ALLOWLIST[tail]) {
+                segments.push({ kind: 'hit', value: tail });
+                anyHit = true;
+            } else {
+                segments.push({ kind: 'plain', value: m[0] });
+            }
+            lastIndex = m.index + m[0].length;
+        }
+        if (lastIndex < text.length) {
+            segments.push({ kind: 'plain', value: text.slice(lastIndex) });
+        }
+        if (!anyHit) {
+            return;
+        }
+
+        var frag = document.createDocumentFragment();
+        var col = highlightColor();
+        var si;
+        for (si = 0; si < segments.length; si++) {
+            var seg = segments[si];
+            if (seg.kind === 'plain') {
+                frag.appendChild(document.createTextNode(seg.value));
+            } else {
+                var span = document.createElement('span');
+                span.className = HIGHLIGHT_CLASS;
+                span.setAttribute('data-dc-wifi-tail', seg.value);
+                span.textContent = seg.value;
+                span.style.color = col;
+                frag.appendChild(span);
+            }
+        }
+        parent.replaceChild(frag, textNode);
+    }
+
+    function walkForHighlight(node) {
+        if (!node) {
+            return;
+        }
+        if (node.nodeType === 3) {
+            highlightAllowlistedTailsInTextNode(node);
+            return;
+        }
+        if (node.nodeType !== 1) {
+            return;
+        }
+        if (node.classList && node.classList.contains(HIGHLIGHT_CLASS)) {
+            return;
+        }
+        var tn = node.tagName;
+        if (tn === 'SCRIPT' || tn === 'STYLE' || tn === 'NOSCRIPT' || tn === 'TEXTAREA') {
+            return;
+        }
+
+        var snapshot = [];
+        var ci;
+        for (ci = 0; ci < node.childNodes.length; ci++) {
+            snapshot.push(node.childNodes[ci]);
+        }
+        for (ci = 0; ci < snapshot.length; ci++) {
+            walkForHighlight(snapshot[ci]);
+        }
+    }
+
+    function applyTailHighlights() {
+        if (!highlightEnabled()) {
+            unwrapHighlights();
+            return;
+        }
+        ensureHighlightStyle();
+        if (document.body) {
+            walkForHighlight(document.body);
+        }
+    }
+
+    function scheduleHighlight() {
+        if (!highlightEnabled()) {
+            unwrapHighlights();
+            return;
+        }
+        if (highlightDebounce) {
+            clearTimeout(highlightDebounce);
+        }
+        highlightDebounce = setTimeout(function() {
+            highlightDebounce = null;
+            unwrapHighlights();
+            applyTailHighlights();
+        }, 280);
+    }
+
     function applyTemplate(tpl, tail) {
         return String(tpl || '')
             .split('{tail}').join(tail)
@@ -156,6 +318,14 @@
     }
 
     function init() {
+        scheduleHighlight();
+        highlightMo = new MutationObserver(function() {
+            scheduleHighlight();
+        });
+        if (document.documentElement) {
+            highlightMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+        }
+
         onDblClickCapture = function(e) {
             if (e.button !== 0) {
                 return;
@@ -178,6 +348,19 @@
     init();
 
     window.__myScriptCleanup = function() {
+        if (highlightDebounce) {
+            clearTimeout(highlightDebounce);
+            highlightDebounce = null;
+        }
+        if (highlightMo) {
+            highlightMo.disconnect();
+            highlightMo = null;
+        }
+        unwrapHighlights();
+        var hs = document.getElementById(HIGHLIGHT_STYLE_ID);
+        if (hs && hs.parentNode) {
+            hs.parentNode.removeChild(hs);
+        }
         if (onDblClickCapture) {
             document.removeEventListener('dblclick', onDblClickCapture, true);
             onDblClickCapture = null;
