@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.3.9
+// @version      1.4.0
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersMaxNames":{"type":"number","group":"Leaderboard","label":"Max names shown","description":"0 = show everyone with a count. Set a positive number only if you want to cap a very long list.","default":0,"min":0,"max":500,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
@@ -561,13 +561,14 @@
     }
 
     /**
-     * Document capture: parent Semantic UI menu can stopPropagation in capture
-     * before the event reaches our <a>, so anchor-only listeners never run.
+     * Document capture on **click** (not mousedown): preventDefault on mousedown does not
+     * cancel the click, so Semantic UI still switched tabs on mouseup. Click capture runs
+     * once and stops the menu from handling our tab.
      */
     var docCaptureWired = false;
     var lastTcActivate = 0;
     function onTopClickersDocCapture(e) {
-        if (e.type === 'mousedown' && e.button !== 0) {
+        if (e.type !== 'click' || e.button !== 0) {
             return;
         }
         var t = e.target;
@@ -589,8 +590,43 @@
         }
         if (!docCaptureWired) {
             docCaptureWired = true;
-            document.addEventListener('mousedown', onTopClickersDocCapture, true);
+            document.addEventListener('click', onTopClickersDocCapture, true);
         }
+    }
+
+    /** React may replace the tab menu and drop injected <a>s; re-insert when missing. */
+    var menuTabMo = null;
+    var menuTabDebounce = null;
+    function scheduleMenuTabRepair() {
+        if (menuTabDebounce) {
+            clearTimeout(menuTabDebounce);
+        }
+        menuTabDebounce = setTimeout(function() {
+            menuTabDebounce = null;
+            if (!document.getElementById(TABLE_ID)) {
+                return;
+            }
+            if (!document.getElementById(TAB_ID) || !document.getElementById(PANEL_ID)) {
+                /* Do not clear dcFimsTopClickersTabWire — wireSiblingTabs would re-run and
+                 * duplicate click handlers on FIMS/Advisories. Only re-insert our nodes. */
+                ensureUi();
+            }
+        }, 80);
+    }
+
+    function wireMenuTabObserver(menu) {
+        if (!menu || menu.dataset.dcFimsTcMenuMo) {
+            return;
+        }
+        menu.dataset.dcFimsTcMenuMo = '1';
+        if (menuTabMo) {
+            menuTabMo.disconnect();
+            menuTabMo = null;
+        }
+        menuTabMo = new MutationObserver(function() {
+            scheduleMenuTabRepair();
+        });
+        menuTabMo.observe(menu, { childList: true, subtree: true });
     }
 
     function onFimsTabClick() {
@@ -757,6 +793,10 @@
         var existing = document.getElementById(TAB_ID);
         if (existing) {
             wireOurTabCapture(existing);
+            var foundExisting = findTabMenu();
+            if (foundExisting && foundExisting.menu) {
+                wireMenuTabObserver(foundExisting.menu);
+            }
             return existing;
         }
         var found = findTabMenu();
@@ -764,6 +804,7 @@
             return null;
         }
         wireSiblingTabs(found.menu);
+        wireMenuTabObserver(found.menu);
 
         var a = document.createElement('a');
         a.id = TAB_ID;
@@ -856,6 +897,7 @@
         var menuInfo = findTabMenu();
         if (menuInfo && menuInfo.menu) {
             delete menuInfo.menu.dataset.dcFimsTopClickersTabWire;
+            delete menuInfo.menu.dataset.dcFimsTcMenuMo;
             var links = menuInfo.menu.querySelectorAll('a.item');
             var i;
             for (i = 0; i < links.length; i++) {
@@ -871,8 +913,16 @@
                 }
             }
         }
+        if (menuTabMo) {
+            menuTabMo.disconnect();
+            menuTabMo = null;
+        }
+        if (menuTabDebounce) {
+            clearTimeout(menuTabDebounce);
+            menuTabDebounce = null;
+        }
         if (docCaptureWired) {
-            document.removeEventListener('mousedown', onTopClickersDocCapture, true);
+            document.removeEventListener('click', onTopClickersDocCapture, true);
             docCaptureWired = false;
         }
         var tab = document.getElementById(TAB_ID);

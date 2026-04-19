@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.3.3
+// @version      1.4.0
 // @description  FIMS tab: wall of fame accolades; password to edit; GitHub file sync or legacy URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -774,6 +774,42 @@
     }
 
     var lastWofActivate = 0;
+
+    var menuTabMo = null;
+    var menuTabDebounce = null;
+    function scheduleMenuTabRepair() {
+        if (menuTabDebounce) {
+            clearTimeout(menuTabDebounce);
+        }
+        menuTabDebounce = setTimeout(function() {
+            menuTabDebounce = null;
+            if (!document.getElementById(TABLE_ID)) {
+                return;
+            }
+            if (!getPref('wallOfFameShowTab', true)) {
+                return;
+            }
+            if (!document.getElementById(TAB_ID) || !document.getElementById(PANEL_ID)) {
+                ensureUi();
+            }
+        }, 80);
+    }
+
+    function wireMenuTabObserver(menu) {
+        if (!menu || menu.dataset.dcWofMenuMo) {
+            return;
+        }
+        menu.dataset.dcWofMenuMo = '1';
+        if (menuTabMo) {
+            menuTabMo.disconnect();
+            menuTabMo = null;
+        }
+        menuTabMo = new MutationObserver(function() {
+            scheduleMenuTabRepair();
+        });
+        menuTabMo.observe(menu, { childList: true, subtree: true });
+    }
+
     function showWallOfFame() {
         var now = Date.now();
         if (now - lastWofActivate < 120) {
@@ -812,11 +848,12 @@
     }
 
     /**
-     * Document capture: Semantic menu may stopPropagation before the event reaches our <a>.
+     * Document capture on **click**: preventDefault on mousedown does not cancel the click,
+     * so the menu still handled the event and could remove our tabs or switch views.
      */
     var wofDocCaptureWired = false;
     function onWofDocCapture(e) {
-        if (e.type === 'mousedown' && e.button !== 0) {
+        if (e.type !== 'click' || e.button !== 0) {
             return;
         }
         var t = e.target;
@@ -838,8 +875,7 @@
         }
         if (!wofDocCaptureWired) {
             wofDocCaptureWired = true;
-            /* mousedown runs before React/Semantic handlers that swallow click */
-            document.addEventListener('mousedown', onWofDocCapture, true);
+            document.addEventListener('click', onWofDocCapture, true);
         }
     }
 
@@ -949,6 +985,10 @@
         var existing = document.getElementById(TAB_ID);
         if (existing) {
             wireWofTabCapture(existing);
+            var foundExisting = findTabMenu();
+            if (foundExisting && foundExisting.menu) {
+                wireMenuTabObserver(foundExisting.menu);
+            }
             return existing;
         }
         var found = findTabMenu();
@@ -956,6 +996,7 @@
             return null;
         }
         wireTabs(found.menu);
+        wireMenuTabObserver(found.menu);
         var a = document.createElement('a');
         a.id = TAB_ID;
         a.className = 'item';
@@ -1012,8 +1053,16 @@
             rootMo.disconnect();
             rootMo = null;
         }
+        if (menuTabMo) {
+            menuTabMo.disconnect();
+            menuTabMo = null;
+        }
+        if (menuTabDebounce) {
+            clearTimeout(menuTabDebounce);
+            menuTabDebounce = null;
+        }
         if (wofDocCaptureWired) {
-            document.removeEventListener('mousedown', onWofDocCapture, true);
+            document.removeEventListener('click', onWofDocCapture, true);
             wofDocCaptureWired = false;
         }
         var tab = document.getElementById(TAB_ID);
@@ -1031,6 +1080,7 @@
         var menuInfo = findTabMenu();
         if (menuInfo && menuInfo.menu) {
             delete menuInfo.menu.dataset.dcWofTabWire;
+            delete menuInfo.menu.dataset.dcWofMenuMo;
         }
         window.__myScriptCleanup = undefined;
     };
