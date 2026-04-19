@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.2.0
-// @description  FIMS tab: Wall of Fame; local + shared JSON (GitHub App proxy + team key, or PAT fallback)
+// @version      2.3.0
+// @description  FIMS tab: Wall of Fame; local + shared JSON (team proxy, or same GitHub API + prefs as DonkeyCODE session sync)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
 // @connect      *
-// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy (GitHub App backend). No trailing slash. If set with team key, PAT is not needed.","default":"","placeholder":"https://wof.example.com"},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — team proxy","label":"Team key (optional)","description":"Shared secret; must match server WOF_TEAM_KEY. Same for all dispatchers.","default":"","placeholder":""},"githubToken":{"type":"string","group":"Wall of Fame — GitHub (fallback)","label":"GitHub PAT (optional)","description":"Direct GitHub API if proxy not set. Contents read/write on Wolf2.0.","default":"","placeholder":"ghp_…"}}
+// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy (GitHub App backend). No trailing slash. If set with team key, PAT is not needed.","default":"","placeholder":"https://wof.example.com"},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — team proxy","label":"Team key (optional)","description":"Shared secret; must match server WOF_TEAM_KEY. Same for all dispatchers.","default":"","placeholder":""},"githubToken":{"type":"string","group":"Wall of Fame — GitHub (fallback)","label":"PAT if not using extension sync settings","description":"Only if donkeycode_github_pat is not available via prefs: same classic repo PAT as DonkeyCODE session sync (Contents read/write). Prefer configuring GitHub in DonkeyCODE settings so owner/repo/branch/PAT match session sync.","default":"","placeholder":"ghp_…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // ==/UserScript==
@@ -21,11 +21,52 @@
     var TCP_PANEL_ID = 'dc-fims-top-clickers-panel';
     var STYLE_ID = 'dc-wof-style';
 
-    /** Baked-in target: this repo, single shared file (folder name has spaces). */
+    /** Defaults when DonkeyCODE session-sync prefs are absent (getPref('donkeycode_github_*')). */
     var GITHUB_OWNER = 'MikeBane57';
     var GITHUB_REPO = 'Wolf2.0';
     var GITHUB_BRANCH = 'main';
+    /** Repo path when sessions root is empty; else file is {sessionsRoot}/wall-of-fame.json */
     var WALL_OF_FAME_FILE_PATH = 'WALL of FAME/wall-of-fame.json';
+
+    /**
+     * Align with DonkeyCODE GitHub session sync (settings / chrome.storage keys exposed to getPref):
+     * donkeycode_github_pat, donkeycode_github_owner, donkeycode_github_repo,
+     * donkeycode_github_branch, donkeycode_github_sessions_root — same REST Contents API as background.js.
+     */
+    function resolvedGithubPat() {
+        var p = String(getPref('donkeycode_github_pat', '') || '').trim();
+        if (p) {
+            return p;
+        }
+        return String(getPref('githubToken', '') || '').trim();
+    }
+
+    function resolvedGithubOwner() {
+        var o = String(getPref('donkeycode_github_owner', '') || '').trim();
+        return o || GITHUB_OWNER;
+    }
+
+    function resolvedGithubRepo() {
+        var r = String(getPref('donkeycode_github_repo', '') || '').trim();
+        return r || GITHUB_REPO;
+    }
+
+    function resolvedGithubBranch() {
+        var b = String(getPref('donkeycode_github_branch', '') || '').trim();
+        return b || GITHUB_BRANCH;
+    }
+
+    /** Same idea as session files under sessions root: optional nested path for wall-of-fame.json */
+    function resolvedGithubFilePath() {
+        var root = String(getPref('donkeycode_github_sessions_root', '') || '')
+            .trim()
+            .replace(/^\/+/, '')
+            .replace(/\/+$/, '');
+        if (root) {
+            return root + '/wall-of-fame.json';
+        }
+        return WALL_OF_FAME_FILE_PATH;
+    }
 
     function hideTopClickersPanel() {
         var tcp = document.getElementById(TCP_PANEL_ID);
@@ -104,7 +145,7 @@
     var githubFileSha = null;
 
     function githubConfigured() {
-        return !!String(getPref('githubToken', '') || '').trim();
+        return !!resolvedGithubPat();
     }
 
     function syncConfigured() {
@@ -186,9 +227,10 @@
     }
 
     function githubContentsApiUrl() {
-        var owner = encodeURIComponent(GITHUB_OWNER);
-        var repo = encodeURIComponent(GITHUB_REPO);
-        var path = WALL_OF_FAME_FILE_PATH.replace(/^\/+/, '')
+        var owner = encodeURIComponent(resolvedGithubOwner());
+        var repo = encodeURIComponent(resolvedGithubRepo());
+        var path = resolvedGithubFilePath()
+            .replace(/^\/+/, '')
             .split('/')
             .map(encodeURIComponent)
             .join('/');
@@ -197,7 +239,7 @@
 
     function githubApiHeaders() {
         return {
-            Authorization: 'Bearer ' + String(getPref('githubToken', '') || '').trim(),
+            Authorization: 'Bearer ' + resolvedGithubPat(),
             Accept: 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28'
         };
@@ -303,7 +345,7 @@
     }
 
     function githubGetFile(cb) {
-        var branch = encodeURIComponent(GITHUB_BRANCH);
+        var branch = encodeURIComponent(resolvedGithubBranch());
         var url = githubContentsApiUrl() + '?ref=' + branch;
         githubXhr('GET', url, null, function(status, text) {
             if (status === 404) {
@@ -328,7 +370,7 @@
     }
 
     function githubPutFile(entries, sha, cb) {
-        var branch = GITHUB_BRANCH;
+        var branch = resolvedGithubBranch();
         var payload = {
             entries: entries,
             updatedAt: Date.now()
@@ -789,7 +831,7 @@
         pub.textContent = 'Publish to GitHub';
         pub.title = proxyConfigured()
             ? 'Publish via team proxy (GitHub App on server)'
-            : 'PUT ' + WALL_OF_FAME_FILE_PATH + ' in ' + GITHUB_OWNER + '/' + GITHUB_REPO + ' (PAT in prefs)';
+            : 'PUT ' + resolvedGithubFilePath() + ' in ' + resolvedGithubOwner() + '/' + resolvedGithubRepo();
         pub.addEventListener('click', function(ev) {
             ev.preventDefault();
             if (!syncConfigured()) {
@@ -814,7 +856,7 @@
         imp.textContent = 'Fetch from GitHub';
         imp.title = proxyConfigured()
             ? 'Fetch via team proxy'
-            : 'GET ' + WALL_OF_FAME_FILE_PATH + ' and merge (PAT in prefs)';
+            : 'GET ' + resolvedGithubFilePath() + ' and merge (DonkeyCODE GitHub prefs or githubToken)';
         imp.addEventListener('click', function(ev) {
             ev.preventDefault();
             if (!syncConfigured()) {
@@ -839,13 +881,7 @@
         hint.className = 'dc-wof-hint';
         hint.textContent = proxyConfigured()
             ? 'Sync via team proxy (GitHub App on server). Local copy in localStorage. Add proxy host to @connect if needed.'
-            : 'Shared file: ' +
-              GITHUB_OWNER +
-              '/' +
-              GITHUB_REPO +
-              ' · ' +
-              WALL_OF_FAME_FILE_PATH +
-              '. Local copy in localStorage; set PAT or proxy+team key to sync.';
+            : 'Same GitHub API as DonkeyCODE session sync: donkeycode_github_pat/owner/repo/branch (+ optional sessions root → …/wall-of-fame.json). Fallback githubToken. Local: localStorage.';
         wrap.appendChild(hint);
 
         syncEditPanelVisibility(panel);
@@ -1101,7 +1137,7 @@
         title.textContent = 'Wall of Fame';
         var sub = document.createElement('div');
         sub.className = 'dc-wof-sub';
-        sub.textContent = 'SOD accolades — local + optional sync to ' + WALL_OF_FAME_FILE_PATH;
+        sub.textContent = 'SOD accolades — local + optional sync to ' + resolvedGithubFilePath();
         ht.appendChild(title);
         ht.appendChild(sub);
         var actions = document.createElement('div');

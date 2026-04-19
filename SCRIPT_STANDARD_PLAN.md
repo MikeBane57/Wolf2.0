@@ -36,7 +36,7 @@ From `parseUserScript` (and related logic in `background.js`):
 
 ### `GM_xmlhttpRequest` checklist (cross-origin / GitHub)
 
-Use this for scripts that need cross-origin HTTP. **SOD Wall of Fame** can sync via **`githubToken`** (direct API) or via **`wall-of-fame-proxy/`** (GitHub App on server + shared **`wallOfFameTeamKey`** in prefs; no PAT). See **`wall-of-fame-proxy/README.md`**.
+Use this for scripts that need cross-origin HTTP. **SOD Wall of Fame** can sync like **DonkeyCODE session sync**: **`donkeycode_github_pat`**, **`donkeycode_github_owner`**, **`donkeycode_github_repo`**, **`donkeycode_github_branch`**, and optional **`donkeycode_github_sessions_root`** (file becomes `{root}/wall-of-fame.json`, or default **`WALL of FAME/wall-of-fame.json`**). Falls back to **`githubToken`** + baked defaults if those prefs are not available to the userscript. Alternatively use **`wall-of-fame-proxy/`** + team key (see **`wall-of-fame-proxy/README.md`**).
 
 Scripts that call **`GM_xmlhttpRequest`** (e.g. GitHub REST API) need all of the following in DonkeyCODE:
 
@@ -122,4 +122,4 @@ Copy `templates/userscript.template.user.js` when starting a new script.
 - Filled DonkeyCODE section from `background.js` / `bridge.js` / `manifest.json` report (parser fields, GM XHR only, updates via listing, storage).
 - Documented `@donkeycode-pref`: grouped UI, `globalThis.donkeycodeGetPref`, debug log, named session folder vs Default.
 - Documented **`window.__myScriptCleanup`** for DonkeyCODE disable / re-inject; template and repo scripts assign teardown (observers, listeners, injected nodes).
-- Documented **`GM_xmlhttpRequest` checklist** (optional host permission, `@connect`, GitHub PAT, **`data` + `Content-Type`** for GitHub REST). Wall of Fame uses fixed repo file path + `githubToken` (v2.1.0).
+- Documented **`GM_xmlhttpRequest` checklist** (optional host permission, `@connect`, GitHub PAT, **`data` + `Content-Type`** for GitHub REST). Wall of Fame aligns with DonkeyCODE **`donkeycode_github_*`** prefs + proxy option (v2.3.0).
