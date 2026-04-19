@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.5.0
+// @version      1.6.0
 // @description  Button near GMT clock: METAR/TAF, NWS radar loop + AFD when available, alerts on change, optional notifications
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -19,6 +19,7 @@
 
     var STORAGE_STATIONS = 'dc-metar-watch-stations-v1';
     var STORAGE_VIEWED = 'dc-metar-watch-viewed-snapshot-v1';
+    var STORAGE_SORT = 'dc-metar-watch-sort-v1';
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -118,8 +119,43 @@
         localStorage.setItem(STORAGE_VIEWED, JSON.stringify(obj));
     }
 
+    function loadSortMode() {
+        try {
+            var v = localStorage.getItem(STORAGE_SORT);
+            if (v === 'change' || v === 'icao_az' || v === 'list') {
+                return v;
+            }
+        } catch (e) {}
+        return 'list';
+    }
+
+    function saveSortMode(mode) {
+        try {
+            localStorage.setItem(STORAGE_SORT, mode);
+        } catch (e) {}
+    }
+
     var stationList = loadStationList();
+    var sortMode = loadSortMode();
+    /** IATA codes with unseen METAR/TAF change (cleared when user opens modal or marks viewed). */
+    var pendingChangedIata = {};
     var viewedSnapshot = loadViewedSnapshot();
+
+    var btn = null;
+    var badge = null;
+    var modal = null;
+    var backdrop = null;
+    var listEl = null;
+    var detailEl = null;
+    var addInput = null;
+    var selectedIata = null;
+    var anchorRetryTimer = null;
+    var mountScheduled = false;
+    var onDocKey = null;
+    var refreshThisBtn = null;
+    var refreshAllBtn = null;
+    var statusBarEl = null;
+    var sortSelect = null;
     var cacheByIcao = {};
     var pollTimer = null;
     var domObserver = null;
@@ -148,6 +184,38 @@
     /** List label: prefer 4-letter ICAO. */
     function stationListLabel(iata) {
         return icaoFor(iata) || String(iata || '').toUpperCase();
+    }
+
+    function displayStationOrder() {
+        var base = stationList.slice();
+        if (sortMode === 'icao_az') {
+            base.sort(function (a, b) {
+                var ia = icaoFor(a) || a;
+                var ib = icaoFor(b) || b;
+                return ia.localeCompare(ib);
+            });
+            return base;
+        }
+        if (sortMode === 'change') {
+            var changed = [];
+            var rest = [];
+            var ci;
+            for (ci = 0; ci < base.length; ci++) {
+                var code = base[ci];
+                if (pendingChangedIata[code]) {
+                    changed.push(code);
+                } else {
+                    rest.push(code);
+                }
+            }
+            rest.sort(function (a, b) {
+                var ia = icaoFor(a) || a;
+                var ib = icaoFor(b) || b;
+                return ia.localeCompare(ib);
+            });
+            return changed.concat(rest);
+        }
+        return base;
     }
 
     function escapeHtml(s) {
@@ -532,7 +600,7 @@
         });
     }
 
-    function fetchAllStations(list, done) {
+    function fetchAllStations(list, done, onProgress) {
         if (!list || !list.length) {
             done([]);
             return;
@@ -548,6 +616,11 @@
             results[index] = rec;
             active--;
             completed++;
+            if (typeof onProgress === 'function') {
+                try {
+                    onProgress(list[index], rec, completed, total);
+                } catch (e) {}
+            }
             if (completed === total) {
                 done(results);
             } else {
@@ -559,7 +632,13 @@
             while (active < concurrency && next < total) {
                 (function (index) {
                     active++;
-                    fetchWeatherForIata(list[index], function (rec) {
+                    var iata = list[index];
+                    if (typeof onProgress === 'function') {
+                        try {
+                            onProgress(iata, null, completed, total);
+                        } catch (e) {}
+                    }
+                    fetchWeatherForIata(iata, function (rec) {
                         finishOne(rec, index);
                     });
                 })(next);
@@ -673,6 +752,20 @@
             btn.removeAttribute('data-dc-metar-alert');
             badge.style.display = 'none';
         }
+        if (alertsPrimed && (!modal || modal.style.display !== 'flex')) {
+            pendingChangedIata = {};
+            var si;
+            for (si = 0; si < stale.length; si++) {
+                var ic = stale[si];
+                var idx;
+                for (idx = 0; idx < stationList.length; idx++) {
+                    if (icaoFor(stationList[idx]) === ic) {
+                        pendingChangedIata[stationList[idx]] = true;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     function primeAlertsBaseline(results) {
@@ -690,36 +783,58 @@
         alertsPrimed = true;
     }
 
-    function runPoll() {
-        fetchAllStations(stationList, function (results) {
-            var i;
-            for (i = 0; i < results.length; i++) {
-                var r = results[i];
-                if (r.icao) {
-                    cacheByIcao[r.icao] = r;
-                }
-            }
-            primeAlertsBaseline(results);
-            updateAlertState();
-            if (modal && modal.style.display === 'flex' && selectedIata) {
-                renderDetail(selectedIata);
-            }
-        });
+    function setStatusBar(msg) {
+        if (statusBarEl) {
+            statusBarEl.textContent = msg || '';
+        }
     }
 
-    var btn = null;
-    var badge = null;
-    var modal = null;
-    var backdrop = null;
-    var listEl = null;
-    var detailEl = null;
-    var addInput = null;
-    var selectedIata = null;
-    var anchorRetryTimer = null;
-    var mountScheduled = false;
-    var onDocKey = null;
-    var refreshThisBtn = null;
-    var refreshAllBtn = null;
+    function updateRefreshThisLabel() {
+        if (!refreshThisBtn) {
+            return;
+        }
+        if (!selectedIata) {
+            refreshThisBtn.textContent = 'Refresh';
+            refreshThisBtn.disabled = true;
+            return;
+        }
+        refreshThisBtn.disabled = false;
+        refreshThisBtn.textContent = 'Refresh ' + stationListLabel(selectedIata);
+    }
+
+    function runPoll() {
+        if (modal && modal.style.display === 'flex') {
+            setStatusBar('Background refresh…');
+        }
+        fetchAllStations(
+            stationList,
+            function (results) {
+                var i;
+                for (i = 0; i < results.length; i++) {
+                    var r = results[i];
+                    if (r.icao) {
+                        cacheByIcao[r.icao] = r;
+                    }
+                }
+                primeAlertsBaseline(results);
+                updateAlertState();
+                if (modal && modal.style.display === 'flex' && selectedIata) {
+                    renderDetail(selectedIata);
+                    renderStationList();
+                    setStatusBar('Background refresh done · ' + new Date().toLocaleTimeString());
+                }
+            },
+            function (iata, rec, done, total) {
+                if (modal && modal.style.display === 'flex') {
+                    if (rec) {
+                        setStatusBar('Background: ' + stationListLabel(iata) + ' · ' + done + '/' + total);
+                    } else {
+                        setStatusBar('Background: loading ' + stationListLabel(iata) + '…');
+                    }
+                }
+            }
+        );
+    }
 
     function markViewedFromCache() {
         var snap = {};
@@ -734,6 +849,7 @@
         viewedSnapshot = snap;
         saveViewedSnapshot(viewedSnapshot);
         notifyShownForCurrent = {};
+        pendingChangedIata = {};
         updateAlertState();
     }
 
@@ -744,15 +860,18 @@
         if (refreshThisBtn) {
             refreshThisBtn.disabled = true;
         }
+        setStatusBar('Loading ' + stationListLabel(selectedIata) + '…');
         fetchNwsEnrichmentCached(icaoFor(selectedIata), true, function () {});
         fetchWeatherForIata(selectedIata, function () {
             if (refreshThisBtn) {
                 refreshThisBtn.disabled = false;
             }
+            setStatusBar(stationListLabel(selectedIata) + ' · updated ' + new Date().toLocaleTimeString());
             renderStationList();
             if (selectedIata) {
                 renderDetail(selectedIata);
             }
+            updateRefreshThisLabel();
             updateAlertState();
         });
     }
@@ -762,22 +881,36 @@
             refreshAllBtn.disabled = true;
         }
         nwsEnrichCache = {};
-        fetchAllStations(stationList, function () {
-            if (refreshAllBtn) {
-                refreshAllBtn.disabled = false;
+        setStatusBar('Refreshing all stations…');
+        fetchAllStations(
+            stationList,
+            function () {
+                if (refreshAllBtn) {
+                    refreshAllBtn.disabled = false;
+                }
+                setStatusBar('All stations updated · ' + new Date().toLocaleTimeString());
+                renderStationList();
+                if (selectedIata) {
+                    renderDetail(selectedIata);
+                }
+                updateRefreshThisLabel();
+                updateAlertState();
+            },
+            function (iata, rec, done, total) {
+                if (rec) {
+                    setStatusBar(stationListLabel(iata) + ' · ' + done + '/' + total);
+                } else {
+                    setStatusBar('Loading ' + stationListLabel(iata) + '…');
+                }
             }
-            renderStationList();
-            if (selectedIata) {
-                renderDetail(selectedIata);
-            }
-            updateAlertState();
-        });
+        );
     }
 
     function renderStationList() {
         listEl.innerHTML = '';
+        var order = displayStationOrder();
         var i;
-        for (i = 0; i < stationList.length; i++) {
+        for (i = 0; i < order.length; i++) {
             (function (iata) {
                 var row = document.createElement('div');
                 row.style.display = 'flex';
@@ -789,6 +922,9 @@
                 row.style.marginBottom = '4px';
                 if (selectedIata === iata) {
                     row.style.background = 'rgba(52,152,219,0.25)';
+                } else if (pendingChangedIata[iata]) {
+                    row.style.background = 'rgba(192,57,43,0.35)';
+                    row.style.border = '1px solid rgba(231,76,60,0.5)';
                 }
                 var label = document.createElement('span');
                 label.textContent = stationListLabel(iata);
@@ -799,6 +935,10 @@
                 label.style.overflow = 'hidden';
                 label.style.textOverflow = 'ellipsis';
                 label.style.whiteSpace = 'nowrap';
+                if (pendingChangedIata[iata]) {
+                    label.style.color = '#fadbd8';
+                    label.style.fontWeight = '600';
+                }
                 var x = document.createElement('button');
                 x.type = 'button';
                 x.textContent = '×';
@@ -826,13 +966,31 @@
                 });
                 row.addEventListener('click', function () {
                     selectedIata = iata;
+                    delete pendingChangedIata[iata];
                     renderStationList();
                     renderDetail(iata);
                 });
                 row.appendChild(label);
                 row.appendChild(x);
                 listEl.appendChild(row);
-            })(stationList[i]);
+            })(order[i]);
+        }
+        if (sortSelect && sortSelect.value !== sortMode) {
+            sortSelect.value = sortMode;
+        }
+        updateRefreshThisLabel();
+        var hasP = false;
+        var pk;
+        for (pk in pendingChangedIata) {
+            if (Object.prototype.hasOwnProperty.call(pendingChangedIata, pk) && pendingChangedIata[pk]) {
+                hasP = true;
+                break;
+            }
+        }
+        if (hasP && sortMode === 'change' && listEl) {
+            try {
+                listEl.scrollTop = 0;
+            } catch (e) {}
         }
     }
 
@@ -867,15 +1025,8 @@
                 var isLast = mj === metarDisplay.length - 1;
                 mBlocks +=
                     '<div style="margin-bottom:' +
-                    (isLast ? '0' : '10px') +
-                    ';padding-bottom:' +
-                    (isLast ? '0' : '10px') +
-                    ';border-bottom:' +
-                    (isLast ? 'none' : '1px solid #2c2c34') +
+                    (isLast ? '0' : '4px') +
                     ';white-space:pre-wrap;word-break:break-word;">' +
-                    '<span style="color:#7f8c8d;font-size:11px;margin-right:6px;">' +
-                    (mj + 1) +
-                    '.</span>' +
                     escapeHtml(metarDisplay[mj]).replace(/\n/g, '<br>') +
                     '</div>';
             }
@@ -914,8 +1065,8 @@
         }
         detailEl.innerHTML =
             '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;color:#ecf0f1;min-height:120px;">' +
-            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">METAR <span style="font-weight:400;color:#95a5a6;font-size:11px;">(last 3 when available)</span></div>' +
-            '<div style="margin-bottom:16px;">' +
+            '<div style="font-weight:600;margin-bottom:6px;color:#3498db;">METAR <span style="font-weight:400;color:#95a5a6;font-size:11px;">(last 3 when available)</span></div>' +
+            '<div style="margin-bottom:12px;">' +
             mBlocks +
             '</div>' +
             '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">TAF</div>' +
@@ -929,17 +1080,29 @@
         modal.style.display = 'flex';
         backdrop.style.display = 'block';
         selectedIata = stationList[0] || null;
+        setStatusBar('Loading…');
         renderStationList();
         if (selectedIata) {
             renderDetail(selectedIata);
         }
-        fetchAllStations(stationList, function () {
-            renderStationList();
-            if (selectedIata) {
-                renderDetail(selectedIata);
+        fetchAllStations(
+            stationList,
+            function () {
+                renderStationList();
+                if (selectedIata) {
+                    renderDetail(selectedIata);
+                }
+                markViewedFromCache();
+                setStatusBar('Ready · ' + new Date().toLocaleTimeString());
+            },
+            function (iata, rec, done, total) {
+                if (rec) {
+                    setStatusBar(stationListLabel(iata) + ' · ' + done + '/' + total);
+                } else {
+                    setStatusBar('Loading ' + stationListLabel(iata) + '…');
+                }
             }
-            markViewedFromCache();
-        });
+        );
     }
 
     function closeModal() {
@@ -1126,7 +1289,7 @@
 
         refreshThisBtn = document.createElement('button');
         refreshThisBtn.type = 'button';
-        refreshThisBtn.textContent = 'Refresh this';
+        refreshThisBtn.textContent = 'Refresh';
         refreshThisBtn.title = 'Reload METAR/TAF, radar, and AFD for the selected airport';
         refreshThisBtn.style.marginRight = '8px';
         refreshThisBtn.style.padding = '6px 10px';
@@ -1195,6 +1358,47 @@
         left.style.flexDirection = 'column';
         left.style.minHeight = '0';
         left.style.background = '#202028';
+
+        var sortRow = document.createElement('div');
+        sortRow.style.display = 'flex';
+        sortRow.style.alignItems = 'center';
+        sortRow.style.gap = '6px';
+        sortRow.style.marginBottom = '8px';
+        sortRow.style.flexShrink = '0';
+        var sortLab = document.createElement('label');
+        sortLab.textContent = 'Sort';
+        sortLab.style.fontSize = '11px';
+        sortLab.style.color = '#95a5a6';
+        sortLab.style.fontFamily = 'system-ui, sans-serif';
+        sortSelect = document.createElement('select');
+        sortSelect.style.flex = '1';
+        sortSelect.style.minWidth = '0';
+        sortSelect.style.fontSize = '11px';
+        sortSelect.style.padding = '4px 6px';
+        sortSelect.style.borderRadius = '4px';
+        sortSelect.style.border = '1px solid #444';
+        sortSelect.style.background = '#2a2a32';
+        sortSelect.style.color = '#ecf0f1';
+        var sortOpts = [
+            ['list', 'List order'],
+            ['icao_az', 'ICAO A–Z'],
+            ['change', 'Changed first']
+        ];
+        var so;
+        for (so = 0; so < sortOpts.length; so++) {
+            var o = document.createElement('option');
+            o.value = sortOpts[so][0];
+            o.textContent = sortOpts[so][1];
+            sortSelect.appendChild(o);
+        }
+        sortSelect.value = sortMode;
+        sortSelect.addEventListener('change', function () {
+            sortMode = sortSelect.value;
+            saveSortMode(sortMode);
+            renderStationList();
+        });
+        sortRow.appendChild(sortLab);
+        sortRow.appendChild(sortSelect);
 
         listEl = document.createElement('div');
         listEl.style.flex = '1';
@@ -1270,6 +1474,7 @@
         addRow.appendChild(addInput);
         addRow.appendChild(addBtn);
 
+        left.appendChild(sortRow);
         left.appendChild(listEl);
         left.appendChild(addRow);
 
@@ -1288,8 +1493,21 @@
         modal.appendChild(header);
         modal.appendChild(body);
 
+        statusBarEl = document.createElement('div');
+        statusBarEl.style.flexShrink = '0';
+        statusBarEl.style.padding = '8px 14px';
+        statusBarEl.style.fontSize = '11px';
+        statusBarEl.style.fontFamily = 'system-ui, sans-serif';
+        statusBarEl.style.color = '#bdc3c7';
+        statusBarEl.style.background = '#1e1e24';
+        statusBarEl.style.borderTop = '1px solid #333';
+        statusBarEl.textContent = '';
+        modal.appendChild(statusBarEl);
+
         document.body.appendChild(backdrop);
         document.body.appendChild(modal);
+
+        updateRefreshThisLabel();
 
         onDocKey = function (e) {
             if (e.key === 'Escape' && modal && modal.style.display === 'flex') {
@@ -1356,6 +1574,8 @@
         backdrop = null;
         refreshThisBtn = null;
         refreshAllBtn = null;
+        statusBarEl = null;
+        sortSelect = null;
         window.__myScriptCleanup = undefined;
     };
 })();
