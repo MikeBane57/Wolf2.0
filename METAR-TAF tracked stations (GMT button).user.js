@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.9.0
-// @description  Button near GMT clock: METAR/TAF, FAA RVR when available, NWS radar + AFD, alerts on change
+// @version      2.0.0
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR hourly, AFD, alerts
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -10,6 +10,8 @@
 // @connect      api.weather.gov
 // @connect      radar.weather.gov
 // @connect      rvr.data.faa.gov
+// @connect      atis.info
+// @connect      api.open-meteo.com
 // @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
@@ -404,6 +406,139 @@
         return parts.join(' · ');
     }
 
+    var WMO_WEATHER_DESC = {
+        0: 'Clear',
+        1: 'Mainly clear',
+        2: 'Partly cloudy',
+        3: 'Overcast',
+        45: 'Fog',
+        48: 'Depositing rime fog',
+        51: 'Light drizzle',
+        53: 'Drizzle',
+        55: 'Heavy drizzle',
+        56: 'Freezing drizzle',
+        57: 'Heavy freezing drizzle',
+        61: 'Slight rain',
+        63: 'Rain',
+        65: 'Heavy rain',
+        66: 'Freezing rain',
+        67: 'Heavy freezing rain',
+        71: 'Slight snow',
+        73: 'Snow',
+        75: 'Heavy snow',
+        77: 'Snow grains',
+        80: 'Rain showers',
+        81: 'Rain showers',
+        82: 'Violent rain showers',
+        85: 'Snow showers',
+        86: 'Heavy snow showers',
+        95: 'Thunderstorm',
+        96: 'Thunderstorm w/ hail',
+        99: 'Thunderstorm w/ hail'
+    };
+
+    function wmoWeatherLabel(code) {
+        var c = Number(code);
+        if (!Number.isFinite(c)) {
+            return '';
+        }
+        return WMO_WEATHER_DESC[c] || 'Code ' + c;
+    }
+
+    function buildDatisBlockHtml(entries) {
+        if (!entries || !entries.length) {
+            return '';
+        }
+        var parts = [];
+        var i;
+        for (i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            var lab = escapeHtml(e.label || 'ATIS');
+            if (e.code) {
+                lab += ' <span style="color:#95a5a6;">' + escapeHtml(String(e.code)) + '</span>';
+            }
+            parts.push(
+                '<div style="margin-bottom:12px;">' +
+                '<div style="font-size:11px;color:#3498db;margin-bottom:4px;font-weight:600;">' +
+                lab +
+                '</div>' +
+                '<div style="font-size:11px;line-height:1.45;color:#bdc3c7;white-space:pre-wrap;word-break:break-word;">' +
+                escapeHtml(e.text) +
+                '</div>' +
+                (e.updatedAt
+                    ? '<div style="font-size:10px;color:#7f8c8d;margin-top:6px;">Updated ' + escapeHtml(e.updatedAt) + '</div>'
+                    : '') +
+                '</div>'
+            );
+        }
+        return (
+            '<div style="margin-bottom:16px;">' +
+            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">Digital ATIS <span style="font-weight:400;color:#95a5a6;font-size:11px;">(third-party)</span></div>' +
+            '<div style="background:#141418;padding:10px;border-radius:6px;max-height:min(40vh,420px);overflow:auto;">' +
+            parts.join('') +
+            '</div>' +
+            '<div style="font-size:10px;color:#7f8c8d;margin-top:6px;font-family:system-ui,sans-serif;">Source: atis.info — not official FAA; verify with ATIS/AWOS.</div>' +
+            '</div>'
+        );
+    }
+
+    function buildHrrrTableHtml(h) {
+        if (!h || !h.times || !h.times.length) {
+            return '';
+        }
+        var rows = [];
+        var maxRows = 24;
+        var i;
+        var n = Math.min(h.times.length, maxRows);
+        for (i = 0; i < n; i++) {
+            var t = h.times[i];
+            var tf = h.tempF[i];
+            var pop = h.pop[i];
+            var wc = h.wcode[i];
+            var ws = h.wspd[i];
+            var wd = h.wdir[i];
+            var wdStr = wd !== undefined && wd !== null && Number.isFinite(Number(wd)) ? Math.round(Number(wd)) + '°' : '—';
+            var wlab = wmoWeatherLabel(wc);
+            rows.push(
+                '<tr>' +
+                '<td style="padding:4px 6px;border-bottom:1px solid #2a2a32;white-space:nowrap;">' +
+                escapeHtml(String(t).replace('T', ' ').slice(0, 16)) +
+                '</td>' +
+                '<td style="text-align:right;padding:4px 6px;border-bottom:1px solid #2a2a32;">' +
+                (tf !== undefined && tf !== null ? escapeHtml(String(tf)) + ' ' + escapeHtml(h.unitTemp || '°F') : '—') +
+                '</td>' +
+                '<td style="text-align:right;padding:4px 6px;border-bottom:1px solid #2a2a32;">' +
+                (pop !== undefined && pop !== null ? escapeHtml(String(pop)) + '%' : '—') +
+                '</td>' +
+                '<td style="padding:4px 6px;border-bottom:1px solid #2a2a32;font-size:10px;">' +
+                escapeHtml(wlab) +
+                '</td>' +
+                '<td style="text-align:right;padding:4px 6px;border-bottom:1px solid #2a2a32;white-space:nowrap;">' +
+                (ws !== undefined && ws !== null ? escapeHtml(String(ws)) + ' ' + escapeHtml(h.unitWind || 'mph') : '—') +
+                ' ' +
+                wdStr +
+                '</td>' +
+                '</tr>'
+            );
+        }
+        return (
+            '<div style="margin-bottom:16px;">' +
+            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">HRRR forecast <span style="font-weight:400;color:#95a5a6;font-size:11px;">(hourly, Open-Meteo GFS+HRRR)</span></div>' +
+            '<div style="overflow:auto;max-height:min(42vh,480px);background:#141418;padding:10px;border-radius:6px;">' +
+            '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#ecf0f1;">' +
+            '<thead><tr style="color:#3498db;">' +
+            '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid #444;">Time (UTC)</th>' +
+            '<th style="text-align:right;padding:4px 6px;border-bottom:1px solid #444;">Temp</th>' +
+            '<th style="text-align:right;padding:4px 6px;border-bottom:1px solid #444;">PoP</th>' +
+            '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid #444;">Wx</th>' +
+            '<th style="text-align:right;padding:4px 6px;border-bottom:1px solid #444;">Wind</th>' +
+            '</tr></thead><tbody>' +
+            rows.join('') +
+            '</tbody></table></div>' +
+            '</div>'
+        );
+    }
+
     function xhrResponseText(resp) {
         if (!resp) {
             return '';
@@ -525,6 +660,117 @@
             },
             { headers: hdr }
         );
+    }
+
+    /** Third-party D-ATIS JSON (ICAO), e.g. https://atis.info/api/KDEN */
+    function fetchDatisForIcao(icao, cb) {
+        fetchText('https://atis.info/api/' + encodeURIComponent(String(icao || '').toUpperCase()), function (txt) {
+            if (!txt || txt.charAt(0) !== '[') {
+                cb(null);
+                return;
+            }
+            try {
+                var arr = JSON.parse(txt);
+                if (!Array.isArray(arr) || !arr.length) {
+                    cb(null);
+                    return;
+                }
+                var out = [];
+                var i;
+                for (i = 0; i < arr.length; i++) {
+                    var o = arr[i];
+                    if (o && o.datis) {
+                        var typ = String(o.type || '').toLowerCase();
+                        var lab = typ === 'arr' ? 'Arrival' : typ === 'dep' ? 'Departure' : typ === 'combined' ? 'Combined' : typ || 'ATIS';
+                        out.push({
+                            type: typ,
+                            code: o.code || '',
+                            label: lab,
+                            text: String(o.datis),
+                            time: o.time || '',
+                            updatedAt: o.updatedAt || ''
+                        });
+                    }
+                }
+                cb(out.length ? out : null);
+            } catch (e) {
+                cb(null);
+            }
+        });
+    }
+
+    /** NOAA HRRR (CONUS) hourly via Open-Meteo GFS+HRRR blend. */
+    function fetchHrrrHourlyForecast(lat, lon, cb) {
+        var url =
+            'https://api.open-meteo.com/v1/gfs?latitude=' +
+            encodeURIComponent(lat) +
+            '&longitude=' +
+            encodeURIComponent(lon) +
+            '&hourly=temperature_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m' +
+            '&forecast_hours=36&temperature_unit=fahrenheit&wind_speed_unit=mph';
+        fetchText(url, function (txt) {
+            if (!txt) {
+                cb(null);
+                return;
+            }
+            try {
+                var j = JSON.parse(txt);
+                var h = j.hourly;
+                if (!h || !h.time || !h.time.length) {
+                    cb(null);
+                    return;
+                }
+                cb({
+                    times: h.time,
+                    tempF: h.temperature_2m || [],
+                    pop: h.precipitation_probability || [],
+                    wcode: h.weather_code || [],
+                    wspd: h.wind_speed_10m || [],
+                    wdir: h.wind_direction_10m || [],
+                    unitTemp: (j.hourly_units && j.hourly_units.temperature_2m) || '°F',
+                    unitWind: (j.hourly_units && j.hourly_units.wind_speed_10m) || 'mph'
+                });
+            } catch (e) {
+                cb(null);
+            }
+        });
+    }
+
+    function mergeDetailExtras(icao, iata, datis, hrrr) {
+        var cur = cacheByIcao[icao];
+        if (!cur || cur.icao !== icao) {
+            return;
+        }
+        cur.datisEntries = datis;
+        cur.hrrrHourly = hrrr;
+        cacheByIcao[icao] = cur;
+        if (modal && modal.style.display === 'flex' && selectedIata === iata) {
+            renderDetail(selectedIata);
+        }
+    }
+
+    function patchDetailExtras(icao, iata) {
+        if (!icao || !iata) {
+            return;
+        }
+        fetchJson('https://api.weather.gov/stations/' + encodeURIComponent(icao), function (st) {
+            fetchDatisForIcao(icao, function (datis) {
+                if (!st || !st.geometry || !st.geometry.coordinates) {
+                    mergeDetailExtras(icao, iata, datis, null);
+                    return;
+                }
+                var coords = st.geometry.coordinates;
+                var lon = coords[0];
+                var lat = coords[1];
+                if (typeof lat !== 'number' || typeof lon !== 'number') {
+                    mergeDetailExtras(icao, iata, datis, null);
+                    return;
+                }
+                fetchHrrrHourlyForecast(lat, lon, function (hrrr) {
+                    mergeDetailExtras(icao, iata, datis, hrrr);
+                });
+            });
+        });
     }
 
     /**
@@ -748,6 +994,8 @@
                 metarLines: [],
                 taf: '',
                 rvrFaa: null,
+                datisEntries: null,
+                hrrrHourly: null,
                 radarGifUrl: '',
                 afdText: '',
                 afdMeta: null,
@@ -787,6 +1035,8 @@
                 metarLines: metarLines.slice(),
                 taf: taf,
                 rvrFaa: rvrParsed,
+                datisEntries: null,
+                hrrrHourly: null,
                 radarGifUrl: radarGifUrl,
                 afdText: afdText,
                 afdMeta: afdMeta,
@@ -815,12 +1065,14 @@
                         renderDetail(selectedIata);
                     }
                 });
+                patchDetailExtras(icao, iata);
                 return;
             }
             fetchNwsEnrichmentCached(icao, false, function (enr) {
                 var rec = buildRecFromEnr(enr);
                 cacheByIcao[icao] = rec;
                 cb(rec);
+                patchDetailExtras(icao, iata);
             });
         }
 
@@ -1387,6 +1639,7 @@
                 t +
                 '</div>';
         }
+        var datisBlock = buildDatisBlockHtml(r.datisEntries);
         var radarBlock = '';
         if (r.radarGifUrl) {
             radarBlock =
@@ -1399,6 +1652,7 @@
                 '</div>' +
                 '</div>';
         }
+        var hrrrBlock = buildHrrrTableHtml(r.hrrrHourly);
         var afdBlock = '';
         if (r.afdText && String(r.afdText).trim()) {
             var afdEsc = escapeHtml(r.afdText);
@@ -1423,7 +1677,9 @@
             mBlocks +
             '</div>' +
             tafRvrRow +
+            datisBlock +
             radarBlock +
+            hrrrBlock +
             afdBlock +
             '</div>';
     }
