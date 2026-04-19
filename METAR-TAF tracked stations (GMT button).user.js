@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.1
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR hourly, AFD, alerts
+// @version      2.0.2
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR hourly, AFD, alerts; new METAR/TAF title highlights
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -285,6 +285,42 @@
         return 'stale';
     }
 
+    /** Inline styles for METAR/TAF section title row when text differs from last-viewed snapshot. */
+    function detailTitleHighlightStyle(iata, sectionUnseen) {
+        if (!sectionUnseen) {
+            return '';
+        }
+        var age = pendingChangeAgeClass(iata);
+        var pad = 'padding:6px 10px;margin-bottom:6px;border-radius:4px;box-sizing:border-box;';
+        if (age === 'stale') {
+            return (
+                pad +
+                'background:rgba(231,76,60,0.28);border-left:4px solid #e74c3c;color:#ecf0f1 !important;'
+            );
+        }
+        return (
+            pad +
+            'background:rgba(241,196,15,0.28);border-left:4px solid #f1c40f;color:#ecf0f1 !important;'
+        );
+    }
+
+    function metarTafUnseenVersusViewed(iata, r) {
+        var icao = icaoFor(iata);
+        if (!icao || !r) {
+            return { metar: false, taf: false };
+        }
+        var v = viewedSnapshot[icao];
+        var cm = String(r.metar || '');
+        var ct = String(r.taf || '');
+        if (!v) {
+            return { metar: true, taf: true };
+        }
+        return {
+            metar: cm !== String(v.metar || ''),
+            taf: ct !== String(v.taf || '')
+        };
+    }
+
     function normalizePendingChangeTimes() {
         var next = {};
         var i;
@@ -304,6 +340,9 @@
         listColorTimer = setInterval(function () {
             if (modal && modal.style.display === 'flex') {
                 renderStationList();
+                if (selectedIata) {
+                    renderDetail(selectedIata);
+                }
             }
         }, 15000);
     }
@@ -1588,6 +1627,11 @@
             });
             return;
         }
+        var unseen = metarTafUnseenVersusViewed(iata, r);
+        var metarTitleStyle =
+            'font-weight:600;margin-bottom:6px;color:#3498db;' + detailTitleHighlightStyle(iata, unseen.metar);
+        var tafTitleStyle =
+            'font-weight:600;margin-bottom:8px;color:#3498db;' + detailTitleHighlightStyle(iata, unseen.taf);
         var metarDisplay = [];
         if (r.metarLines && r.metarLines.length) {
             var mi;
@@ -1620,7 +1664,11 @@
             tafRvrRow =
                 '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;margin-bottom:16px;">' +
                 '<div style="flex:2 1 320px;min-width:0;">' +
-                '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">TAF</div>' +
+                '<div style="' +
+                tafTitleStyle +
+                '">TAF' +
+                (unseen.taf ? ' <span style="font-weight:600;font-size:11px;color:#f1c40f;">NEW</span>' : '') +
+                '</div>' +
                 '<div style="white-space:pre-wrap;word-break:break-word;">' +
                 t +
                 '</div></div>' +
@@ -1634,7 +1682,11 @@
                 '</div></div></div>';
         } else {
             tafRvrRow =
-                '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">TAF</div>' +
+                '<div style="' +
+                tafTitleStyle +
+                '">TAF' +
+                (unseen.taf ? ' <span style="font-weight:600;font-size:11px;color:#f1c40f;">NEW</span>' : '') +
+                '</div>' +
                 '<div style="white-space:pre-wrap;word-break:break-word;margin-bottom:16px;">' +
                 t +
                 '</div>';
@@ -1672,7 +1724,11 @@
         }
         detailEl.innerHTML =
             '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;color:#ecf0f1;min-height:120px;">' +
-            '<div style="font-weight:600;margin-bottom:6px;color:#3498db;">METAR <span style="font-weight:400;color:#95a5a6;font-size:11px;">(last 3 when available)</span></div>' +
+            '<div style="' +
+            metarTitleStyle +
+            '">METAR <span style="font-weight:400;color:#95a5a6;font-size:11px;">(last 3 when available)</span>' +
+            (unseen.metar ? ' <span style="font-weight:600;font-size:11px;color:#f1c40f;">NEW</span>' : '') +
+            '</div>' +
             '<div style="margin-bottom:12px;">' +
             mBlocks +
             '</div>' +
