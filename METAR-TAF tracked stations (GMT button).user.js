@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.3.1
-// @description  Button near GMT clock: modal with full METAR/TAF for tracked stations, alerts when text changes since you last viewed, optional notifications
+// @version      1.4.0
+// @description  Button near GMT clock: modal with last 3 METARs + TAF for tracked stations, alerts when text changes since you last viewed, optional notifications
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
+// @connect      aviationweather.gov
 // @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":6,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
@@ -260,35 +261,85 @@
         }
     }
 
+    /** Up to `max` most recent METAR/SPECI lines from Aviation Weather raw API (newest first in response). */
+    function parseLastMetarsRaw(txt, max) {
+        var limit = max || 3;
+        var lines = String(txt || '').split(/\r?\n/);
+        var out = [];
+        var i;
+        for (i = 0; i < lines.length && out.length < limit; i++) {
+            var line = lines[i].replace(/\s*\$\s*$/, '').trim();
+            if (!line.length) {
+                continue;
+            }
+            if (/^(METAR|SPECI)\s/i.test(line)) {
+                out.push(line);
+            }
+        }
+        return out;
+    }
+
     function fetchWeatherForIata(iata, cb) {
         var icao = icaoFor(iata);
         if (!icao) {
-            cb({ iata: iata.toUpperCase(), icao: null, metar: 'No ICAO mapping', taf: '', err: true });
+            cb({ iata: iata.toUpperCase(), icao: null, metar: 'No ICAO mapping', metarLines: [], taf: '', err: true });
             return;
         }
-        var metarURL = 'https://tgftp.nws.noaa.gov/data/observations/metar/stations/' + icao + '.TXT';
+        var noaaMetarURL = 'https://tgftp.nws.noaa.gov/data/observations/metar/stations/' + icao + '.TXT';
         var tafURL = 'https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/' + icao + '.TXT';
-        var metarDone = false;
+        var awMetarURL =
+            'https://aviationweather.gov/api/data/metar?ids=' +
+            encodeURIComponent(icao) +
+            '&format=raw&hours=24';
+
         var tafDone = false;
-        var metar = 'N/A';
+        var awDone = false;
         var taf = 'N/A';
-        function finishBoth() {
-            if (!metarDone || !tafDone) {
-                return;
-            }
-            var rec = { iata: iata.toUpperCase(), icao: icao, metar: metar, taf: taf, err: false, t: Date.now() };
+        var metarLines = [];
+        var metar = 'N/A';
+
+        function finalizeRecord() {
+            var rec = {
+                iata: iata.toUpperCase(),
+                icao: icao,
+                metar: metar,
+                metarLines: metarLines.slice(),
+                taf: taf,
+                err: false,
+                t: Date.now()
+            };
             cacheByIcao[icao] = rec;
             cb(rec);
         }
-        fetchText(metarURL, function (mt) {
-            metar = parseMetarBody(mt);
-            metarDone = true;
-            finishBoth();
-        });
+
+        function afterAwAndTaf() {
+            if (!tafDone || !awDone) {
+                return;
+            }
+            if (metarLines.length) {
+                metar = metarLines[0];
+                finalizeRecord();
+                return;
+            }
+            fetchText(noaaMetarURL, function (mt) {
+                metar = parseMetarBody(mt);
+                metarLines = metar !== 'N/A' ? [metar] : [];
+                finalizeRecord();
+            });
+        }
+
         fetchText(tafURL, function (tt) {
             taf = parseTafBody(tt);
             tafDone = true;
-            finishBoth();
+            afterAwAndTaf();
+        });
+        fetchText(awMetarURL, function (raw) {
+            metarLines = parseLastMetarsRaw(raw, 3);
+            if (metarLines.length) {
+                metar = metarLines[0];
+            }
+            awDone = true;
+            afterAwAndTaf();
         });
     }
 
@@ -565,12 +616,44 @@
             });
             return;
         }
-        var m = escapeHtml(r.metar).replace(/\n/g, '<br>');
+        var metarDisplay = [];
+        if (r.metarLines && r.metarLines.length) {
+            var mi;
+            for (mi = 0; mi < r.metarLines.length && mi < 3; mi++) {
+                metarDisplay.push(r.metarLines[mi]);
+            }
+        } else if (r.metar && r.metar !== 'N/A') {
+            metarDisplay.push(r.metar);
+        }
+        var mBlocks = '';
+        if (metarDisplay.length) {
+            var mj;
+            for (mj = 0; mj < metarDisplay.length; mj++) {
+                var isLast = mj === metarDisplay.length - 1;
+                mBlocks +=
+                    '<div style="margin-bottom:' +
+                    (isLast ? '0' : '10px') +
+                    ';padding-bottom:' +
+                    (isLast ? '0' : '10px') +
+                    ';border-bottom:' +
+                    (isLast ? 'none' : '1px solid #2c2c34') +
+                    ';white-space:pre-wrap;word-break:break-word;">' +
+                    '<span style="color:#7f8c8d;font-size:11px;margin-right:6px;">' +
+                    (mj + 1) +
+                    '.</span>' +
+                    escapeHtml(metarDisplay[mj]).replace(/\n/g, '<br>') +
+                    '</div>';
+            }
+        } else {
+            mBlocks = '<div style="color:#95a5a6;">N/A</div>';
+        }
         var t = escapeHtml(r.taf).replace(/\n/g, '<br>');
         detailEl.innerHTML =
             '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;color:#ecf0f1;min-height:120px;">' +
-            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">METAR</div>' +
-            '<div style="margin-bottom:16px;white-space:pre-wrap;word-break:break-word;">' + m + '</div>' +
+            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">METAR <span style="font-weight:400;color:#95a5a6;font-size:11px;">(last 3 when available)</span></div>' +
+            '<div style="margin-bottom:16px;">' +
+            mBlocks +
+            '</div>' +
             '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">TAF</div>' +
             '<div style="white-space:pre-wrap;word-break:break-word;">' + t + '</div>' +
             '</div>';
