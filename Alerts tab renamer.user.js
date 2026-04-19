@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Alerts tab renamer
 // @namespace    Wolf 2.0
-// @version      1.4
+// @version      1.5
 // @description  Rename /alerts tabs by instance (1, 2, 3…); debounced title + registry sync; optional favicon
 // @match        https://opssuitemain.swacorp.com/alerts*
 // @grant        none
-// @donkeycode-pref {"alertsTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"{n} = instance by open order (duplicate tabs get distinct numbers). {base} updates when the app changes the page title.","default":"Alerts {n} · {base}","placeholder":"Alerts {n} · {base}"},"alertsTabFavicon":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Emoji or https://… image URL. Empty = keep site icon.","default":"","placeholder":"🔔"}}
+// @donkeycode-pref {"alertsTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"{n} = instance by open order (duplicate tabs get distinct numbers). {base} updates when the app changes the page title.","default":"Alerts {n} · {base}","placeholder":"Alerts {n} · {base}"},"alertsTabFavicon":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Emoji or URL. Mirrored in localStorage (donkeycode.mirror.alertsTabFavicon) when set so cloud sync cannot drop it.","default":"","placeholder":"🔔"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Alerts%20tab%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Alerts%20tab%20renamer.user.js
 // ==/UserScript==
@@ -49,6 +49,8 @@
     var titleDebounce = null;
     var onStorageBound = null;
 
+    var FAVICON_MIRROR_KEY = 'donkeycode.mirror.alertsTabFavicon';
+
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
             return def;
@@ -58,6 +60,22 @@
             return def;
         }
         return v;
+    }
+
+    /** DonkeyCODE prefs + localStorage mirror so emoji/URL survives empty cloud merge. */
+    function getFaviconPref() {
+        var raw = typeof donkeycodeGetPref === 'function' ? donkeycodeGetPref('alertsTabFavicon') : '';
+        var ext = raw !== undefined && raw !== null ? String(raw).trim() : '';
+        try {
+            if (ext) {
+                localStorage.setItem(FAVICON_MIRROR_KEY, ext);
+                return ext;
+            }
+            var mir = localStorage.getItem(FAVICON_MIRROR_KEY);
+            return mir ? String(mir).trim() : '';
+        } catch (e) {
+            return ext;
+        }
     }
 
     function escapeXml(s) {
@@ -167,7 +185,7 @@
             document.title = next;
         }
 
-        var href = resolveTabIconHref(getPref('alertsTabFavicon', ''));
+        var href = resolveTabIconHref(getFaviconPref());
         if (!href) {
             if (faviconLinkEl && faviconLinkEl.parentNode) {
                 faviconLinkEl.parentNode.removeChild(faviconLinkEl);

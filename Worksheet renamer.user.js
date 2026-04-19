@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Worksheet renamer
 // @namespace    Wolf 2.0
-// @version      2.7
+// @version      2.8
 // @description  Rename worksheet tab title; short poll then lightweight <title> watch; optional favicon
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
-// @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} and optionally {base} (rest of title, dates stripped). Omit {base} for a fixed label only, e.g. WS {num}.","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📋) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📋 or https://…"}}
+// @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} and optionally {base} (rest of title, dates stripped). Omit {base} for a fixed label only, e.g. WS {num}.","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📋) or a full image URL (https://… or data:…). Leave empty for the default site icon. Mirrored in localStorage (donkeycode.mirror.worksheetFaviconUrl) when set so cloud sync cannot drop it.","default":"","placeholder":"📋 or https://…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js
 // ==/UserScript==
@@ -38,6 +38,8 @@
     /** ~12s window to catch async app title; no MutationObservers after this. */
     var POLL_MS = 300;
     var MAX_POLLS = 40;
+
+    var FAVICON_MIRROR_KEY = 'donkeycode.mirror.worksheetFaviconUrl';
 
     function readStoredRawTitle() {
         try {
@@ -77,6 +79,22 @@
             return def;
         }
         return v;
+    }
+
+    /** DonkeyCODE prefs + localStorage mirror so emoji/URL survives empty cloud merge. */
+    function getFaviconPref() {
+        var raw = typeof donkeycodeGetPref === 'function' ? donkeycodeGetPref('worksheetFaviconUrl') : '';
+        var ext = raw !== undefined && raw !== null ? String(raw).trim() : '';
+        try {
+            if (ext) {
+                localStorage.setItem(FAVICON_MIRROR_KEY, ext);
+                return ext;
+            }
+            var mir = localStorage.getItem(FAVICON_MIRROR_KEY);
+            return mir ? String(mir).trim() : '';
+        } catch (e) {
+            return ext;
+        }
     }
 
     function getTemplate() {
@@ -224,7 +242,7 @@
     }
 
     function applyFavicon() {
-        var href = resolveTabIconHref(getPref('worksheetFaviconUrl', ''));
+        var href = resolveTabIconHref(getFaviconPref());
         if (!href) {
             if (faviconLinkEl && faviconLinkEl.parentNode) {
                 faviconLinkEl.parentNode.removeChild(faviconLinkEl);

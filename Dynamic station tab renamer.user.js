@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Dynamic station tab renamer
 // @namespace    Wolf 2.0
-// @version      2.4
+// @version      2.5
 // @description  Reflect schedule station (3-letter code) in the tab title; template in prefs; optional tab icon
 // @match        https://opssuitemain.swacorp.com/schedule*
-// @donkeycode-pref {"stationTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {station} and optionally {base}. Omit {base} for station-only titles, e.g. {station} only.","default":"{station} · {base}"},"stationTabFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📅) or a full image URL (https://… or data:…). Leave empty for the default site icon.","default":"","placeholder":"📅 or https://…"}}
+// @donkeycode-pref {"stationTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {station} and optionally {base}. Omit {base} for station-only titles, e.g. {station} only.","default":"{station} · {base}"},"stationTabFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📅) or a full image URL (https://… or data:…). Leave empty for the default site icon. Mirrored in localStorage (donkeycode.mirror.stationTabFaviconUrl) when set so cloud sync cannot drop it.","default":"","placeholder":"📅 or https://…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Dynamic%20station%20tab%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Dynamic%20station%20tab%20renamer.user.js
 // ==/UserScript==
@@ -17,6 +17,8 @@
     const TITLE_PREFIX_RE = /^[A-Z]{3} · /;
     const IGNORE_CODES = new Set(['ABC']);
 
+    var FAVICON_MIRROR_KEY = 'donkeycode.mirror.stationTabFaviconUrl';
+
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
             return def;
@@ -26,6 +28,22 @@
             return def;
         }
         return v;
+    }
+
+    /** DonkeyCODE prefs + localStorage mirror so emoji/URL survives empty cloud merge. */
+    function getFaviconPref() {
+        var raw = typeof donkeycodeGetPref === 'function' ? donkeycodeGetPref('stationTabFaviconUrl') : '';
+        var ext = raw !== undefined && raw !== null ? String(raw).trim() : '';
+        try {
+            if (ext) {
+                localStorage.setItem(FAVICON_MIRROR_KEY, ext);
+                return ext;
+            }
+            var mir = localStorage.getItem(FAVICON_MIRROR_KEY);
+            return mir ? String(mir).trim() : '';
+        } catch (e) {
+            return ext;
+        }
     }
 
     function getTemplate() {
@@ -83,7 +101,7 @@
     }
 
     function applyFavicon() {
-        var href = resolveTabIconHref(getPref('stationTabFaviconUrl', ''));
+        var href = resolveTabIconHref(getFaviconPref());
         if (!href) {
             if (faviconLinkEl && faviconLinkEl.parentNode) {
                 faviconLinkEl.parentNode.removeChild(faviconLinkEl);

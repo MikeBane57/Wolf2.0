@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         FLIFO tab renamer
 // @namespace    Wolf 2.0
-// @version      1.2
+// @version      1.3
 // @description  Rename FLIFO tabs; debounced title watch; {base} from app title; optional favicon
 // @match        https://opssuitemain.swacorp.com/flifo*
 // @grant        none
-// @donkeycode-pref {"flifoTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Include {base} only if you want the original page title in the tab. Plain text uses only your text. Reload to refresh {base}.","default":"FLIFO · {base}","placeholder":"FLIFO · {base}"},"flifoTabFavicon":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Emoji or https://… URL. Empty = site default.","default":"","placeholder":"🛫"}}
+// @donkeycode-pref {"flifoTabTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Include {base} only if you want the original page title in the tab. Plain text uses only your text. Reload to refresh {base}.","default":"FLIFO · {base}","placeholder":"FLIFO · {base}"},"flifoTabFavicon":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Emoji or https://… URL. Empty = site default. Mirrored in localStorage (donkeycode.mirror.flifoTabFavicon) when set so cloud sync cannot drop it.","default":"","placeholder":"🛫"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/FLIFO%20tab%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/FLIFO%20tab%20renamer.user.js
 // ==/UserScript==
@@ -20,6 +20,8 @@
     var titleMo = null;
     var titleDebounce = null;
 
+    var FAVICON_MIRROR_KEY = 'donkeycode.mirror.flifoTabFavicon';
+
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
             return def;
@@ -29,6 +31,22 @@
             return def;
         }
         return v;
+    }
+
+    /** DonkeyCODE prefs + localStorage mirror so emoji/URL survives empty cloud merge. */
+    function getFaviconPref() {
+        var raw = typeof donkeycodeGetPref === 'function' ? donkeycodeGetPref('flifoTabFavicon') : '';
+        var ext = raw !== undefined && raw !== null ? String(raw).trim() : '';
+        try {
+            if (ext) {
+                localStorage.setItem(FAVICON_MIRROR_KEY, ext);
+                return ext;
+            }
+            var mir = localStorage.getItem(FAVICON_MIRROR_KEY);
+            return mir ? String(mir).trim() : '';
+        } catch (e) {
+            return ext;
+        }
     }
 
     function escapeXml(s) {
@@ -82,7 +100,7 @@
             document.title = next;
         }
 
-        var href = resolveTabIconHref(getPref('flifoTabFavicon', ''));
+        var href = resolveTabIconHref(getFaviconPref());
         if (!href) {
             if (faviconLinkEl && faviconLinkEl.parentNode) {
                 faviconLinkEl.parentNode.removeChild(faviconLinkEl);
