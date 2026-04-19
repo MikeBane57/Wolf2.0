@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.8.2
+// @version      1.8.3
 // @description  Button near GMT clock: METAR/TAF, FAA RVR when available, NWS radar + AFD, alerts on change
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -319,6 +319,16 @@
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;');
+    }
+
+    function faaRvrUrlForIata(iata, bustCache) {
+        var u =
+            'https://rvr.data.faa.gov/cgi-bin/rvr-details.pl?content=table&airport=' +
+            encodeURIComponent(String(iata || '').toUpperCase());
+        if (bustCache) {
+            u += '&dc_cb=' + Date.now();
+        }
+        return u;
     }
 
     function buildFaaRvrTableHtml(rvr, iata3) {
@@ -806,9 +816,7 @@
             });
         }
 
-        var faaRvrURL =
-            'https://rvr.data.faa.gov/cgi-bin/rvr-details.pl?content=table&airport=' +
-            encodeURIComponent(iata.toUpperCase());
+        var faaRvrURL = faaRvrUrlForIata(iata, false);
         fetchText(faaRvrURL, function (html) {
             rvrParsed = parseFaaRvrHtml(html);
             rvrDone = true;
@@ -1049,6 +1057,30 @@
         }
         refreshThisBtn.disabled = false;
         refreshThisBtn.textContent = 'Refresh ' + stationListLabel(selectedIata);
+    }
+
+    function refreshRvrOnly() {
+        if (!selectedIata) {
+            return;
+        }
+        var icao = icaoFor(selectedIata);
+        if (!icao) {
+            return;
+        }
+        setStatusBar('Refreshing RVR ' + stationListLabel(selectedIata) + '…');
+        fetchText(faaRvrUrlForIata(selectedIata, true), function (html) {
+            var parsed = parseFaaRvrHtml(html);
+            var cur = cacheByIcao[icao];
+            if (!cur) {
+                return;
+            }
+            cur.rvrFaa = parsed;
+            cacheByIcao[icao] = cur;
+            if (selectedIata) {
+                renderDetail(selectedIata);
+                setStatusBar('RVR updated · ' + stationListLabel(selectedIata) + ' · ' + new Date().toLocaleTimeString());
+            }
+        });
     }
 
     function runPoll() {
@@ -1313,7 +1345,10 @@
                 t +
                 '</div></div>' +
                 '<div style="flex:1 1 260px;min-width:0;">' +
-                '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">RVR <span style="font-weight:400;color:#95a5a6;font-size:11px;">(FAA)</span></div>' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">' +
+                '<div style="font-weight:600;color:#3498db;">RVR <span style="font-weight:400;color:#95a5a6;font-size:11px;">(FAA)</span></div>' +
+                '<button type="button" data-dc-rvr-refresh="1" style="padding:4px 10px;font-size:11px;border-radius:4px;border:1px solid #444;background:#2a2a32;color:#ecf0f1;cursor:pointer;">Refresh RVR</button>' +
+                '</div>' +
                 '<div style="overflow:auto;max-height:min(48vh,520px);background:#141418;padding:10px;border-radius:6px;">' +
                 rvrTable +
                 '</div></div></div>';
@@ -1779,6 +1814,16 @@
         detailEl.style.padding = '16px';
         detailEl.style.background = '#1a1a1e';
         detailEl.style.color = '#ecf0f1';
+        detailEl.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.getAttribute) {
+                return;
+            }
+            if (t.getAttribute('data-dc-rvr-refresh') === '1') {
+                e.preventDefault();
+                refreshRvrOnly();
+            }
+        });
 
         body.appendChild(left);
         body.appendChild(detailEl);
