@@ -24,6 +24,14 @@
       "sortOrder": 3,
       "updatedAt": 0
     }
+      {
+      "id": "mdw-fun",
+      "title": "FUN in MDW",
+      "holder": "Cloud edit",
+      "note": "test",
+      "sortOrder": 4,
+      "updatedAt": 0
+    },
   ],
   "updatedAt": 0
 }
