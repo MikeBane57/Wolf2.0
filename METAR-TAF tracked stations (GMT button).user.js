@@ -1,14 +1,15 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.7.0
-// @description  Button near GMT clock: METAR/TAF, NWS radar loop + AFD when available, alerts on change, optional notifications
+// @version      1.8.0
+// @description  Button near GMT clock: METAR/TAF, FAA RVR when available, NWS radar + AFD, alerts on change
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
 // @connect      aviationweather.gov
 // @connect      api.weather.gov
 // @connect      radar.weather.gov
+// @connect      rvr.data.faa.gov
 // @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":6,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
@@ -290,6 +291,61 @@
             .replace(/"/g, '&quot;');
     }
 
+    function buildFaaRvrTableHtml(rvr, iata3) {
+        if (!rvr || !rvr.rows || !rvr.rows.length) {
+            return '';
+        }
+        var hdr =
+            '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#ecf0f1;">' +
+            '<thead><tr style="color:#3498db;">' +
+            '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid #444;">RWY</th>' +
+            '<th style="text-align:right;padding:4px 6px;border-bottom:1px solid #444;">TD</th>' +
+            '<th style="text-align:right;padding:4px 6px;border-bottom:1px solid #444;">MP</th>' +
+            '<th style="text-align:right;padding:4px 6px;border-bottom:1px solid #444;">RO</th>' +
+            '<th style="text-align:center;padding:4px 4px;border-bottom:1px solid #444;">E</th>' +
+            '<th style="text-align:center;padding:4px 4px;border-bottom:1px solid #444;">C</th>' +
+            '</tr></thead><tbody>';
+        var body = '';
+        var ri;
+        for (ri = 0; ri < rvr.rows.length; ri++) {
+            var row = rvr.rows[ri];
+            body +=
+                '<tr>' +
+                '<td style="padding:4px 6px;border-bottom:1px solid #2a2a32;">' +
+                escapeHtml(row.rwy) +
+                '</td>' +
+                '<td style="text-align:right;padding:4px 6px;border-bottom:1px solid #2a2a32;">' +
+                escapeHtml(row.td) +
+                '</td>' +
+                '<td style="text-align:right;padding:4px 6px;border-bottom:1px solid #2a2a32;">' +
+                escapeHtml(row.mp) +
+                '</td>' +
+                '<td style="text-align:right;padding:4px 6px;border-bottom:1px solid #2a2a32;">' +
+                escapeHtml(row.ro) +
+                '</td>' +
+                '<td style="text-align:center;padding:4px 4px;border-bottom:1px solid #2a2a32;">' +
+                escapeHtml(row.e) +
+                '</td>' +
+                '<td style="text-align:center;padding:4px 4px;border-bottom:1px solid #2a2a32;">' +
+                escapeHtml(row.c) +
+                '</td>' +
+                '</tr>';
+        }
+        var sub = '';
+        if (rvr.updatedUtc) {
+            sub =
+                '<div style="font-size:10px;color:#95a5a6;margin-top:8px;font-family:system-ui,sans-serif;">FAA RVR · as of ' +
+                escapeHtml(rvr.updatedUtc) +
+                ' · <a href="' +
+                escapeHtml(
+                    'https://rvr.data.faa.gov/cgi-bin/rvr-details.pl?content=table&airport=' +
+                        encodeURIComponent(String(iata3 || '').toUpperCase())
+                ) +
+                '" target="_blank" rel="noopener noreferrer" style="color:#5dade2;">rvr.data.faa.gov</a></div>';
+        }
+        return hdr + body + '</tbody></table>' + sub;
+    }
+
     function cacheBustUrl(url) {
         if (!url) {
             return '';
@@ -559,6 +615,68 @@
         }
     }
 
+    /**
+     * FAA RVR Status table from rvr.data.faa.gov (3-letter airport id).
+     * Returns null if page unavailable or no runway table.
+     */
+    function parseFaaRvrHtml(html) {
+        if (!html || typeof html !== 'string') {
+            return null;
+        }
+        if (/We're sorry|currently down|site is currently down/i.test(html)) {
+            return null;
+        }
+        var timeUtc = '';
+        var mTime = html.match(/<th[^>]*>\s*(\d{1,2}:\d{2}:\d{2}z)\s*<\/th>/i);
+        if (mTime) {
+            timeUtc = mTime[1];
+        }
+        var rows = [];
+        var trRe = /<tr[^>]*>\s*<th[^>]*>\s*([^<]*?)\s*<\/th>\s*([\s\S]*?)<\/tr>/gi;
+        var trm;
+        while ((trm = trRe.exec(html)) !== null) {
+            var rwyRaw = String(trm[1] || '')
+                .replace(/&nbsp;/gi, ' ')
+                .replace(/\s+/g, '')
+                .trim();
+            if (!rwyRaw || /^RWY$/i.test(rwyRaw)) {
+                continue;
+            }
+            if (!/^\d{1,2}[LRC]?$/i.test(rwyRaw) && !/^\d{1,2}\s?$/.test(rwyRaw)) {
+                continue;
+            }
+            var inner = trm[2] || '';
+            var cells = [];
+            var tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+            var tdm;
+            while ((tdm = tdRe.exec(inner)) !== null) {
+                var cell = String(tdm[1] || '')
+                    .replace(/<[^>]+>/g, '')
+                    .replace(/&nbsp;/gi, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                cells.push(cell);
+            }
+            if (cells.length >= 3) {
+                rows.push({
+                    rwy: rwyRaw,
+                    td: cells[0],
+                    mp: cells[1],
+                    ro: cells[2],
+                    e: cells[3] !== undefined ? cells[3] : '',
+                    c: cells[4] !== undefined ? cells[4] : ''
+                });
+            }
+        }
+        if (!rows.length) {
+            if (/Data Not Available/i.test(html)) {
+                return { rows: [], updatedUtc: timeUtc, empty: true };
+            }
+            return null;
+        }
+        return { rows: rows, updatedUtc: timeUtc, empty: false };
+    }
+
     /** Up to `max` most recent METAR/SPECI lines from Aviation Weather raw API (newest first in response). */
     function parseLastMetarsRaw(txt, max) {
         var limit = max || 3;
@@ -586,6 +704,7 @@
                 metar: 'No ICAO mapping',
                 metarLines: [],
                 taf: '',
+                rvrFaa: null,
                 radarGifUrl: '',
                 afdText: '',
                 afdMeta: null,
@@ -602,6 +721,9 @@
 
         var tafDone = false;
         var awDone = false;
+        var rvrDone = false;
+        var rvrParsed = null;
+        var noaaMetarStarted = false;
         var taf = 'N/A';
         var metarLines = [];
         var metar = 'N/A';
@@ -622,6 +744,7 @@
                     metar: metar,
                     metarLines: metarLines.slice(),
                     taf: taf,
+                    rvrFaa: rvrParsed,
                     radarGifUrl: radarGifUrl,
                     afdText: afdText,
                     afdMeta: afdMeta,
@@ -633,8 +756,8 @@
             });
         }
 
-        function afterAwAndTaf() {
-            if (!tafDone || !awDone) {
+        function tryComplete() {
+            if (!tafDone || !awDone || !rvrDone) {
                 return;
             }
             if (metarLines.length) {
@@ -642,6 +765,10 @@
                 finalizeRecord();
                 return;
             }
+            if (noaaMetarStarted) {
+                return;
+            }
+            noaaMetarStarted = true;
             fetchText(noaaMetarURL, function (mt) {
                 metar = parseMetarBody(mt);
                 metarLines = metar !== 'N/A' ? [metar] : [];
@@ -649,10 +776,19 @@
             });
         }
 
+        var faaRvrURL =
+            'https://rvr.data.faa.gov/cgi-bin/rvr-details.pl?content=table&airport=' +
+            encodeURIComponent(iata.toUpperCase());
+        fetchText(faaRvrURL, function (html) {
+            rvrParsed = parseFaaRvrHtml(html);
+            rvrDone = true;
+            tryComplete();
+        });
+
         fetchText(tafURL, function (tt) {
             taf = parseTafBody(tt);
             tafDone = true;
-            afterAwAndTaf();
+            tryComplete();
         });
         fetchText(awMetarURL, function (raw) {
             metarLines = parseLastMetarsRaw(raw, 3);
@@ -660,7 +796,7 @@
                 metar = metarLines[0];
             }
             awDone = true;
-            afterAwAndTaf();
+            tryComplete();
         });
     }
 
@@ -1135,6 +1271,29 @@
             mBlocks = '<div style="color:#95a5a6;">N/A</div>';
         }
         var t = escapeHtml(r.taf).replace(/\n/g, '<br>');
+        var rvr = r.rvrFaa;
+        var rvrTable = rvr && rvr.rows && rvr.rows.length ? buildFaaRvrTableHtml(rvr, iata) : '';
+        var tafRvrRow = '';
+        if (rvrTable) {
+            tafRvrRow =
+                '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;margin-bottom:16px;">' +
+                '<div style="flex:1 1 280px;min-width:0;">' +
+                '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">TAF</div>' +
+                '<div style="white-space:pre-wrap;word-break:break-word;">' +
+                t +
+                '</div></div>' +
+                '<div style="flex:1 1 260px;min-width:0;">' +
+                '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">RVR <span style="font-weight:400;color:#95a5a6;font-size:11px;">(FAA)</span></div>' +
+                '<div style="overflow:auto;max-height:min(48vh,520px);background:#141418;padding:10px;border-radius:6px;">' +
+                rvrTable +
+                '</div></div></div>';
+        } else {
+            tafRvrRow =
+                '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">TAF</div>' +
+                '<div style="white-space:pre-wrap;word-break:break-word;margin-bottom:16px;">' +
+                t +
+                '</div>';
+        }
         var radarBlock = '';
         if (r.radarGifUrl) {
             radarBlock =
@@ -1170,8 +1329,7 @@
             '<div style="margin-bottom:12px;">' +
             mBlocks +
             '</div>' +
-            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">TAF</div>' +
-            '<div style="white-space:pre-wrap;word-break:break-word;margin-bottom:16px;">' + t + '</div>' +
+            tafRvrRow +
             radarBlock +
             afdBlock +
             '</div>';
