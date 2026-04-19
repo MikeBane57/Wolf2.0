@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.3.2
+// @version      1.3.3
 // @description  FIMS tab: wall of fame accolades; password to edit; GitHub file sync or legacy URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -773,7 +773,17 @@
         }
     }
 
+    var lastWofActivate = 0;
     function showWallOfFame() {
+        var now = Date.now();
+        if (now - lastWofActivate < 120) {
+            return;
+        }
+        lastWofActivate = now;
+
+        ensureTab();
+        ensurePanel();
+
         var found = findTabMenu();
         var tab = document.getElementById(TAB_ID);
         var table = document.getElementById(TABLE_ID);
@@ -806,6 +816,9 @@
      */
     var wofDocCaptureWired = false;
     function onWofDocCapture(e) {
+        if (e.type === 'mousedown' && e.button !== 0) {
+            return;
+        }
         var t = e.target;
         if (!t || typeof t.closest !== 'function') {
             return;
@@ -825,7 +838,8 @@
         }
         if (!wofDocCaptureWired) {
             wofDocCaptureWired = true;
-            document.addEventListener('click', onWofDocCapture, true);
+            /* mousedown runs before React/Semantic handlers that swallow click */
+            document.addEventListener('mousedown', onWofDocCapture, true);
         }
     }
 
@@ -999,7 +1013,7 @@
             rootMo = null;
         }
         if (wofDocCaptureWired) {
-            document.removeEventListener('click', onWofDocCapture, true);
+            document.removeEventListener('mousedown', onWofDocCapture, true);
             wofDocCaptureWired = false;
         }
         var tab = document.getElementById(TAB_ID);

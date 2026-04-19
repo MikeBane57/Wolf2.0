@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.3.8
+// @version      1.3.9
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersMaxNames":{"type":"number","group":"Leaderboard","label":"Max names shown","description":"0 = show everyone with a count. Set a positive number only if you want to cap a very long list.","default":0,"min":0,"max":500,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
@@ -565,7 +565,11 @@
      * before the event reaches our <a>, so anchor-only listeners never run.
      */
     var docCaptureWired = false;
+    var lastTcActivate = 0;
     function onTopClickersDocCapture(e) {
+        if (e.type === 'mousedown' && e.button !== 0) {
+            return;
+        }
         var t = e.target;
         if (!t || typeof t.closest !== 'function') {
             return;
@@ -585,7 +589,7 @@
         }
         if (!docCaptureWired) {
             docCaptureWired = true;
-            document.addEventListener('click', onTopClickersDocCapture, true);
+            document.addEventListener('mousedown', onTopClickersDocCapture, true);
         }
     }
 
@@ -610,6 +614,14 @@
     }
 
     function showLeaderboardInFimsArea() {
+        var now = Date.now();
+        if (now - lastTcActivate < 120) {
+            return;
+        }
+        lastTcActivate = now;
+
+        ensureUi();
+
         var menuInfo = findTabMenu();
         var tab = document.getElementById(TAB_ID);
         var table = document.getElementById(TABLE_ID);
@@ -860,7 +872,7 @@
             }
         }
         if (docCaptureWired) {
-            document.removeEventListener('click', onTopClickersDocCapture, true);
+            document.removeEventListener('mousedown', onTopClickersDocCapture, true);
             docCaptureWired = false;
         }
         var tab = document.getElementById(TAB_ID);
