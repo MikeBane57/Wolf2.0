@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.2.2
-// @description  Schedule & worksheet only: highlight allowlisted tails; double-click to mail Anuvu; skips flight pucks
+// @version      1.2.3
+// @description  Schedule & worksheet: incremental tail highlights (no full-page rescan on scroll); double-click mail
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -98,7 +98,6 @@
 
     var onDblClickCapture = null;
     var highlightMo = null;
-    var highlightDebounce = null;
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -229,66 +228,55 @@
         parent.replaceChild(frag, textNode);
     }
 
-    function walkForHighlight(node) {
-        if (!node) {
+    /**
+     * Incremental scan (like Highlight Mx station): only walk new/changed subtrees,
+     * not full document unwrap+rescan on every mutation (avoids scroll lag).
+     */
+    function scanWifiHighlights(root) {
+        if (!root || !highlightEnabled() || !isWifiResetPage()) {
             return;
         }
-        if (node.nodeType === 3) {
-            highlightAllowlistedTailsInTextNode(node);
+        if (root.nodeType === 3) {
+            highlightAllowlistedTailsInTextNode(root);
             return;
         }
-        if (node.nodeType !== 1) {
+        if (root.nodeType !== 1) {
             return;
         }
-        if (node.classList && node.classList.contains(HIGHLIGHT_CLASS)) {
+        if (root.classList && root.classList.contains(HIGHLIGHT_CLASS)) {
             return;
         }
-        var tn = node.tagName;
+        var tn = root.tagName;
         if (tn === 'SCRIPT' || tn === 'STYLE' || tn === 'NOSCRIPT' || tn === 'TEXTAREA') {
             return;
         }
 
         var snapshot = [];
         var ci;
-        for (ci = 0; ci < node.childNodes.length; ci++) {
-            snapshot.push(node.childNodes[ci]);
+        for (ci = 0; ci < root.childNodes.length; ci++) {
+            snapshot.push(root.childNodes[ci]);
         }
         for (ci = 0; ci < snapshot.length; ci++) {
-            walkForHighlight(snapshot[ci]);
+            scanWifiHighlights(snapshot[ci]);
         }
     }
 
-    function applyTailHighlights() {
-        if (!isWifiResetPage()) {
-            unwrapHighlights();
+    function onHighlightMutations(mutations) {
+        if (!highlightEnabled() || !isWifiResetPage()) {
             return;
         }
-        if (!highlightEnabled()) {
-            unwrapHighlights();
-            return;
+        var mi;
+        for (mi = 0; mi < mutations.length; mi++) {
+            var m = mutations[mi];
+            var j;
+            if (m.type === 'characterData' && m.target && m.target.nodeType === 3) {
+                highlightAllowlistedTailsInTextNode(m.target);
+                continue;
+            }
+            for (j = 0; j < m.addedNodes.length; j++) {
+                scanWifiHighlights(m.addedNodes[j]);
+            }
         }
-        if (document.body) {
-            walkForHighlight(document.body);
-        }
-    }
-
-    function scheduleHighlight() {
-        if (!isWifiResetPage()) {
-            unwrapHighlights();
-            return;
-        }
-        if (!highlightEnabled()) {
-            unwrapHighlights();
-            return;
-        }
-        if (highlightDebounce) {
-            clearTimeout(highlightDebounce);
-        }
-        highlightDebounce = setTimeout(function() {
-            highlightDebounce = null;
-            unwrapHighlights();
-            applyTailHighlights();
-        }, 280);
     }
 
     function applyTemplate(tpl, tail) {
@@ -333,20 +321,34 @@
         var onNav = function() {
             if (!isWifiResetPage()) {
                 unwrapHighlights();
-            } else {
-                scheduleHighlight();
+            } else if (highlightEnabled() && document.body) {
+                scanWifiHighlights(document.body);
             }
         };
         window.addEventListener('popstate', onNav);
         window.addEventListener('hashchange', onNav);
 
-        scheduleHighlight();
-        highlightMo = new MutationObserver(function() {
-            scheduleHighlight();
-        });
-        if (document.documentElement) {
-            highlightMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+        function runInitialScan() {
+            if (!highlightEnabled() || !isWifiResetPage()) {
+                return;
+            }
+            if (document.body) {
+                scanWifiHighlights(document.body);
+            } else {
+                requestAnimationFrame(runInitialScan);
+            }
         }
+        runInitialScan();
+
+        highlightMo = new MutationObserver(onHighlightMutations);
+        function startObserving() {
+            if (!document.body) {
+                requestAnimationFrame(startObserving);
+                return;
+            }
+            highlightMo.observe(document.body, { childList: true, subtree: true, characterData: true });
+        }
+        startObserving();
 
         onDblClickCapture = function(e) {
             if (!isWifiResetPage()) {
@@ -379,10 +381,6 @@
             window.removeEventListener('popstate', window.__wifiResetOnNav);
             window.removeEventListener('hashchange', window.__wifiResetOnNav);
             window.__wifiResetOnNav = null;
-        }
-        if (highlightDebounce) {
-            clearTimeout(highlightDebounce);
-            highlightDebounce = null;
         }
         if (highlightMo) {
             highlightMo.disconnect();
