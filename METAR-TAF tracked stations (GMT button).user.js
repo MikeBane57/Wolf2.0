@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.0
+// @version      2.0.1
 // @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR hourly, AFD, alerts
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -1619,12 +1619,12 @@
         if (rvrTable) {
             tafRvrRow =
                 '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;margin-bottom:16px;">' +
-                '<div style="flex:1 1 280px;min-width:0;">' +
+                '<div style="flex:2 1 320px;min-width:0;">' +
                 '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">TAF</div>' +
                 '<div style="white-space:pre-wrap;word-break:break-word;">' +
                 t +
                 '</div></div>' +
-                '<div style="flex:1 1 260px;min-width:0;">' +
+                '<div style="flex:1 1 200px;min-width:0;max-width:min(240px,100%);">' +
                 '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">' +
                 '<div style="font-weight:600;color:#3498db;">RVR <span style="font-weight:400;color:#95a5a6;font-size:11px;">(FAA)</span></div>' +
                 '<button type="button" data-dc-rvr-refresh="1" style="padding:4px 10px;font-size:11px;border-radius:4px;border:1px solid #444;background:#2a2a32;color:#ecf0f1;cursor:pointer;">Refresh RVR</button>' +
