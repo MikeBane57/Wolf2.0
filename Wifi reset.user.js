@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.0.0
-// @description  Double-click an area showing an aircraft registration (e.g. N1802U) to open mail to Anuvu for a wifi reset request
+// @version      1.0.1
+// @description  Double-click an area showing an aircraft registration (e.g. N1802U) to open mail to Anuvu; skips flight pucks so Turns W&B double-click still works
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration from the double-clicked area (e.g. N1802U).","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration. Line breaks are preserved.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
+// @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration from the double-clicked area (e.g. N1802U). Double-click on schedule flight pucks is skipped so Turns W&B can open.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration. Line breaks are preserved.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // ==/UserScript==
@@ -14,6 +14,10 @@
     'use strict';
 
     var TAIL_RE = /\b(N[0-9A-Z]{4,6})\b/g;
+
+    /** Same leg-puck notion as Turns W&B Launcher — do not steal dblclick here (capture runs first). */
+    var FLIGHT_PUCK_SELECTOR =
+        '[data-qe-id="as-flight-leg-puck"], [data-testid="puck-context-menu"], [class*="CScizp4RisE="]';
 
     var onDblClickCapture = null;
 
@@ -83,6 +87,9 @@
     function init() {
         onDblClickCapture = function(e) {
             if (e.button !== 0) {
+                return;
+            }
+            if (e.target && typeof e.target.closest === 'function' && e.target.closest(FLIGHT_PUCK_SELECTOR)) {
                 return;
             }
             var tail = findTailFromEventTarget(e.target);
