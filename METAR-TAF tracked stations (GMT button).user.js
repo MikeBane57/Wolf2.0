@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.1.0
+// @version      1.2.0
 // @description  Button near GMT clock: modal with full METAR/TAF for tracked stations, alerts when text changes since you last viewed, optional notifications
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -157,13 +157,31 @@
         if (!resp) {
             return '';
         }
-        if (typeof resp.responseText === 'string') {
-            return resp.responseText;
+        var t = resp.responseText;
+        if (typeof t === 'string' && t.length) {
+            return t;
         }
-        if (resp.response && typeof resp.response === 'string') {
-            return resp.response;
+        t = resp.response;
+        if (typeof t === 'string' && t.length) {
+            return t;
+        }
+        if (t && typeof ArrayBuffer !== 'undefined' && t instanceof ArrayBuffer && typeof TextDecoder !== 'undefined') {
+            try {
+                return new TextDecoder('utf-8').decode(t);
+            } catch (e) {}
         }
         return '';
+    }
+
+    function xhrStatusOk(resp) {
+        if (!resp || resp.status === undefined || resp.status === null) {
+            return true;
+        }
+        var s = Number(resp.status);
+        if (!Number.isFinite(s)) {
+            return true;
+        }
+        return (s >= 200 && s < 300) || s === 304;
     }
 
     function fetchTextViaPageFetch(url, cb) {
@@ -187,31 +205,39 @@
         function finish(txt) {
             cb(typeof txt === 'string' ? txt : '');
         }
+        function fallback() {
+            fetchTextViaPageFetch(url, finish);
+        }
         if (typeof GM_xmlhttpRequest === 'function') {
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: url,
                 onload: function (resp) {
                     var txt = xhrResponseText(resp);
-                    if (txt) {
+                    if (txt && xhrStatusOk(resp)) {
                         finish(txt);
                         return;
                     }
-                    fetchTextViaPageFetch(url, finish);
+                    fallback();
                 },
-                onerror: function () {
-                    fetchTextViaPageFetch(url, finish);
-                }
+                onerror: fallback,
+                ontimeout: fallback
             });
             return;
         }
-        fetchTextViaPageFetch(url, finish);
+        fallback();
     }
 
     function parseMetarBody(txt) {
         try {
-            var lines = txt.split('\n');
-            return lines.slice(1).join(' ').trim() || 'N/A';
+            var lines = String(txt || '').split(/\r?\n/).filter(function (ln) {
+                return ln.trim().length;
+            });
+            if (!lines.length) {
+                return 'N/A';
+            }
+            var joined = lines.length > 1 ? lines.slice(1).join(' ').trim() : lines[0].trim();
+            return joined || 'N/A';
         } catch (e) {
             return 'N/A';
         }
@@ -219,8 +245,14 @@
 
     function parseTafBody(txt) {
         try {
-            var lines = txt.split('\n');
-            return lines.slice(1).join('\n').trim() || 'N/A';
+            var lines = String(txt || '').split(/\r?\n/).filter(function (ln) {
+                return ln.trim().length;
+            });
+            if (!lines.length) {
+                return 'N/A';
+            }
+            var joined = lines.length > 1 ? lines.slice(1).join('\n').trim() : lines.join('\n').trim();
+            return joined || 'N/A';
         } catch (e) {
             return 'N/A';
         }
@@ -473,7 +505,7 @@
         var r = cacheByIcao[icaoFor(iata)];
         if (!r) {
             detailEl.innerHTML = '<div style="color:#95a5a6;font-family:system-ui,sans-serif;">Loading…</div>';
-            fetchWeatherForIata(iata, function (rec) {
+            fetchWeatherForIata(iata, function () {
                 if (selectedIata === iata) {
                     renderDetail(iata);
                 }
@@ -483,11 +515,11 @@
         var m = escapeHtml(r.metar).replace(/\n/g, '<br>');
         var t = escapeHtml(r.taf).replace(/\n/g, '<br>');
         detailEl.innerHTML =
-            '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;color:#ecf0f1;">' +
+            '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;color:#ecf0f1;min-height:120px;">' +
             '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">METAR</div>' +
-            '<div style="margin-bottom:16px;white-space:pre-wrap;">' + m + '</div>' +
+            '<div style="margin-bottom:16px;white-space:pre-wrap;word-break:break-word;">' + m + '</div>' +
             '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">TAF</div>' +
-            '<div style="white-space:pre-wrap;">' + t + '</div>' +
+            '<div style="white-space:pre-wrap;word-break:break-word;">' + t + '</div>' +
             '</div>';
     }
 
@@ -496,6 +528,9 @@
         backdrop.style.display = 'block';
         selectedIata = stationList[0] || null;
         renderStationList();
+        if (selectedIata) {
+            renderDetail(selectedIata);
+        }
         fetchAllSequential(stationList, 0, [], function () {
             renderStationList();
             if (selectedIata) {
@@ -712,12 +747,15 @@
         body.style.overflow = 'hidden';
 
         var left = document.createElement('div');
-        left.style.width = '110px';
+        left.style.width = '165px';
+        left.style.minWidth = '140px';
+        left.style.maxWidth = '200px';
         left.style.flexShrink = '0';
         left.style.borderRight = '1px solid #333';
         left.style.padding = '12px';
         left.style.display = 'flex';
         left.style.flexDirection = 'column';
+        left.style.minHeight = '0';
         left.style.background = '#202028';
 
         listEl = document.createElement('div');
@@ -727,30 +765,38 @@
 
         var addRow = document.createElement('div');
         addRow.style.marginTop = '10px';
+        addRow.style.flexShrink = '0';
         addRow.style.display = 'flex';
-        addRow.style.gap = '6px';
+        addRow.style.flexDirection = 'column';
+        addRow.style.gap = '8px';
         addInput = document.createElement('input');
         addInput.type = 'text';
-        addInput.placeholder = 'e.g. KDEN or DEN';
-        addInput.maxLength = 4;
-        addInput.style.flex = '1';
+        addInput.placeholder = 'KDEN or DEN';
+        addInput.maxLength = 8;
+        addInput.style.width = '100%';
+        addInput.style.minWidth = '0';
+        addInput.style.boxSizing = 'border-box';
         addInput.style.padding = '6px 8px';
         addInput.style.borderRadius = '4px';
         addInput.style.border = '1px solid #444';
         addInput.style.background = '#2a2a32';
         addInput.style.color = '#ecf0f1';
-        addInput.style.fontSize = '13px';
+        addInput.style.fontSize = '12px';
         var addBtn = document.createElement('button');
         addBtn.type = 'button';
-        addBtn.textContent = 'Add';
-        addBtn.style.padding = '6px 10px';
+        addBtn.textContent = 'Add station';
+        addBtn.style.width = '100%';
+        addBtn.style.boxSizing = 'border-box';
+        addBtn.style.padding = '8px 10px';
         addBtn.style.border = 'none';
         addBtn.style.borderRadius = '4px';
         addBtn.style.background = '#2980b9';
         addBtn.style.color = '#fff';
         addBtn.style.cursor = 'pointer';
         addBtn.style.fontSize = '13px';
-        addBtn.addEventListener('click', function () {
+        addBtn.style.flexShrink = '0';
+
+        function tryAddStation() {
             var raw = String(addInput.value || '').trim().toUpperCase();
             var code = raw;
             if (/^[A-Z]{4}$/.test(raw)) {
@@ -769,9 +815,19 @@
             }
             stationList.push(code);
             saveStationList(stationList);
+            selectedIata = code;
             addInput.value = '';
             renderStationList();
+            renderDetail(selectedIata);
             runPoll();
+        }
+
+        addBtn.addEventListener('click', tryAddStation);
+        addInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                tryAddStation();
+            }
         });
         addRow.appendChild(addInput);
         addRow.appendChild(addBtn);
@@ -782,9 +838,11 @@
         detailEl = document.createElement('div');
         detailEl.style.flex = '1';
         detailEl.style.minWidth = '0';
+        detailEl.style.minHeight = '0';
         detailEl.style.overflow = 'auto';
         detailEl.style.padding = '16px';
         detailEl.style.background = '#1a1a1e';
+        detailEl.style.color = '#ecf0f1';
 
         body.appendChild(left);
         body.appendChild(detailEl);
