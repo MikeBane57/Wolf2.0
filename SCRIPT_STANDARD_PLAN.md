@@ -52,6 +52,24 @@ Scripts that call **`GM_xmlhttpRequest`** (e.g. GitHub REST API) need all of the
 
 **Debugging:** Chrome/Edge → extension → **Service worker** → **Inspect** → Console. Look for **`GM_xmlhttpRequest`**, **`GM_XHR blocked by @connect`**, **`GM_XHR blocked (no host permission)`**, **`GM_xmlhttpRequest fetch failed`**. Page scripts can use the extension’s **page → service worker log** path (`DONKEYCODE_PAGE_LOG` / `bridge.js`) so logs appear in the background console.
 
+**DonkeyCODE extension bug (fix in `background.js`):** If the service worker logs **`ReferenceError: gmXhrBodyForFetch is not defined`** (often near the `GM_xmlhttpRequest` → `fetch()` bridge), the bridge references a helper that was never defined or not imported. **Every** `GM_xmlhttpRequest` call fails, including **GET**s to the Contents API. Add a small helper in the same scope as the bridge (or replace the call with equivalent inline logic):
+
+```javascript
+function gmXhrBodyForFetch(details) {
+  if (!details) return undefined;
+  var raw = details.data !== undefined ? details.data : details.body;
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === "string") return raw;
+  try {
+    return JSON.stringify(raw);
+  } catch (e) {
+    return String(raw);
+  }
+}
+```
+
+Use **`body: gmXhrBodyForFetch(details)`** (or the same logic) only when **`method`** is not **`GET`** / **`HEAD`**; for GET, omit **`body`**. After fixing, reload the extension service worker and retry.
+
 ### Teardown (`__myScriptCleanup`)
 
 DonkeyCODE calls **`window.__myScriptCleanup()`** when a script is **disabled** or before **re-injecting** after pref changes. Assign a **no-arg** function that:
