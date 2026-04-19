@@ -36,7 +36,7 @@ From `parseUserScript` (and related logic in `background.js`):
 
 ### `GM_xmlhttpRequest` checklist (cross-origin / GitHub)
 
-Use this only for scripts that actually need cross-origin HTTP (e.g. a custom `GM_xmlhttpRequest` integration). **SOD Wall of Fame** in this repo is **local-only** and does not post to Git or call `GM_xmlhttpRequest`.
+Use this for scripts that need cross-origin HTTP. **SOD Wall of Fame** syncs to **`WALL of FAME/wall-of-fame.json`** in **`MikeBane57/Wolf2.0`** (baked-in path); users only set **`githubToken`** in prefs.
 
 Scripts that call **`GM_xmlhttpRequest`** (e.g. GitHub REST API) need all of the following in DonkeyCODE:
 
@@ -122,4 +122,4 @@ Copy `templates/userscript.template.user.js` when starting a new script.
 - Filled DonkeyCODE section from `background.js` / `bridge.js` / `manifest.json` report (parser fields, GM XHR only, updates via listing, storage).
 - Documented `@donkeycode-pref`: grouped UI, `globalThis.donkeycodeGetPref`, debug log, named session folder vs Default.
 - Documented **`window.__myScriptCleanup`** for DonkeyCODE disable / re-inject; template and repo scripts assign teardown (observers, listeners, injected nodes).
-- Documented **`GM_xmlhttpRequest` checklist** (optional host permission, `@connect`, GitHub PAT, **`data` + `Content-Type`** for GitHub REST). Wall of Fame scrapped Git publish (v2.0.0).
+- Documented **`GM_xmlhttpRequest` checklist** (optional host permission, `@connect`, GitHub PAT, **`data` + `Content-Type`** for GitHub REST). Wall of Fame uses fixed repo file path + `githubToken` (v2.1.0).
