@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.7.0
+// @version      2.7.1
 // @description  FIMS tab: Wall of Fame; data from WALL of FAME/wall-of-fame.json + local cache (no baked-in accolades)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -631,6 +631,62 @@
         return out;
     }
 
+    /**
+     * Canonical list for GitHub PUT / dispatch / proxy: editor state wins (deletes stay deleted).
+     * Reassigns sortOrder 1..n in display order.
+     */
+    function prepareEntriesForPublish(entries) {
+        var list = (entries || [])
+            .map(function(e) {
+                return normalizeEntry(e);
+            })
+            .filter(Boolean);
+        list.sort(function(a, b) {
+            return (a.sortOrder || 0) - (b.sortOrder || 0);
+        });
+        var i;
+        for (i = 0; i < list.length; i++) {
+            list[i] = Object.assign({}, list[i], { sortOrder: i + 1 });
+        }
+        return list;
+    }
+
+    function wofReorderEntry(panel, entryId, delta) {
+        var sorted = entriesState.slice().sort(function(a, b) {
+            return (a.sortOrder || 0) - (b.sortOrder || 0);
+        });
+        var idx = -1;
+        var i;
+        for (i = 0; i < sorted.length; i++) {
+            if (sorted[i].id === entryId) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx < 0) {
+            return;
+        }
+        var ni = idx + delta;
+        if (ni < 0 || ni >= sorted.length) {
+            return;
+        }
+        var t = sorted[idx];
+        sorted[idx] = sorted[ni];
+        sorted[ni] = t;
+        for (i = 0; i < sorted.length; i++) {
+            var id = sorted[i].id;
+            var j;
+            for (j = 0; j < entriesState.length; j++) {
+                if (entriesState[j].id === id) {
+                    entriesState[j].sortOrder = i + 1;
+                    break;
+                }
+            }
+        }
+        saveLocal(entriesState);
+        renderCards(panel);
+    }
+
     function fetchCloud(cb) {
         if (proxyConfigured()) {
             proxyGetFile(cb);
@@ -684,36 +740,41 @@
         }
 
         function doGithubPut() {
-            wofAppendPublishLog(panel, 'GET file metadata + SHA for merge…');
+            wofAppendPublishLog(panel, 'GET file metadata + SHA…');
             githubGetFile(function(remote, sha) {
                 if (remote === null && sha === null) {
                     wofAppendPublishLog(panel, 'Note: file missing or GET failed (HTTP not 2xx). Attempting create/update anyway.');
                 } else {
                     wofAppendPublishLog(panel, 'Remote entries: ' + (remote ? remote.length : 0) + ', sha: ' + (sha ? sha.slice(0, 7) + '…' : '(new file)'));
                 }
-                var merged = mergeEntries(entries, remote || []);
-                entriesState = merged;
+                var toSave = prepareEntriesForPublish(entries);
+                wofAppendPublishLog(
+                    panel,
+                    'PUT local list (' +
+                        toSave.length +
+                        ' entries; deletions are not restored from remote).'
+                );
+                entriesState = toSave;
                 saveLocal(entriesState);
                 if (panel) {
                     render(panel);
                 }
-                wofAppendPublishLog(panel, 'PUT merged ' + merged.length + ' entries…');
-                githubPutFile(merged, sha, function(ok, err) {
+                githubPutFile(toSave, sha, function(ok, err) {
                     if (ok) {
                         wofAppendPublishLog(panel, 'PUT succeeded (HTTP 200/201).');
                         cb(true, null);
                         return;
                     }
                     if (err === 'conflict') {
-                        wofAppendPublishLog(panel, '409 conflict — refetching and retrying once…');
+                        wofAppendPublishLog(panel, '409 conflict — refetching SHA and retrying once…');
                         githubGetFile(function(remote2, sha2) {
-                            var merged2 = mergeEntries(entriesState, remote2 || []);
-                            entriesState = merged2;
+                            var retryPayload = prepareEntriesForPublish(entriesState);
+                            entriesState = retryPayload;
                             saveLocal(entriesState);
                             if (panel) {
                                 render(panel);
                             }
-                            githubPutFile(merged2, sha2, function(ok2, err2) {
+                            githubPutFile(retryPayload, sha2, function(ok2, err2) {
                                 if (ok2) {
                                     wofAppendPublishLog(panel, 'Retry PUT succeeded.');
                                 } else {
@@ -731,16 +792,17 @@
         }
 
         if (proxyConfigured()) {
-            wofAppendPublishLog(panel, 'GET via proxy…');
+            wofAppendPublishLog(panel, 'GET via proxy (for conflict check only)…');
             proxyGetFile(function(remote) {
-                var merged = mergeEntries(entries, remote || []);
-                entriesState = merged;
+                var toSave = prepareEntriesForPublish(entries);
+                wofAppendPublishLog(panel, 'PUT local list: ' + toSave.length + ' entries.');
+                entriesState = toSave;
                 saveLocal(entriesState);
                 if (panel) {
                     render(panel);
                 }
                 var doc = {
-                    entries: merged,
+                    entries: toSave,
                     updatedAt: Date.now()
                 };
                 wofAppendPublishLog(panel, 'PUT via proxy…');
@@ -751,16 +813,16 @@
                         return;
                     }
                     if (err === 'conflict') {
-                        wofAppendPublishLog(panel, 'Proxy conflict — retry…');
+                        wofAppendPublishLog(panel, 'Proxy conflict — retry with fresh SHA…');
                         proxyGetFile(function(remote2) {
-                            var merged2 = mergeEntries(entriesState, remote2 || []);
-                            entriesState = merged2;
+                            var retryPayload = prepareEntriesForPublish(entriesState);
+                            entriesState = retryPayload;
                             saveLocal(entriesState);
                             if (panel) {
                                 render(panel);
                             }
                             proxyPutDocument(
-                                { entries: merged2, updatedAt: Date.now() },
+                                { entries: retryPayload, updatedAt: Date.now() },
                                 function(ok2, err2) {
                                     if (!ok2) {
                                         wofAppendPublishLog(panel, 'Retry: ' + (err2 || ''));
@@ -800,17 +862,25 @@
         }
 
         function runActionsDispatch(remote) {
-            var merged = mergeEntries(entries, remote || []);
-            entriesState = merged;
+            var toSave = prepareEntriesForPublish(entries);
+            wofAppendPublishLog(
+                panel,
+                'Dispatch: saving local list (' +
+                    toSave.length +
+                    ' entries). Remote had ' +
+                    (remote ? remote.length : 0) +
+                    ' — not merged (deletions preserved).'
+            );
+            entriesState = toSave;
             saveLocal(entriesState);
             if (panel) {
                 render(panel);
             }
             var doc = {
-                entries: merged,
+                entries: toSave,
                 updatedAt: Date.now()
             };
-            wofAppendPublishLog(panel, 'POST repository_dispatch (event wall-of-fame-put), payload entries: ' + merged.length);
+            wofAppendPublishLog(panel, 'POST repository_dispatch (event wall-of-fame-put), payload entries: ' + toSave.length);
             githubRepositoryDispatch(doc, function(ok, err) {
                 if (ok) {
                     wofAppendPublishLog(panel, 'Dispatch accepted (HTTP 204). Check Actions tab on GitHub.');
@@ -876,7 +946,7 @@
             '#' + PANEL_ID + ' .dc-wof-btn-sec{background:rgba(255,255,255,.12);color:#eee;}',
             '#' + PANEL_ID + ' .dc-wof-list{margin:8px 0 0;padding-left:1.1em;font-size:.8rem;opacity:.9;}',
             '#' + PANEL_ID + ' .dc-wof-hint{font-size:.65rem;opacity:.6;margin-top:10px;line-height:1.4;}',
-            '#' + PANEL_ID + ' #dc-wof-publish-log{display:block;width:100%;max-height:120px;overflow:auto;margin-top:10px;padding:8px;',
+            '#' + PANEL_ID + ' #dc-wof-publish-log{display:none;width:100%;max-height:120px;overflow:auto;margin-top:10px;padding:8px;',
             'font-family:ui-monospace,monospace;font-size:10px;line-height:1.35;white-space:pre-wrap;word-break:break-word;',
             'background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#c8e0ff;}'
         ].join('');
@@ -909,8 +979,9 @@
             return;
         }
         var i;
+        var nList = list.length;
         for (i = 0; i < list.length; i++) {
-            (function(ent) {
+            (function(ent, pos) {
                 var e = ent;
                 var card = document.createElement('div');
                 card.className = 'dc-wof-card';
@@ -937,6 +1008,30 @@
                 if (showCardActions) {
                     var actions = document.createElement('div');
                     actions.className = 'dc-wof-card-actions';
+                    var upBtn = document.createElement('button');
+                    upBtn.type = 'button';
+                    upBtn.className = 'dc-wof-btn-sec';
+                    upBtn.textContent = 'Up';
+                    upBtn.title = 'Move earlier in list';
+                    upBtn.disabled = pos <= 0;
+                    upBtn.addEventListener('click', function(ev) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        wofReorderEntry(panel, e.id, -1);
+                    });
+                    var downBtn = document.createElement('button');
+                    downBtn.type = 'button';
+                    downBtn.className = 'dc-wof-btn-sec';
+                    downBtn.textContent = 'Down';
+                    downBtn.title = 'Move later in list';
+                    downBtn.disabled = pos >= nList - 1;
+                    downBtn.addEventListener('click', function(ev) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        wofReorderEntry(panel, e.id, 1);
+                    });
+                    actions.appendChild(upBtn);
+                    actions.appendChild(downBtn);
                     var editBtn = document.createElement('button');
                     editBtn.type = 'button';
                     editBtn.className = 'dc-wof-btn-sec';
@@ -1068,15 +1163,19 @@
                 }
 
                 grid.appendChild(card);
-            })(list[i]);
+            })(list[i], i);
         }
     }
 
     function syncEditPanelVisibility(panel) {
         var wrap = panel.querySelector('.dc-wof-edit');
         var btn = panel.querySelector('.dc-wof-edit-toggle');
+        var pubLog = panel.querySelector('#dc-wof-publish-log');
         if (wrap) {
             wrap.style.display = editPanelOpen ? 'block' : 'none';
+        }
+        if (pubLog) {
+            pubLog.style.display = editPanelOpen ? 'block' : 'none';
         }
         if (btn) {
             btn.textContent = editPanelOpen ? 'Hide editor' : 'Edit';
