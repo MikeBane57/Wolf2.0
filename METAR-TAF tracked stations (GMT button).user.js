@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.6.1
+// @version      1.6.2
 // @description  Button near GMT clock: METAR/TAF, NWS radar loop + AFD when available, alerts on change, optional notifications
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -1261,9 +1261,9 @@
         modal.style.left = '50%';
         modal.style.top = '50%';
         modal.style.transform = 'translate(-50%,-50%)';
-        modal.style.width = 'min(1600px, calc(100vw - 20px))';
-        modal.style.height = 'calc(100vh - 24px)';
-        modal.style.maxHeight = 'calc(100vh - 24px)';
+        modal.style.width = 'min(960px, calc((100vw - 20px) * 0.6))';
+        modal.style.height = 'calc((100vh - 24px) * 0.7)';
+        modal.style.maxHeight = 'calc((100vh - 24px) * 0.7)';
         modal.style.background = '#1a1a1e';
         modal.style.borderRadius = '10px';
         modal.style.boxShadow = '0 12px 48px rgba(0,0,0,0.55)';
