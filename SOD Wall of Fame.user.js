@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.7.2
+// @version      2.7.3
 // @description  FIMS tab: Wall of Fame; data from WALL of FAME/wall-of-fame.json + local cache (no baked-in accolades)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -931,29 +931,64 @@
         }
         var css = [
             '#' + PANEL_ID + '{display:none;padding:0;width:100%;box-sizing:border-box;min-height:min(75vh,900px);',
-            'background:linear-gradient(160deg,#1a1025 0%,#2d1f4a 50%,#1e3a5f 100%);',
-            'border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.35);overflow:hidden;max-height:85vh;}',
-            '#' + PANEL_ID + ' .dc-wof-inner{padding:16px 18px;color:#f0e8ff;font-family:system-ui,-apple-system,sans-serif;',
-            'width:100%;max-width:none;box-sizing:border-box;}',
-            '#' + PANEL_ID + ' .dc-wof-h{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.15);}',
+            'background:radial-gradient(ellipse 120% 80% at 50% -20%,rgba(120,60,180,.25) 0%,transparent 50%),',
+            'radial-gradient(ellipse 80% 50% at 100% 100%,rgba(255,180,80,.08) 0%,transparent 45%),',
+            'linear-gradient(165deg,#120a18 0%,#1e1432 35%,#152238 70%,#0d1528 100%);',
+            'border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,215,0,.12);',
+            'border:1px solid rgba(255,215,0,.22);overflow:hidden;max-height:85vh;position:relative;}',
+            '#' + PANEL_ID + ' .dc-wof-inner{padding:18px 20px 20px;color:#f5eefc;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;',
+            'width:100%;max-width:none;box-sizing:border-box;position:relative;z-index:1;}',
+            '#' + PANEL_ID + ' .dc-wof-h{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px;padding-bottom:14px;',
+            'border-bottom:1px solid rgba(255,215,0,.2);background:linear-gradient(180deg,rgba(255,215,0,.06) 0%,transparent 100%);',
+            'border-radius:8px 8px 0 0;margin:-4px -4px 18px;padding:12px 12px 14px;}',
             '#' + PANEL_ID + ' .dc-wof-head-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;}',
-            '#' + PANEL_ID + ' .dc-wof-edit-toggle{font-size:11px;padding:5px 11px;border-radius:8px;border:1px solid rgba(255,215,0,.45);',
-            'background:rgba(255,215,0,.12);color:#ffe8a8;cursor:pointer;font-weight:600;}',
-            '#' + PANEL_ID + ' .dc-wof-edit-toggle:hover{background:rgba(255,215,0,.22);}',
-            '#' + PANEL_ID + ' .dc-wof-head-emoji{font-size:1.75rem;line-height:1;}',
-            '#' + PANEL_ID + ' .dc-wof-title{font-weight:800;font-size:1.2rem;background:linear-gradient(90deg,#ffd700,#ff8c00,#da70d6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}',
-            '#' + PANEL_ID + ' .dc-wof-sub{font-size:.75rem;opacity:.75;margin-top:4px;color:#c8b8e0;}',
-            '#' + PANEL_ID + ' .dc-wof-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;max-height:calc(85vh - 200px);overflow:auto;padding:2px;}',
-            '#' + PANEL_ID + ' .dc-wof-card{background:rgba(255,255,255,.08);border:1px solid rgba(255,215,0,.25);border-radius:10px;padding:12px;',
-            'min-height:100px;display:flex;flex-direction:column;}',
-            '#' + PANEL_ID + ' .dc-wof-card-t{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;opacity:.85;color:#e8d4ff;margin-bottom:6px;}',
-            '#' + PANEL_ID + ' .dc-wof-card-h{font-weight:700;font-size:1rem;color:#fff;line-height:1.3;}',
-            '#' + PANEL_ID + ' .dc-wof-card-n{margin-top:8px;font-size:.95rem;color:#ffd700;font-weight:600;}',
-            '#' + PANEL_ID + ' .dc-wof-card-note{margin-top:4px;font-size:.78rem;opacity:.75;font-style:italic;}',
-            '#' + PANEL_ID + ' .dc-wof-card-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}',
-            '#' + PANEL_ID + ' .dc-wof-card-actions button{font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.25);',
-            'background:rgba(0,0,0,.2);color:#eee;cursor:pointer;}',
-            '#' + PANEL_ID + ' .dc-wof-card-actions button.dc-wof-card-del{border-color:rgba(255,120,120,.5);color:#ffb4b4;}',
+            '#' + PANEL_ID + ' .dc-wof-edit-toggle{font-size:11px;padding:6px 12px;border-radius:999px;border:1px solid rgba(255,215,0,.5);',
+            'background:linear-gradient(180deg,rgba(255,215,0,.2),rgba(255,180,60,.08));color:#fff6d4;cursor:pointer;font-weight:600;',
+            'box-shadow:0 2px 8px rgba(0,0,0,.25);}',
+            '#' + PANEL_ID + ' .dc-wof-edit-toggle:hover{background:linear-gradient(180deg,rgba(255,230,140,.28),rgba(255,200,80,.15));}',
+            '#' + PANEL_ID + ' .dc-wof-head-emoji{font-size:1.85rem;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4));}',
+            '#' + PANEL_ID + ' .dc-wof-title{font-weight:800;font-size:1.35rem;letter-spacing:.02em;',
+            'background:linear-gradient(92deg,#fff4c4 0%,#ffd24a 25%,#ffb020 50%,#e8a8ff 100%);',
+            '-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;',
+            'filter:drop-shadow(0 2px 12px rgba(255,200,80,.25));}',
+            '#' + PANEL_ID + ' .dc-wof-sub{font-size:.72rem;opacity:.88;margin-top:6px;color:#c4b0e0;letter-spacing:.04em;text-transform:uppercase;}',
+            '#' + PANEL_ID + ' .dc-wof-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:16px;max-height:calc(85vh - 200px);overflow:auto;padding:6px 4px 8px;}',
+            '#' + PANEL_ID + ' .dc-wof-card{position:relative;min-height:118px;display:flex;flex-direction:column;',
+            'padding:14px 14px 12px;margin-top:2px;',
+            'background:linear-gradient(155deg,rgba(55,32,72,.92) 0%,rgba(28,18,48,.96) 48%,rgba(22,28,52,.94) 100%);',
+            'border-radius:6px 6px 14px 14px;',
+            'border:1px solid rgba(255,215,0,.35);',
+            'box-shadow:0 8px 28px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.1),0 0 0 1px rgba(0,0,0,.2),',
+            'inset 0 -2px 20px rgba(255,200,60,.06);',
+            'overflow:hidden;transition:transform .2s ease,box-shadow .2s ease;}',
+            '#' + PANEL_ID + ' .dc-wof-card:hover{transform:translateY(-2px);',
+            'box-shadow:0 14px 36px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.14),0 0 0 1px rgba(255,215,0,.25),',
+            '0 0 32px rgba(255,190,80,.12);}',
+            '#' + PANEL_ID + ' .dc-wof-card::before{content:"";position:absolute;left:0;right:0;top:0;height:5px;',
+            'background:linear-gradient(90deg,#5c4a1a 0%,#d4a017 18%,#ffe9a8 50%,#d4a017 82%,#5c4a1a 100%);',
+            'box-shadow:0 2px 8px rgba(255,200,80,.35);}',
+            '#' + PANEL_ID + ' .dc-wof-card::after{content:"";position:absolute;inset:5px 10px auto 10px;height:1px;',
+            'background:linear-gradient(90deg,transparent,rgba(255,215,0,.25),transparent);opacity:.9;}',
+            '#' + PANEL_ID + ' .dc-wof-card-rank{position:absolute;top:10px;right:10px;font-size:.65rem;font-weight:800;',
+            'letter-spacing:.08em;color:rgba(255,228,160,.95);text-shadow:0 1px 2px rgba(0,0,0,.5);',
+            'background:rgba(0,0,0,.35);padding:3px 8px;border-radius:999px;border:1px solid rgba(255,215,0,.35);}',
+            '#' + PANEL_ID + ' .dc-wof-card-t{font-size:.62rem;text-transform:uppercase;letter-spacing:.14em;font-weight:700;',
+            'color:#d4b8f0;margin:8px 56px 8px 0;opacity:.95;}',
+            '#' + PANEL_ID + ' .dc-wof-card-h{font-family:Georgia,"Palatino Linotype","Book Antiqua",Palatino,serif;font-weight:700;font-size:1.08rem;',
+            'color:#fffef8;line-height:1.35;margin-bottom:2px;text-shadow:0 2px 8px rgba(0,0,0,.4);}',
+            '#' + PANEL_ID + ' .dc-wof-card-n{margin-top:10px;font-size:1.02rem;font-weight:700;',
+            'background:linear-gradient(90deg,#ffe8a0,#ffd24a,#ffc050);-webkit-background-clip:text;background-clip:text;',
+            '-webkit-text-fill-color:transparent;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35));}',
+            '#' + PANEL_ID + ' .dc-wof-card-note{margin-top:10px;padding:8px 10px;font-size:.78rem;font-style:italic;',
+            'color:#d8cce8;border-left:3px solid rgba(255,200,100,.45);background:rgba(0,0,0,.22);border-radius:0 8px 8px 0;}',
+            '#' + PANEL_ID + ' .dc-wof-card-empty{background:transparent!important;border:1px dashed rgba(255,215,0,.2)!important;box-shadow:none!important;}',
+            '#' + PANEL_ID + ' .dc-wof-card-empty::before,#' + PANEL_ID + ' .dc-wof-card-empty::after{display:none;}',
+            '#' + PANEL_ID + ' .dc-wof-card-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:12px;',
+            'border-top:1px solid rgba(255,255,255,.08);}',
+            '#' + PANEL_ID + ' .dc-wof-card-actions button{font-size:11px;padding:5px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.22);',
+            'background:rgba(0,0,0,.28);color:#f0e8ff;cursor:pointer;transition:background .15s;}',
+            '#' + PANEL_ID + ' .dc-wof-card-actions button:hover{background:rgba(255,215,0,.12);}',
+            '#' + PANEL_ID + ' .dc-wof-card-actions button.dc-wof-card-del{border-color:rgba(255,140,140,.45);color:#ffc8c8;}',
             '#' + PANEL_ID + ' .dc-wof-edit{display:none;margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.12);}',
             '#' + PANEL_ID + ' .dc-wof-edit label{display:block;font-size:.72rem;opacity:.85;margin-bottom:4px;}',
             '#' + PANEL_ID + ' .dc-wof-edit input,.dc-wof-edit textarea{width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.25);color:#fff;margin-bottom:8px;font-size:13px;}',
@@ -988,9 +1023,11 @@
         var showCardActions = editPanelOpen && isUnlocked();
         if (list.length === 0) {
             var empty = document.createElement('div');
-            empty.className = 'dc-wof-card';
+            empty.className = 'dc-wof-card dc-wof-card-empty';
             empty.style.opacity = '0.85';
             empty.style.fontStyle = 'italic';
+            empty.style.padding = '24px';
+            empty.style.textAlign = 'center';
             empty.textContent =
                 'No accolades yet. Use Fetch from GitHub after configuring sync, or unlock Edit to add entries.';
             grid.appendChild(empty);
@@ -1004,9 +1041,13 @@
                 var card = document.createElement('div');
                 card.className = 'dc-wof-card';
                 card.dataset.entryId = e.id;
+                var rank = document.createElement('div');
+                rank.className = 'dc-wof-card-rank';
+                rank.textContent = '#' + (pos + 1);
+                card.appendChild(rank);
                 var t = document.createElement('div');
                 t.className = 'dc-wof-card-t';
-                t.textContent = 'Accolade';
+                t.textContent = 'Hall of fame';
                 var h = document.createElement('div');
                 h.className = 'dc-wof-card-h';
                 h.textContent = e.title;
