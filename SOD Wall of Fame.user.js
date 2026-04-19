@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.4.3
+// @version      1.4.4
 // @description  FIMS tab: wall of fame accolades; password to edit; GitHub file sync or legacy URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -143,6 +143,51 @@
         }
     }
 
+    /**
+     * DonkeyCODE may not forward GM_xmlhttpRequest `data` into fetch() yet; GitHub then
+     * returns 4xx for PUT/POST with a message about invalid JSON or missing `content`.
+     */
+    function explainGithubPublishError(status, responseText) {
+        var raw = String(responseText || '');
+        var msg = '';
+        try {
+            var j = JSON.parse(raw);
+            if (j.message) {
+                msg = String(j.message);
+            }
+        } catch (e) {
+            msg = raw.slice(0, 400);
+        }
+        var blob = (msg + ' ' + raw).toLowerCase();
+        if (status === 401) {
+            return 'GitHub returned 401 — check the PAT (repo scope) and that it is not expired.';
+        }
+        if (status === 403) {
+            return 'GitHub returned 403 — token may lack Contents write on this repo or path (fine-grained rules).';
+        }
+        if (
+            status === 400 ||
+            status === 422 ||
+            (status >= 400 && status < 500 && blob.indexOf('content') !== -1) ||
+            blob.indexOf('problems parsing') !== -1 ||
+            blob.indexOf('invalid request') !== -1
+        ) {
+            return (
+                'GitHub rejected the publish request. If you use DonkeyCODE, its GM_xmlhttpRequest bridge may not send ' +
+                'request bodies yet—PUT/Publish needs the extension to pass details.data into fetch(). ' +
+                '“Fetch from GitHub” can still work. Update DonkeyCODE when a fix ships, or use Tampermonkey for publish. ' +
+                '(HTTP ' + status + (msg ? ': ' + msg : '') + ')'
+            );
+        }
+        if (status === 0 || !status) {
+            return (
+                'Request failed (HTTP 0). Enable DonkeyCODE optional site access (http(s)://*/*), check @connect, ' +
+                'and inspect the extension service worker console for GM_XHR errors.'
+            );
+        }
+        return 'HTTP ' + status + (msg ? ': ' + msg : '');
+    }
+
     function githubXhr(method, url, bodyObj, cb) {
         if (typeof GM_xmlhttpRequest !== 'function') {
             cb(0, '');
@@ -224,14 +269,7 @@
                 cb(false, 'conflict');
                 return;
             }
-            var err = 'HTTP ' + status;
-            try {
-                var j = JSON.parse(text);
-                if (j.message) {
-                    err = j.message;
-                }
-            } catch (e) {}
-            cb(false, err);
+            cb(false, explainGithubPublishError(status, text));
         });
     }
 
@@ -410,14 +448,15 @@
             headers: { 'Content-Type': 'application/json' },
             data: body,
             onload: function(res) {
-                if (res.status >= 200 && res.status < 300) {
+                var st = res.status || 0;
+                if (st >= 200 && st < 300) {
                     cb(true, null);
                 } else {
-                    cb(false, 'HTTP ' + res.status);
+                    cb(false, explainGithubPublishError(st, res.responseText || ''));
                 }
             },
             onerror: function() {
-                cb(false, 'Network error');
+                cb(false, explainGithubPublishError(0, ''));
             }
         });
     }
@@ -691,7 +730,7 @@
         var hint = document.createElement('div');
         hint.className = 'dc-wof-hint';
         hint.textContent = githubConfigured()
-            ? 'GitHub: file at wallPath stores { entries, updatedAt }. Classic PAT needs repo scope; fine-grained needs Contents read/write. @connect api.github.com required.'
+            ? 'GitHub: file at wallPath stores { entries, updatedAt }. Classic PAT needs repo scope; fine-grained needs Contents read/write. Grant DonkeyCODE optional site access (https://*/*). In some DonkeyCODE builds, Publish (PUT) may not work until GM_xmlhttpRequest forwards request bodies—Fetch from GitHub still can.'
             : 'Legacy URL: GET merges on fetch; POST on publish. Or configure GitHub owner/repo/branch/token/wallPath for Contents API sync.';
         wrap.appendChild(hint);
 

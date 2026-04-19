@@ -34,6 +34,22 @@ From `parseUserScript` (and related logic in `background.js`):
 - **Cross-origin from the extension path** — use `GM_xmlhttpRequest` with appropriate `@connect` and user permission for `http(s)://*/*` when required.
 - **Storage** — use **`localStorage` / `sessionStorage`** on the target origin (no GM storage API).
 
+### `GM_xmlhttpRequest` checklist (cross-origin / GitHub)
+
+Scripts that call **`GM_xmlhttpRequest`** (e.g. GitHub REST API) need all of the following in DonkeyCODE:
+
+| Requirement | Notes |
+|-------------|--------|
+| **`@grant GM_xmlhttpRequest`** | Or the script body references `GM_xmlhttpRequest` so the bridge enables. |
+| **`@connect`** | **Empty list** ⇒ DonkeyCODE allows any http(s) host for the connect check. **`*`** ⇒ same (“allow all” for that layer). Otherwise list hostnames (e.g. `api.github.com`) or `*.example.com` for subdomains. |
+| **Site / host permission** | User must grant DonkeyCODE **optional** “website access” (**`http://*/*`** + **`https://*/*`**). The background `fetch` path only checks that grant; without it, requests fail with a **“Host permission not granted…”** style error even for `https://api.github.com`. |
+| **Prefs** | Use **`@donkeycode-pref`** string (etc.) fields and read with **`donkeycodeGetPref("key")`**. Injection is **`new Function("donkeycodeGetPref", …)`** and optionally **`GM_xmlhttpRequest`** — see **`DonkeyCode/DONKEYCODE_SCRIPT_PREFS_AGENT.md`**. |
+| **GitHub auth** | Classic PAT or fine-grained token with **Contents: Read and write** on the repo (and path, for fine-grained). DonkeyCODE does **not** add OAuth for arbitrary userscripts; the token is whatever the user stores in prefs. |
+
+**Known limitation (verify your DonkeyCODE version):** the **`GM_xmlhttpRequest` bridge may not forward `details.data` / body** into `fetch()`. In that case **GET** works but **PUT / POST / PATCH** with a JSON body (e.g. GitHub Contents API **create/update file**) **do not work** until the extension passes the body through. If publish fails with GitHub complaining that **`content` was not supplied**, update DonkeyCODE or wait for a fix that forwards request bodies.
+
+**Debugging:** Chrome/Edge → extension → **Service worker** → **Inspect** → Console. Look for **`GM_xmlhttpRequest`**, **`GM_XHR blocked by @connect`**, **`GM_XHR blocked (no host permission)`**, **`GM_xmlhttpRequest fetch failed`**. Page scripts can use the extension’s **page → service worker log** path (`DONKEYCODE_PAGE_LOG` / `bridge.js`) so logs appear in the background console.
+
 ### Teardown (`__myScriptCleanup`)
 
 DonkeyCODE calls **`window.__myScriptCleanup()`** when a script is **disabled** or before **re-injecting** after pref changes. Assign a **no-arg** function that:
@@ -104,3 +120,4 @@ Copy `templates/userscript.template.user.js` when starting a new script.
 - Filled DonkeyCODE section from `background.js` / `bridge.js` / `manifest.json` report (parser fields, GM XHR only, updates via listing, storage).
 - Documented `@donkeycode-pref`: grouped UI, `globalThis.donkeycodeGetPref`, debug log, named session folder vs Default.
 - Documented **`window.__myScriptCleanup`** for DonkeyCODE disable / re-inject; template and repo scripts assign teardown (observers, listeners, injected nodes).
+- Documented **`GM_xmlhttpRequest` checklist** (optional host permission, `@connect`, GitHub PAT, and body-forwarding limitation for PUT/POST).
