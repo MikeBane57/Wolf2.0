@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.6.2
+// @version      1.7.0
 // @description  Button near GMT clock: METAR/TAF, NWS radar loop + AFD when available, alerts on change, optional notifications
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -122,8 +122,11 @@
     function loadSortMode() {
         try {
             var v = localStorage.getItem(STORAGE_SORT);
-            if (v === 'change' || v === 'icao_az' || v === 'list') {
+            if (v === 'icao_az' || v === 'list' || v === 'newest' || v === 'oldest') {
                 return v;
+            }
+            if (v === 'change') {
+                return 'newest';
             }
         } catch (e) {}
         return 'list';
@@ -137,8 +140,11 @@
 
     var stationList = loadStationList();
     var sortMode = loadSortMode();
-    /** IATA codes with unseen METAR/TAF change (cleared when user opens modal or marks viewed). */
-    var pendingChangedIata = {};
+    /**
+     * IATA → epoch ms when we first detected unseen METAR/TAF change vs last viewed snapshot.
+     * Cleared when user views the row or marks modal viewed.
+     */
+    var pendingChangeTime = {};
     var viewedSnapshot = loadViewedSnapshot();
 
     var btn = null;
@@ -156,6 +162,7 @@
     var refreshAllBtn = null;
     var statusBarEl = null;
     var sortSelect = null;
+    var listColorTimer = null;
     var cacheByIcao = {};
     var pollTimer = null;
     var domObserver = null;
@@ -186,8 +193,18 @@
         return icaoFor(iata) || String(iata || '').toUpperCase();
     }
 
+    function pendingChangeTs(iata) {
+        var t = pendingChangeTime[iata];
+        return typeof t === 'number' && Number.isFinite(t) ? t : 0;
+    }
+
     function displayStationOrder() {
         var base = stationList.slice();
+        var indexOf = {};
+        var ix;
+        for (ix = 0; ix < base.length; ix++) {
+            indexOf[base[ix]] = ix;
+        }
         if (sortMode === 'icao_az') {
             base.sort(function (a, b) {
                 var ia = icaoFor(a) || a;
@@ -196,26 +213,73 @@
             });
             return base;
         }
-        if (sortMode === 'change') {
-            var changed = [];
-            var rest = [];
-            var ci;
-            for (ci = 0; ci < base.length; ci++) {
-                var code = base[ci];
-                if (pendingChangedIata[code]) {
-                    changed.push(code);
-                } else {
-                    rest.push(code);
-                }
-            }
-            rest.sort(function (a, b) {
-                var ia = icaoFor(a) || a;
-                var ib = icaoFor(b) || b;
-                return ia.localeCompare(ib);
+        if (sortMode === 'newest') {
+            base.sort(function (a, b) {
+                return pendingChangeTs(b) - pendingChangeTs(a);
             });
-            return changed.concat(rest);
+            return base;
+        }
+        if (sortMode === 'oldest') {
+            base.sort(function (a, b) {
+                var ta = pendingChangeTs(a);
+                var tb = pendingChangeTs(b);
+                if (ta === 0 && tb === 0) {
+                    return indexOf[a] - indexOf[b];
+                }
+                if (ta === 0) {
+                    return 1;
+                }
+                if (tb === 0) {
+                    return -1;
+                }
+                return ta - tb;
+            });
+            return base;
         }
         return base;
+    }
+
+    /** Yellow: change within 5 min; red: older than 5 min (still unseen). */
+    function pendingChangeAgeClass(iata) {
+        var t = pendingChangeTime[iata];
+        if (typeof t !== 'number' || !Number.isFinite(t)) {
+            return null;
+        }
+        var age = Date.now() - t;
+        if (age <= 5 * 60 * 1000) {
+            return 'fresh';
+        }
+        return 'stale';
+    }
+
+    function normalizePendingChangeTimes() {
+        var next = {};
+        var i;
+        for (i = 0; i < stationList.length; i++) {
+            var code = stationList[i];
+            if (pendingChangeTime[code]) {
+                next[code] = pendingChangeTime[code];
+            }
+        }
+        pendingChangeTime = next;
+    }
+
+    function startListColorTimer() {
+        if (listColorTimer) {
+            clearInterval(listColorTimer);
+        }
+        listColorTimer = setInterval(function () {
+            if (modal && modal.style.display === 'flex') {
+                renderStationList();
+            }
+        }, 15000);
+    }
+
+    function stopListColorTimer() {
+        if (listColorTimer) {
+            clearInterval(listColorTimer);
+            listColorTimer = null;
+        }
     }
 
     function escapeHtml(s) {
@@ -753,15 +817,34 @@
             badge.style.display = 'none';
         }
         if (alertsPrimed && (!modal || modal.style.display !== 'flex')) {
-            pendingChangedIata = {};
+            var nowTs = Date.now();
             var si;
             for (si = 0; si < stale.length; si++) {
                 var ic = stale[si];
                 var idx;
                 for (idx = 0; idx < stationList.length; idx++) {
                     if (icaoFor(stationList[idx]) === ic) {
-                        pendingChangedIata[stationList[idx]] = true;
+                        var iataK = stationList[idx];
+                        if (!pendingChangeTime[iataK]) {
+                            pendingChangeTime[iataK] = nowTs;
+                        }
                         break;
+                    }
+                }
+            }
+            var k;
+            for (k in pendingChangeTime) {
+                if (Object.prototype.hasOwnProperty.call(pendingChangeTime, k)) {
+                    var still = false;
+                    var sj;
+                    for (sj = 0; sj < stale.length; sj++) {
+                        if (icaoFor(k) === stale[sj]) {
+                            still = true;
+                            break;
+                        }
+                    }
+                    if (!still) {
+                        delete pendingChangeTime[k];
                     }
                 }
             }
@@ -849,7 +932,7 @@
         viewedSnapshot = snap;
         saveViewedSnapshot(viewedSnapshot);
         notifyShownForCurrent = {};
-        pendingChangedIata = {};
+        pendingChangeTime = {};
         updateAlertState();
     }
 
@@ -922,9 +1005,19 @@
                 row.style.marginBottom = '4px';
                 if (selectedIata === iata) {
                     row.style.background = 'rgba(52,152,219,0.25)';
-                } else if (pendingChangedIata[iata]) {
-                    row.style.background = 'rgba(192,57,43,0.35)';
-                    row.style.border = '1px solid rgba(231,76,60,0.5)';
+                    row.style.border = '';
+                } else {
+                    var ageCls = pendingChangeAgeClass(iata);
+                    if (ageCls === 'fresh') {
+                        row.style.background = 'rgba(241,196,15,0.35)';
+                        row.style.border = '1px solid rgba(241,196,15,0.55)';
+                    } else if (ageCls === 'stale') {
+                        row.style.background = 'rgba(192,57,43,0.4)';
+                        row.style.border = '1px solid rgba(231,76,60,0.55)';
+                    } else {
+                        row.style.background = '';
+                        row.style.border = '';
+                    }
                 }
                 var label = document.createElement('span');
                 label.textContent = stationListLabel(iata);
@@ -935,9 +1028,16 @@
                 label.style.overflow = 'hidden';
                 label.style.textOverflow = 'ellipsis';
                 label.style.whiteSpace = 'nowrap';
-                if (pendingChangedIata[iata]) {
+                var ageCls2 = pendingChangeAgeClass(iata);
+                if (ageCls2 === 'fresh') {
+                    label.style.color = '#2c2c2c';
+                    label.style.fontWeight = '600';
+                } else if (ageCls2 === 'stale') {
                     label.style.color = '#fadbd8';
                     label.style.fontWeight = '600';
+                } else {
+                    label.style.color = '';
+                    label.style.fontWeight = '';
                 }
                 var x = document.createElement('button');
                 x.type = 'button';
@@ -957,6 +1057,7 @@
                     stationList = stationList.filter(function (s) {
                         return s !== iata;
                     });
+                    delete pendingChangeTime[iata];
                     saveStationList(stationList);
                     if (selectedIata === iata) {
                         selectedIata = stationList[0] || null;
@@ -966,7 +1067,7 @@
                 });
                 row.addEventListener('click', function () {
                     selectedIata = iata;
-                    delete pendingChangedIata[iata];
+                    delete pendingChangeTime[iata];
                     renderStationList();
                     renderDetail(iata);
                 });
@@ -981,13 +1082,13 @@
         updateRefreshThisLabel();
         var hasP = false;
         var pk;
-        for (pk in pendingChangedIata) {
-            if (Object.prototype.hasOwnProperty.call(pendingChangedIata, pk) && pendingChangedIata[pk]) {
+        for (pk in pendingChangeTime) {
+            if (Object.prototype.hasOwnProperty.call(pendingChangeTime, pk) && pendingChangeTime[pk]) {
                 hasP = true;
                 break;
             }
         }
-        if (hasP && sortMode === 'change' && listEl) {
+        if (hasP && sortMode === 'newest' && listEl) {
             try {
                 listEl.scrollTop = 0;
             } catch (e) {}
@@ -1080,6 +1181,8 @@
         modal.style.display = 'flex';
         backdrop.style.display = 'block';
         selectedIata = stationList[0] || null;
+        normalizePendingChangeTimes();
+        startListColorTimer();
         setStatusBar('Loading…');
         renderStationList();
         if (selectedIata) {
@@ -1108,6 +1211,7 @@
     function closeModal() {
         modal.style.display = 'none';
         backdrop.style.display = 'none';
+        stopListColorTimer();
     }
 
     function findGmtClockElement() {
@@ -1383,7 +1487,8 @@
         var sortOpts = [
             ['list', 'List order'],
             ['icao_az', 'ICAO A–Z'],
-            ['change', 'Changed first']
+            ['newest', 'Newest change'],
+            ['oldest', 'Oldest change']
         ];
         var so;
         for (so = 0; so < sortOpts.length; so++) {
@@ -1458,6 +1563,7 @@
             }
             stationList.push(code);
             saveStationList(stationList);
+            normalizePendingChangeTimes();
             selectedIata = code;
             addInput.value = '';
             renderStationList();
@@ -1541,6 +1647,10 @@
         if (pollTimer) {
             clearInterval(pollTimer);
             pollTimer = null;
+        }
+        if (listColorTimer) {
+            clearInterval(listColorTimer);
+            listColorTimer = null;
         }
         if (anchorRetryTimer) {
             clearInterval(anchorRetryTimer);
