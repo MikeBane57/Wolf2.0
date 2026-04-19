@@ -36,7 +36,7 @@ From `parseUserScript` (and related logic in `background.js`):
 
 ### `GM_xmlhttpRequest` checklist (cross-origin / GitHub)
 
-Use this for scripts that need cross-origin HTTP. **SOD Wall of Fame** syncs to **`WALL of FAME/wall-of-fame.json`** in **`MikeBane57/Wolf2.0`** (baked-in path); users only set **`githubToken`** in prefs.
+Use this for scripts that need cross-origin HTTP. **SOD Wall of Fame** can sync via **`githubToken`** (direct API) or via **`wall-of-fame-proxy/`** (GitHub App on server + shared **`wallOfFameTeamKey`** in prefs; no PAT). See **`wall-of-fame-proxy/README.md`**.
 
 Scripts that call **`GM_xmlhttpRequest`** (e.g. GitHub REST API) need all of the following in DonkeyCODE:
 

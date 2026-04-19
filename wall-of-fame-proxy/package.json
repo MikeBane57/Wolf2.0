@@ -1,0 +1,13 @@
+{
+  "name": "wall-of-fame-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GitHub App–backed proxy for Wall of Fame; team key on requests, app credentials only on server",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.2"
+  }
+}

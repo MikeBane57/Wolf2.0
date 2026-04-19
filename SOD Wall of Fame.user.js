@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.1.0
-// @description  FIMS tab: Wall of Fame; local + shared JSON in repo WALL of FAME/wall-of-fame.json (GitHub PAT in prefs)
+// @version      2.2.0
+// @description  FIMS tab: Wall of Fame; local + shared JSON (GitHub App proxy + team key, or PAT fallback)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
 // @connect      *
-// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"githubToken":{"type":"string","group":"Wall of Fame — GitHub","label":"GitHub PAT","description":"Token with repo Contents read/write for MikeBane57/Wolf2.0. Syncs to WALL of FAME/wall-of-fame.json (grant DonkeyCODE optional https site access).","default":"","placeholder":"ghp_…"}}
+// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy (GitHub App backend). No trailing slash. If set with team key, PAT is not needed.","default":"","placeholder":"https://wof.example.com"},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — team proxy","label":"Team key (optional)","description":"Shared secret; must match server WOF_TEAM_KEY. Same for all dispatchers.","default":"","placeholder":""},"githubToken":{"type":"string","group":"Wall of Fame — GitHub (fallback)","label":"GitHub PAT (optional)","description":"Direct GitHub API if proxy not set. Contents read/write on Wolf2.0.","default":"","placeholder":"ghp_…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // ==/UserScript==
@@ -87,11 +87,102 @@
         return v;
     }
 
+    function proxyBaseUrl() {
+        var u = String(getPref('wallOfFameProxyUrl', '') || '').trim().replace(/\/+$/, '');
+        return u;
+    }
+
+    function proxyTeamKey() {
+        return String(getPref('wallOfFameTeamKey', '') || '').trim();
+    }
+
+    function proxyConfigured() {
+        return !!(proxyBaseUrl() && proxyTeamKey());
+    }
+
     /** Last blob SHA for GitHub Contents API (updates require SHA). */
     var githubFileSha = null;
 
     function githubConfigured() {
         return !!String(getPref('githubToken', '') || '').trim();
+    }
+
+    function syncConfigured() {
+        return proxyConfigured() || githubConfigured();
+    }
+
+    function proxyRequest(method, bodyObj, cb) {
+        if (typeof GM_xmlhttpRequest !== 'function') {
+            cb(0, '');
+            return;
+        }
+        var base = proxyBaseUrl();
+        var key = proxyTeamKey();
+        var url = base + '/wall-of-fame';
+        var headers = {
+            Accept: 'application/json',
+            'X-Wall-Of-Fame-Key': key
+        };
+        var hasBody = bodyObj !== undefined && bodyObj !== null;
+        if (hasBody) {
+            headers['Content-Type'] = 'application/json';
+        }
+        GM_xmlhttpRequest({
+            method: method,
+            url: url,
+            headers: headers,
+            data: hasBody ? bodyObj : undefined,
+            onload: function(res) {
+                cb(res.status || 0, res.responseText || '');
+            },
+            onerror: function() {
+                cb(0, '');
+            }
+        });
+    }
+
+    function proxyGetFile(cb) {
+        proxyRequest('GET', null, function(status, text) {
+            if (status < 200 || status >= 300) {
+                cb(null);
+                return;
+            }
+            try {
+                var entries = parseEntriesFromJsonText(text);
+                cb(entries);
+            } catch (e) {
+                cb(null);
+            }
+        });
+    }
+
+    function proxyPutDocument(doc, cb) {
+        proxyRequest('PUT', doc, function(status, text) {
+            if (status >= 200 && status < 300) {
+                cb(true, null);
+                return;
+            }
+            if (status === 401) {
+                cb(false, 'Proxy rejected team key (check wallOfFameTeamKey).');
+                return;
+            }
+            if (status === 409) {
+                cb(false, 'conflict');
+                return;
+            }
+            var err = 'HTTP ' + status;
+            try {
+                var j = JSON.parse(text);
+                if (j.error) {
+                    err = String(j.error);
+                }
+            } catch (e) {
+                if (text) {
+                    err = text.slice(0, 300);
+                }
+            }
+            cb(false, err);
+        });
     }
 
     function githubContentsApiUrl() {
@@ -340,6 +431,8 @@
     }
 
     function mergeEntries(a, b) {
+        a = a || [];
+        b = b || [];
         var map = {};
         var i;
         for (i = 0; i < a.length; i++) {
@@ -372,6 +465,10 @@
     }
 
     function fetchCloud(cb) {
+        if (proxyConfigured()) {
+            proxyGetFile(cb);
+            return;
+        }
         if (!githubConfigured()) {
             cb(null);
             return;
@@ -382,40 +479,85 @@
     }
 
     function postCloud(entries, cb) {
-        if (!githubConfigured()) {
-            cb(false, 'Set githubToken in DonkeyCODE prefs (Contents read/write on Wolf2.0).');
+        var panel = document.getElementById(PANEL_ID);
+
+        function doGithubPut() {
+            githubGetFile(function(remote, sha) {
+                var merged = mergeEntries(entries, remote || []);
+                entriesState = merged;
+                saveLocal(entriesState);
+                if (panel) {
+                    render(panel);
+                }
+                githubPutFile(merged, sha, function(ok, err) {
+                    if (ok) {
+                        cb(true, null);
+                        return;
+                    }
+                    if (err === 'conflict') {
+                        githubGetFile(function(remote2, sha2) {
+                            var merged2 = mergeEntries(entriesState, remote2 || []);
+                            entriesState = merged2;
+                            saveLocal(entriesState);
+                            if (panel) {
+                                render(panel);
+                            }
+                            githubPutFile(merged2, sha2, function(ok2, err2) {
+                                cb(ok2, err2 || null);
+                            });
+                        });
+                        return;
+                    }
+                    cb(false, err || 'GitHub PUT failed');
+                });
+            });
+        }
+
+        if (proxyConfigured()) {
+            proxyGetFile(function(remote) {
+                var merged = mergeEntries(entries, remote || []);
+                entriesState = merged;
+                saveLocal(entriesState);
+                if (panel) {
+                    render(panel);
+                }
+                var doc = {
+                    entries: merged,
+                    updatedAt: Date.now()
+                };
+                proxyPutDocument(doc, function(ok, err) {
+                    if (ok) {
+                        cb(true, null);
+                        return;
+                    }
+                    if (err === 'conflict') {
+                        proxyGetFile(function(remote2) {
+                            var merged2 = mergeEntries(entriesState, remote2 || []);
+                            entriesState = merged2;
+                            saveLocal(entriesState);
+                            if (panel) {
+                                render(panel);
+                            }
+                            proxyPutDocument(
+                                { entries: merged2, updatedAt: Date.now() },
+                                function(ok2, err2) {
+                                    cb(ok2, err2 || null);
+                                }
+                            );
+                        });
+                        return;
+                    }
+                    cb(false, err || 'Proxy publish failed');
+                });
+            });
             return;
         }
-        githubGetFile(function(remote, sha) {
-            var merged = mergeEntries(entries, remote || []);
-            entriesState = merged;
-            saveLocal(entriesState);
-            var panel = document.getElementById(PANEL_ID);
-            if (panel) {
-                render(panel);
-            }
-            githubPutFile(merged, sha, function(ok, err) {
-                if (ok) {
-                    cb(true, null);
-                    return;
-                }
-                if (err === 'conflict') {
-                    githubGetFile(function(remote2, sha2) {
-                        var merged2 = mergeEntries(entriesState, remote2 || []);
-                        entriesState = merged2;
-                        saveLocal(entriesState);
-                        if (panel) {
-                            render(panel);
-                        }
-                        githubPutFile(merged2, sha2, function(ok2, err2) {
-                            cb(ok2, err2 || null);
-                        });
-                    });
-                    return;
-                }
-                cb(false, err || 'GitHub PUT failed');
-            });
-        });
+
+        if (!githubConfigured()) {
+            cb(false, 'Set wallOfFameProxyUrl + wallOfFameTeamKey, or githubToken in prefs.');
+            return;
+        }
+        doGithubPut();
     }
 
     function ensureStyles() {
@@ -645,11 +787,15 @@
         pub.type = 'button';
         pub.className = 'dc-wof-btn-sec';
         pub.textContent = 'Publish to GitHub';
-        pub.title = 'PUT ' + WALL_OF_FAME_FILE_PATH + ' in ' + GITHUB_OWNER + '/' + GITHUB_REPO + ' (needs PAT in prefs)';
+        pub.title = proxyConfigured()
+            ? 'Publish via team proxy (GitHub App on server)'
+            : 'PUT ' + WALL_OF_FAME_FILE_PATH + ' in ' + GITHUB_OWNER + '/' + GITHUB_REPO + ' (PAT in prefs)';
         pub.addEventListener('click', function(ev) {
             ev.preventDefault();
-            if (!githubConfigured()) {
-                alert('Set GitHub PAT in DonkeyCODE prefs (Contents read/write on ' + GITHUB_OWNER + '/' + GITHUB_REPO + ').');
+            if (!syncConfigured()) {
+                alert(
+                    'Set wallOfFameProxyUrl + wallOfFameTeamKey (team proxy), or githubToken (direct API) in DonkeyCODE prefs.'
+                );
                 return;
             }
             postCloud(entriesState, function(ok, err) {
@@ -666,11 +812,13 @@
         imp.type = 'button';
         imp.className = 'dc-wof-btn-sec';
         imp.textContent = 'Fetch from GitHub';
-        imp.title = 'GET ' + WALL_OF_FAME_FILE_PATH + ' and merge with this browser (needs PAT for private repo)';
+        imp.title = proxyConfigured()
+            ? 'Fetch via team proxy'
+            : 'GET ' + WALL_OF_FAME_FILE_PATH + ' and merge (PAT in prefs)';
         imp.addEventListener('click', function(ev) {
             ev.preventDefault();
-            if (!githubConfigured()) {
-                alert('Set GitHub PAT in DonkeyCODE prefs to fetch from ' + GITHUB_OWNER + '/' + GITHUB_REPO + '.');
+            if (!syncConfigured()) {
+                alert('Set proxy URL + team key, or githubToken in DonkeyCODE prefs.');
                 return;
             }
             fetchCloud(function(remote) {
@@ -681,7 +829,7 @@
                     renderEntryList(panel);
                     alert('Merged ' + remote.length + ' entries from repo.');
                 } else {
-                    alert('No data or could not load (check PAT and branch ' + GITHUB_BRANCH + ').');
+                    alert('No data or could not load (check proxy, team key, or PAT).');
                 }
             });
         });
@@ -689,14 +837,15 @@
 
         var hint = document.createElement('div');
         hint.className = 'dc-wof-hint';
-        hint.textContent =
-            'Shared file: ' +
-            GITHUB_OWNER +
-            '/' +
-            GITHUB_REPO +
-            ' · ' +
-            WALL_OF_FAME_FILE_PATH +
-            '. Local copy in localStorage; set PAT only to sync. Grant DonkeyCODE optional https://*/* access.';
+        hint.textContent = proxyConfigured()
+            ? 'Sync via team proxy (GitHub App on server). Local copy in localStorage. Add proxy host to @connect if needed.'
+            : 'Shared file: ' +
+              GITHUB_OWNER +
+              '/' +
+              GITHUB_REPO +
+              ' · ' +
+              WALL_OF_FAME_FILE_PATH +
+              '. Local copy in localStorage; set PAT or proxy+team key to sync.';
         wrap.appendChild(hint);
 
         syncEditPanelVisibility(panel);
@@ -993,7 +1142,7 @@
         entriesState = loadLocal();
         render(panel);
 
-        if (githubConfigured()) {
+        if (syncConfigured()) {
             fetchCloud(function(remote) {
                 if (remote && remote.length) {
                     entriesState = mergeEntries(entriesState, remote);
