@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.6.1
+// @version      2.6.2
 // @description  FIMS tab: Wall of Fame; data from WALL of FAME/wall-of-fame.json + local cache (no baked-in accolades)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
 // @connect      *
-// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameUseGithubActions":{"type":"boolean","group":"Wall of Fame — GitHub Actions","label":"Use Actions + repo secret","description":"If on: fetch from raw.githubusercontent.com; publish via repository_dispatch. Set repo secret WOF_TEAM_KEY to match wallOfFameTeamKey. Publish still needs donkeycode_github_pat to trigger the workflow.","default":false},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"Team key (matches WOF_TEAM_KEY)","description":"Same value as repository secret WOF_TEAM_KEY (Settings → Secrets). Not the GitHub PAT.","default":"","placeholder":""},"wallOfFameRepoPath":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"JSON path in repo (optional)","description":"Path to wall-of-fame.json in Wolf2.0, e.g. WALL of FAME/wall-of-fame.json. Leave empty for default. Do not use session sync folder unless your file lives there.","default":"","placeholder":"WALL of FAME/wall-of-fame.json"},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy. If set with team key, overrides Actions mode for sync.","default":"","placeholder":"https://wof.example.com"}}
+// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameDataOwner":{"type":"string","group":"Wall of Fame — data file","label":"JSON repo owner","description":"GitHub user/org that owns wall-of-fame.json. Default MikeBane57. Set this if session sync points at a different repo (e.g. DonkeyCODE) — WoF file still lives in Wolf2.0 unless you override all three.","default":"","placeholder":"MikeBane57"},"wallOfFameDataRepo":{"type":"string","group":"Wall of Fame — data file","label":"JSON repo name","description":"Repo containing wall-of-fame.json. Default Wolf2.0.","default":"","placeholder":"Wolf2.0"},"wallOfFameDataBranch":{"type":"string","group":"Wall of Fame — data file","label":"JSON branch","description":"Branch for raw + Contents API. Default main.","default":"","placeholder":"main"},"wallOfFameUseGithubActions":{"type":"boolean","group":"Wall of Fame — GitHub Actions","label":"Use Actions + repo secret","description":"If on: fetch from raw.githubusercontent.com; publish via repository_dispatch. Set repo secret WOF_TEAM_KEY to match wallOfFameTeamKey. Publish still needs donkeycode_github_pat to trigger the workflow.","default":false},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"Team key (matches WOF_TEAM_KEY)","description":"Same value as repository secret WOF_TEAM_KEY (Settings → Secrets). Not the GitHub PAT.","default":"","placeholder":""},"wallOfFameRepoPath":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"JSON path in repo (optional)","description":"Path to wall-of-fame.json in Wolf2.0, e.g. WALL of FAME/wall-of-fame.json. Leave empty for default. Do not use session sync folder unless your file lives there.","default":"","placeholder":"WALL of FAME/wall-of-fame.json"},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy. If set with team key, overrides Actions mode for sync.","default":"","placeholder":"https://wof.example.com"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // ==/UserScript==
@@ -30,26 +30,30 @@
     var WALL_OF_FAME_FILE_PATH = 'WALL of FAME/wall-of-fame.json';
 
     /**
-     * Same PAT/repo/branch as DonkeyCODE “GitHub session sync” (extension settings).
-     * Injected getPref must expose donkeycode_github_* (same keys as chrome.storage.local).
-     * No separate userscript PAT — use extension settings only.
+     * PAT from DonkeyCODE session sync (extension settings). Used for GitHub API only.
+     * Injected getPref must expose donkeycode_github_pat.
      */
     function resolvedGithubPat() {
         return String(getPref('donkeycode_github_pat', '') || '').trim();
     }
 
-    function resolvedGithubOwner() {
-        var o = String(getPref('donkeycode_github_owner', '') || '').trim();
+    /**
+     * Repo that holds wall-of-fame.json (raw + Contents API + repository_dispatch).
+     * Defaults to Wolf2.0 — NOT session-sync owner/repo, so sync can target DonkeyCODE
+     * while accolades stay in Wolf2.0. Override via wallOfFameDataOwner/Repo/Branch.
+     */
+    function resolvedWallOfFameDataOwner() {
+        var o = String(getPref('wallOfFameDataOwner', '') || '').trim();
         return o || GITHUB_OWNER;
     }
 
-    function resolvedGithubRepo() {
-        var r = String(getPref('donkeycode_github_repo', '') || '').trim();
+    function resolvedWallOfFameDataRepo() {
+        var r = String(getPref('wallOfFameDataRepo', '') || '').trim();
         return r || GITHUB_REPO;
     }
 
-    function resolvedGithubBranch() {
-        var b = String(getPref('donkeycode_github_branch', '') || '').trim();
+    function resolvedWallOfFameDataBranch() {
+        var b = String(getPref('wallOfFameDataBranch', '') || '').trim();
         return b || GITHUB_BRANCH;
     }
 
@@ -122,9 +126,9 @@
     }
 
     function rawGithubWallOfFameUrl() {
-        var owner = resolvedGithubOwner();
-        var repo = resolvedGithubRepo();
-        var branch = resolvedGithubBranch();
+        var owner = resolvedWallOfFameDataOwner();
+        var repo = resolvedWallOfFameDataRepo();
+        var branch = resolvedWallOfFameDataBranch();
         var rel = resolvedGithubFilePath().replace(/^\/+/, '');
         var encodedPath = rel.split('/').map(encodeURIComponent).join('/');
         return (
@@ -179,8 +183,8 @@
             cb(false, 'GM_xmlhttpRequest unavailable');
             return;
         }
-        var owner = resolvedGithubOwner();
-        var repo = resolvedGithubRepo();
+        var owner = resolvedWallOfFameDataOwner();
+        var repo = resolvedWallOfFameDataRepo();
         var url =
             'https://api.github.com/repos/' +
             encodeURIComponent(owner) +
@@ -315,8 +319,8 @@
     }
 
     function githubContentsApiUrl() {
-        var owner = encodeURIComponent(resolvedGithubOwner());
-        var repo = encodeURIComponent(resolvedGithubRepo());
+        var owner = encodeURIComponent(resolvedWallOfFameDataOwner());
+        var repo = encodeURIComponent(resolvedWallOfFameDataRepo());
         var path = resolvedGithubFilePath()
             .replace(/^\/+/, '')
             .split('/')
@@ -443,7 +447,7 @@
     }
 
     function githubGetFile(cb) {
-        var branch = encodeURIComponent(resolvedGithubBranch());
+        var branch = encodeURIComponent(resolvedWallOfFameDataBranch());
         var url = githubContentsApiUrl() + '?ref=' + branch;
         githubXhr('GET', url, null, function(status, text) {
             if (status === 404) {
@@ -468,7 +472,7 @@
     }
 
     function githubPutFile(entries, sha, cb) {
-        var branch = resolvedGithubBranch();
+        var branch = resolvedWallOfFameDataBranch();
         var payload = {
             entries: entries,
             updatedAt: Date.now()
@@ -994,7 +998,7 @@
             ? 'Publish via team proxy (GitHub App on server)'
             : actionsModeConfigured()
               ? 'Trigger Actions workflow (repo secret WOF_TEAM_KEY + PAT to dispatch)'
-              : 'PUT ' + resolvedGithubFilePath() + ' in ' + resolvedGithubOwner() + '/' + resolvedGithubRepo();
+              : 'PUT ' + resolvedGithubFilePath() + ' in ' + resolvedWallOfFameDataOwner() + '/' + resolvedWallOfFameDataRepo();
         pub.addEventListener('click', function(ev) {
             ev.preventDefault();
             if (!syncConfigured()) {
@@ -1306,7 +1310,13 @@
         title.textContent = 'Wall of Fame';
         var sub = document.createElement('div');
         sub.className = 'dc-wof-sub';
-        sub.textContent = 'SOD accolades — local + optional sync to ' + resolvedGithubFilePath();
+        sub.textContent =
+            'SOD accolades — ' +
+            resolvedWallOfFameDataOwner() +
+            '/' +
+            resolvedWallOfFameDataRepo() +
+            ' — ' +
+            resolvedGithubFilePath();
         ht.appendChild(title);
         ht.appendChild(sub);
         var actions = document.createElement('div');

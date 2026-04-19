@@ -36,7 +36,7 @@ From `parseUserScript` (and related logic in `background.js`):
 
 ### `GM_xmlhttpRequest` checklist (cross-origin / GitHub)
 
-Use this for scripts that need cross-origin HTTP. **SOD Wall of Fame** optional modes: (1) **team proxy** — see **`wall-of-fame-proxy/README.md`**; (2) **GitHub Actions** — repo secret **`WOF_TEAM_KEY`** matches userscript **`wallOfFameTeamKey`**; workflow commits the JSON; **`repository_dispatch`** still needs a **PAT** in DonkeyCODE (same as session sync); (3) **direct Contents API** via **`donkeycode_github_*`** prefs. Repository secrets are **not** readable from the browser; only the workflow sees **`WOF_TEAM_KEY`**.
+Use this for scripts that need cross-origin HTTP. **SOD Wall of Fame** optional modes: (1) **team proxy** — see **`wall-of-fame-proxy/README.md`**; (2) **GitHub Actions** — repo secret **`WOF_TEAM_KEY`** matches userscript **`wallOfFameTeamKey`**; workflow commits the JSON; **`repository_dispatch`** still needs a **PAT** in DonkeyCODE (same as session sync); (3) **direct Contents API** via **`donkeycode_github_pat`** + **`wallOfFameDataOwner` / `wallOfFameDataRepo` / `wallOfFameDataBranch`** (defaults **MikeBane57 / Wolf2.0 / main**). Session-sync **`donkeycode_github_owner` / `repo`** may point at the extension repo; Wall of Fame does **not** use those for the JSON path so accolades stay in Wolf2.0. Repository secrets are **not** readable from the browser; only the workflow sees **`WOF_TEAM_KEY`**.
 
 Scripts that call **`GM_xmlhttpRequest`** (e.g. GitHub REST API) need all of the following in DonkeyCODE:
 
