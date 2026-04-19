@@ -1,14 +1,10 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.4.5
-// @description  FIMS tab: wall of fame accolades; password to edit; GitHub file sync or legacy URL
+// @version      2.0.0
+// @description  FIMS tab: Wall of Fame accolades; password to edit; local storage only
 // @match        https://opssuitemain.swacorp.com/*
-// @grant        GM_xmlhttpRequest
-// @connect      api.github.com
-// @connect      *
-// @donkeycode-pref {"wallOfFameSyncUrl":{"type":"url","group":"Wall of Fame — legacy URL","label":"Cloud JSON URL (optional)","description":"If GitHub prefs below are not set: GET merges accolades; POST on Publish (server must accept POST).","default":"","placeholder":"https://…/wall-of-fame.json"},"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true}}
-// @donkeycode-pref {"githubOwner":{"type":"string","group":"Wall of Fame — GitHub","label":"Owner","description":"GitHub org or username for the repo.","default":"","placeholder":"my-org"},"githubRepo":{"type":"string","group":"Wall of Fame — GitHub","label":"Repo","description":"Repository name.","default":"","placeholder":"my-repo"},"githubBranch":{"type":"string","group":"Wall of Fame — GitHub","label":"Branch","default":"main","placeholder":"main"},"githubToken":{"type":"string","group":"Wall of Fame — GitHub","label":"PAT (repo scope)","description":"Classic PAT with repo scope, or fine-grained Contents read/write. Stored in DonkeyCODE prefs.","default":"","placeholder":"ghp_…"},"wallPath":{"type":"string","group":"Wall of Fame — GitHub","label":"File path in repo","description":"Creates path on first publish. Example: WALL_OF_FAME/wall-of-fame.json","default":"WALL_OF_FAME/wall-of-fame.json","placeholder":"WALL_OF_FAME/wall-of-fame.json"}}
+// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // ==/UserScript==
@@ -82,201 +78,6 @@
         return v;
     }
 
-    function getSyncUrl() {
-        var u = getPref('wallOfFameSyncUrl', '');
-        return typeof u === 'string' ? u.trim() : '';
-    }
-
-    /** Last blob SHA for GitHub Contents API (updates require SHA). */
-    var githubFileSha = null;
-
-    function githubConfigured() {
-        var owner = String(getPref('githubOwner', '') || '').trim();
-        var repo = String(getPref('githubRepo', '') || '').trim();
-        var tok = String(getPref('githubToken', '') || '').trim();
-        return !!(owner && repo && tok);
-    }
-
-    function githubContentsApiUrl() {
-        var owner = encodeURIComponent(String(getPref('githubOwner', '') || '').trim());
-        var repo = encodeURIComponent(String(getPref('githubRepo', '') || '').trim());
-        var path = String(getPref('wallPath', 'WALL_OF_FAME/wall-of-fame.json') || 'WALL_OF_FAME/wall-of-fame.json')
-            .replace(/^\/+/, '')
-            .split('/')
-            .map(encodeURIComponent)
-            .join('/');
-        return 'https://api.github.com/repos/' + owner + '/' + repo + '/contents/' + path;
-    }
-
-    function githubApiHeaders() {
-        return {
-            Authorization: 'Bearer ' + String(getPref('githubToken', '') || '').trim(),
-            Accept: 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28'
-        };
-    }
-
-    function utf8ToBase64(str) {
-        return btoa(unescape(encodeURIComponent(str)));
-    }
-
-    function decodeGithubFileContent(b64) {
-        if (!b64) {
-            return '';
-        }
-        var clean = String(b64).replace(/\s/g, '');
-        var bin = atob(clean);
-        try {
-            return decodeURIComponent(escape(bin));
-        } catch (e) {
-            return bin;
-        }
-    }
-
-    function parseEntriesFromJsonText(text) {
-        try {
-            var data = JSON.parse(text);
-            var arr = Array.isArray(data) ? data : (data.entries || []);
-            return arr.map(normalizeEntry).filter(Boolean);
-        } catch (e) {
-            return null;
-        }
-    }
-
-    /**
-     * Explains GitHub 4xx/0 when publish fails (token, permissions, or very old DonkeyCODE
-     * without request-body forwarding).
-     */
-    function explainGithubPublishError(status, responseText) {
-        var raw = String(responseText || '');
-        var msg = '';
-        try {
-            var j = JSON.parse(raw);
-            if (j.message) {
-                msg = String(j.message);
-            }
-        } catch (e) {
-            msg = raw.slice(0, 400);
-        }
-        var blob = (msg + ' ' + raw).toLowerCase();
-        if (status === 401) {
-            return 'GitHub returned 401 — check the PAT (repo scope) and that it is not expired.';
-        }
-        if (status === 403) {
-            return 'GitHub returned 403 — token may lack Contents write on this repo or path (fine-grained rules).';
-        }
-        if (
-            status === 400 ||
-            status === 422 ||
-            (status >= 400 && status < 500 && blob.indexOf('content') !== -1) ||
-            blob.indexOf('problems parsing') !== -1 ||
-            blob.indexOf('invalid request') !== -1
-        ) {
-            return (
-                'GitHub rejected the publish request. Update DonkeyCODE to a build that forwards GM_xmlhttpRequest ' +
-                '`data` / `body` into fetch(), set Content-Type: application/json, and use a PAT with Contents write. ' +
-                '(HTTP ' + status + (msg ? ': ' + msg : '') + ')'
-            );
-        }
-        if (status === 0 || !status) {
-            return (
-                'Request failed (HTTP 0). Enable DonkeyCODE optional site access (http(s)://*/*), check @connect, ' +
-                'and inspect the extension service worker console for GM_XHR errors.'
-            );
-        }
-        return 'HTTP ' + status + (msg ? ': ' + msg : '');
-    }
-
-    /**
-     * DonkeyCODE: pass `data` (string or object; bridge may stringify objects) and set
-     * Content-Type for GitHub REST JSON bodies. See SCRIPT_STANDARD_PLAN.md GM_xhr section.
-     */
-    function githubXhr(method, url, bodyObj, cb) {
-        if (typeof GM_xmlhttpRequest !== 'function') {
-            cb(0, '');
-            return;
-        }
-        var headers = githubApiHeaders();
-        var hasBody = bodyObj !== undefined && bodyObj !== null;
-        if (hasBody) {
-            headers['Content-Type'] = 'application/json';
-        }
-        GM_xmlhttpRequest({
-            method: method,
-            url: url,
-            headers: headers,
-            data: hasBody ? bodyObj : undefined,
-            onload: function(res) {
-                cb(res.status || 0, res.responseText || '');
-            },
-            onerror: function() {
-                cb(0, '');
-            }
-        });
-    }
-
-    function githubGetFile(cb) {
-        var branch = encodeURIComponent(String(getPref('githubBranch', 'main') || 'main').trim() || 'main');
-        var url = githubContentsApiUrl() + '?ref=' + branch;
-        githubXhr('GET', url, null, function(status, text) {
-            if (status === 404) {
-                githubFileSha = null;
-                cb(null, null);
-                return;
-            }
-            if (status < 200 || status >= 300) {
-                cb(null, null);
-                return;
-            }
-            try {
-                var meta = JSON.parse(text);
-                githubFileSha = meta.sha || null;
-                var raw = decodeGithubFileContent(meta.content || '');
-                var entries = parseEntriesFromJsonText(raw);
-                cb(entries, githubFileSha);
-            } catch (e) {
-                cb(null, githubFileSha);
-            }
-        });
-    }
-
-    function githubPutFile(entries, sha, cb) {
-        var branch = String(getPref('githubBranch', 'main') || 'main').trim() || 'main';
-        var payload = {
-            entries: entries,
-            updatedAt: Date.now()
-        };
-        var bodyStr = JSON.stringify(payload, null, 2);
-        var body = {
-            message: 'Wall of Fame sync (DonkeyCODE)',
-            content: utf8ToBase64(bodyStr),
-            branch: branch
-        };
-        if (sha) {
-            body.sha = sha;
-        }
-        var url = githubContentsApiUrl();
-        githubXhr('PUT', url, body, function(status, text) {
-            if (status === 200 || status === 201) {
-                try {
-                    var meta = JSON.parse(text);
-                    if (meta.content && meta.content.sha) {
-                        githubFileSha = meta.content.sha;
-                    } else if (meta.commit && meta.commit.sha) {
-                        githubFileSha = meta.commit.sha;
-                    }
-                } catch (e) {}
-                cb(true, null);
-                return;
-            }
-            if (status === 409) {
-                cb(false, 'conflict');
-                return;
-            }
-            cb(false, explainGithubPublishError(status, text));
-        });
-    }
-
     function isUnlocked() {
         try {
             return sessionStorage.getItem(SESSION_KEY) === '1';
@@ -341,127 +142,6 @@
         } catch (e) {
             /* ignore */
         }
-    }
-
-    function mergeEntries(a, b) {
-        var map = {};
-        var i;
-        for (i = 0; i < a.length; i++) {
-            var ea = normalizeEntry(a[i]);
-            if (ea) {
-                map[ea.id] = ea;
-            }
-        }
-        for (i = 0; i < b.length; i++) {
-            var eb = normalizeEntry(b[i]);
-            if (!eb) {
-                continue;
-            }
-            var ex = map[eb.id];
-            if (!ex || eb.updatedAt >= (ex.updatedAt || 0)) {
-                map[eb.id] = eb;
-            }
-        }
-        var out = [];
-        var k;
-        for (k in map) {
-            if (Object.prototype.hasOwnProperty.call(map, k)) {
-                out.push(map[k]);
-            }
-        }
-        out.sort(function(x, y) {
-            return (x.sortOrder || 0) - (y.sortOrder || 0);
-        });
-        return out;
-    }
-
-    function fetchCloud(cb) {
-        if (githubConfigured()) {
-            githubGetFile(function(entries) {
-                cb(entries);
-            });
-            return;
-        }
-        var url = getSyncUrl();
-        if (!url || typeof GM_xmlhttpRequest !== 'function') {
-            cb(null);
-            return;
-        }
-        GM_xmlhttpRequest({
-            method: 'GET',
-            url: url,
-            onload: function(res) {
-                try {
-                    var text = res.responseText || '';
-                    var data = JSON.parse(text);
-                    var arr = Array.isArray(data) ? data : (data.entries || []);
-                    cb(arr.map(normalizeEntry).filter(Boolean));
-                } catch (e) {
-                    cb(null);
-                }
-            },
-            onerror: function() {
-                cb(null);
-            }
-        });
-    }
-
-    function postCloud(entries, cb) {
-        if (githubConfigured()) {
-            githubGetFile(function(remote, sha) {
-                var merged = mergeEntries(entries, remote || []);
-                entriesState = merged;
-                saveLocal(entriesState);
-                var panel = document.getElementById(PANEL_ID);
-                if (panel) {
-                    render(panel);
-                }
-                githubPutFile(merged, sha, function(ok, err) {
-                    if (ok) {
-                        cb(true, null);
-                        return;
-                    }
-                    if (err === 'conflict') {
-                        githubGetFile(function(remote2, sha2) {
-                            var merged2 = mergeEntries(entriesState, remote2 || []);
-                            entriesState = merged2;
-                            saveLocal(entriesState);
-                            if (panel) {
-                                render(panel);
-                            }
-                            githubPutFile(merged2, sha2, function(ok2, err2) {
-                                cb(ok2, err2 || null);
-                            });
-                        });
-                        return;
-                    }
-                    cb(false, err || 'GitHub PUT failed');
-                });
-            });
-            return;
-        }
-        var url = getSyncUrl();
-        if (!url || typeof GM_xmlhttpRequest !== 'function') {
-            cb(false, 'No sync URL or GM_xmlhttpRequest');
-            return;
-        }
-        GM_xmlhttpRequest({
-            method: 'POST',
-            url: url,
-            headers: { 'Content-Type': 'application/json' },
-            data: { entries: entries, updatedAt: Date.now() },
-            onload: function(res) {
-                var st = res.status || 0;
-                if (st >= 200 && st < 300) {
-                    cb(true, null);
-                } else {
-                    cb(false, explainGithubPublishError(st, res.responseText || ''));
-                }
-            },
-            onerror: function() {
-                cb(false, explainGithubPublishError(0, ''));
-            }
-        });
     }
 
     function ensureStyles() {
@@ -569,7 +249,7 @@
             var p1 = document.createElement('p');
             p1.style.fontSize = '0.85rem';
             p1.style.opacity = '0.9';
-            p1.textContent = 'Enter the editor password to add, edit, or publish accolades.';
+            p1.textContent = 'Enter the editor password to add or remove accolades.';
             var lab = document.createElement('label');
             lab.textContent = 'Password';
             var inp = document.createElement('input');
@@ -687,54 +367,10 @@
         wrap.appendChild(ul);
         renderEntryList(panel);
 
-        var pub = document.createElement('button');
-        pub.type = 'button';
-        pub.className = 'dc-wof-btn-sec';
-        pub.textContent = githubConfigured() ? 'Publish to GitHub' : 'Publish to cloud URL';
-        pub.title = githubConfigured()
-            ? 'PUT wall-of-fame JSON via GitHub Contents API (owner, repo, token, path in prefs)'
-            : 'POST JSON to the legacy URL in prefs (server must accept POST)';
-        pub.addEventListener('click', function(ev) {
-            ev.preventDefault();
-            if (!githubConfigured() && !getSyncUrl()) {
-                alert('Set GitHub owner/repo/token/path in prefs, or set a legacy Cloud JSON URL.');
-                return;
-            }
-            postCloud(entriesState, function(ok, err) {
-                if (ok) {
-                    alert('Published.');
-                } else {
-                    alert('Publish failed: ' + (err || 'unknown'));
-                }
-            });
-        });
-        wrap.appendChild(pub);
-
-        var imp = document.createElement('button');
-        imp.type = 'button';
-        imp.className = 'dc-wof-btn-sec';
-        imp.textContent = githubConfigured() ? 'Fetch from GitHub now' : 'Fetch from cloud now';
-        imp.addEventListener('click', function(ev) {
-            ev.preventDefault();
-            fetchCloud(function(remote) {
-                if (remote && remote.length) {
-                    entriesState = mergeEntries(entriesState, remote);
-                    saveLocal(entriesState);
-                    renderCards(panel);
-                    renderEntryList(panel);
-                    alert('Merged ' + remote.length + ' entries from cloud.');
-                } else {
-                    alert('No data or could not load.');
-                }
-            });
-        });
-        wrap.appendChild(imp);
-
         var hint = document.createElement('div');
         hint.className = 'dc-wof-hint';
-        hint.textContent = githubConfigured()
-            ? 'GitHub: file at wallPath stores { entries, updatedAt }. PAT with Contents read/write; grant DonkeyCODE optional site access (https://*/*). Publish uses GM_xmlhttpRequest with data + Content-Type: application/json (see DonkeyCODE release notes).'
-            : 'Legacy URL: GET merges on fetch; POST on publish. Or configure GitHub owner/repo/branch/token/wallPath for Contents API sync.';
+        hint.textContent =
+            'Accolades are stored in this browser only (localStorage). Export or sharing can be done by copying the list manually if needed.';
         wrap.appendChild(hint);
 
         syncEditPanelVisibility(panel);
@@ -990,7 +626,7 @@
         title.textContent = 'Wall of Fame';
         var sub = document.createElement('div');
         sub.className = 'dc-wof-sub';
-        sub.textContent = 'SOD accolades (local + GitHub file or legacy URL in prefs)';
+        sub.textContent = 'SOD accolades (stored in this browser)';
         ht.appendChild(title);
         ht.appendChild(sub);
         var actions = document.createElement('div');
@@ -1030,14 +666,6 @@
 
         entriesState = loadLocal();
         render(panel);
-
-        fetchCloud(function(remote) {
-            if (remote && remote.length) {
-                entriesState = mergeEntries(entriesState, remote);
-                saveLocal(entriesState);
-                render(panel);
-            }
-        });
 
         return panel;
     }
