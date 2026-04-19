@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.2.3
-// @description  Schedule & worksheet: incremental tail highlights (no full-page rescan on scroll); double-click mail
+// @version      1.2.4
+// @description  Schedule & worksheet: tail highlights; double-click mail only for unambiguous allowlisted tail at click
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -111,25 +111,41 @@
     }
 
     /**
-     * First allowlisted N-number in this element's text (scan ancestors).
+     * Resolve tail only from the clicked subtree (and one parent), not distant ancestors —
+     * otherwise a click on a non-listed tail still matched the first listed tail in the row.
+     * If more than one allowlisted tail appears in that text, treat as ambiguous (no mail).
      */
     function findAllowlistedTailFromEventTarget(target) {
-        if (!target || target.nodeType !== 1) {
+        if (!target) {
             return null;
         }
-        var el = target;
-        var hop;
-        for (hop = 0; hop < 14 && el; hop++) {
-            var text = el.textContent || '';
+        var el = target.nodeType === 3 ? target.parentElement : target;
+        if (!el || el.nodeType !== 1) {
+            return null;
+        }
+        var candidates = [el, el.parentElement];
+        var i;
+        for (i = 0; i < candidates.length; i++) {
+            var node = candidates[i];
+            if (!node) {
+                continue;
+            }
+            var text = node.textContent || '';
+            var hits = [];
             TAIL_RE.lastIndex = 0;
             var m;
             while ((m = TAIL_RE.exec(text)) !== null) {
                 var t = String(m[1]).toUpperCase();
-                if (WIFI_RESET_ALLOWLIST[t]) {
-                    return t;
+                if (WIFI_RESET_ALLOWLIST[t] && hits.indexOf(t) === -1) {
+                    hits.push(t);
                 }
             }
-            el = el.parentElement;
+            if (hits.length === 1) {
+                return hits[0];
+            }
+            if (hits.length > 1) {
+                return null;
+            }
         }
         return null;
     }
