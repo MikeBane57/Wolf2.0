@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.7.1
+// @version      2.7.2
 // @description  FIMS tab: Wall of Fame; data from WALL of FAME/wall-of-fame.json + local cache (no baked-in accolades)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -129,6 +129,11 @@
         if (el) {
             el.textContent = '';
         }
+    }
+
+    /** Log a change that is saved locally only until the user clicks Publish. */
+    function wofLogLocalDraft(panel, msg) {
+        wofAppendPublishLog(panel, 'Local (not repo yet): ' + msg);
     }
 
     function proxyBaseUrl() {
@@ -684,6 +689,19 @@
             }
         }
         saveLocal(entriesState);
+        var moved = sorted[ni];
+        wofLogLocalDraft(
+            panel,
+            'reordered "' +
+                (moved.title || moved.id) +
+                '" ' +
+                (delta < 0 ? 'up' : 'down') +
+                ' — ' +
+                entriesState.length +
+                ' entr' +
+                (entriesState.length === 1 ? 'y' : 'ies') +
+                '. Use Publish to update GitHub.'
+        );
         renderCards(panel);
     }
 
@@ -1055,10 +1073,21 @@
                         if (wofEditingId === e.id) {
                             wofEditingId = null;
                         }
+                        var removedTitle = e.title || e.id;
                         entriesState = entriesState.filter(function(x) {
                             return x.id !== e.id;
                         });
                         saveLocal(entriesState);
+                        wofLogLocalDraft(
+                            panel,
+                            'deleted "' +
+                                removedTitle +
+                                '" — ' +
+                                entriesState.length +
+                                ' entr' +
+                                (entriesState.length === 1 ? 'y' : 'ies') +
+                                ' left. Use Publish to remove from repo.'
+                        );
                         renderCards(panel);
                     });
                     actions.appendChild(editBtn);
@@ -1138,6 +1167,14 @@
                             }
                         }
                         saveLocal(entriesState);
+                        wofLogLocalDraft(
+                            panel,
+                            'saved card "' +
+                                title +
+                                '" / ' +
+                                holder +
+                                '. Use Publish to update repo.'
+                        );
                         wofEditingId = null;
                         renderCards(panel);
                     });
@@ -1302,6 +1339,14 @@
             });
             entriesState.push(ent);
             saveLocal(entriesState);
+            wofLogLocalDraft(
+                panel,
+                'added "' +
+                    title +
+                    '" / ' +
+                    holder +
+                    '. Use Publish to write to repo.'
+            );
             ta.value = '';
             tb.value = '';
             tc.value = '';
