@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.4.0
+// @version      1.4.1
 // @description  FIMS tab: wall of fame accolades; password to edit; GitHub file sync or legacy URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -30,6 +30,74 @@
         var tcTab = document.getElementById('dc-fims-top-clickers-host');
         if (tcTab) {
             tcTab.classList.remove('active');
+        }
+    }
+
+    /** App sometimes mirrors a date token (e.g. title) into a FIMS filter when tabs change. */
+    var DATE_TOKEN_IN_FIELD_RE = /^\s*\d{1,2}[A-Za-z]{3}\d{4}\s*$/;
+
+    function getFimsWidgetRootForClear() {
+        var table = document.getElementById(TABLE_ID);
+        if (!table) {
+            return null;
+        }
+        var el = table;
+        var d;
+        for (d = 0; d < 10 && el; d++) {
+            if (el.querySelector && el.querySelector('.ui.attached.tabular.menu') && el.querySelector('#' + TABLE_ID)) {
+                return el;
+            }
+            el = el.parentElement;
+        }
+        return table.parentElement;
+    }
+
+    function clearAccidentalFimsDateSearchField() {
+        var root = getFimsWidgetRootForClear();
+        if (!root) {
+            return;
+        }
+        var inputs = root.querySelectorAll(
+            'input:not([type="hidden"]):not([type="password"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]), textarea'
+        );
+        var i;
+        for (i = 0; i < inputs.length; i++) {
+            var inp = inputs[i];
+            if (inp.closest && inp.closest('#' + PANEL_ID)) {
+                continue;
+            }
+            var v = inp.value;
+            if (!v || !DATE_TOKEN_IN_FIELD_RE.test(String(v))) {
+                continue;
+            }
+            inp.value = '';
+            try {
+                inp.dispatchEvent(new Event('input', { bubbles: true }));
+                inp.dispatchEvent(new Event('change', { bubbles: true }));
+            } catch (err) {
+                /* ignore */
+            }
+        }
+    }
+
+    function scheduleClearAccidentalFimsDateSearch() {
+        var delays = [0, 50, 150, 400];
+        var j;
+        for (j = 0; j < delays.length; j++) {
+            (function(ms) {
+                setTimeout(function() {
+                    clearAccidentalFimsDateSearchField();
+                }, ms);
+            })(delays[j]);
+        }
+        try {
+            requestAnimationFrame(function() {
+                requestAnimationFrame(function() {
+                    clearAccidentalFimsDateSearchField();
+                });
+            });
+        } catch (e) {
+            /* ignore */
         }
     }
 
@@ -845,6 +913,7 @@
         table.style.display = 'none';
         panel.style.display = 'block';
         render(panel);
+        scheduleClearAccidentalFimsDateSearch();
     }
 
     /**
