@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.6.0
+// @version      1.6.1
 // @description  Button near GMT clock: METAR/TAF, NWS radar loop + AFD when available, alerts on change, optional notifications
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -1058,7 +1058,7 @@
                       escapeHtml(metaStr) +
                       '</div>'
                     : '') +
-                '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;color:#bdc3c7;white-space:pre-wrap;word-break:break-word;max-height:280px;overflow:auto;background:#141418;padding:10px;border-radius:6px;">' +
+                '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;color:#bdc3c7;white-space:pre-wrap;word-break:break-word;max-height:min(52vh,720px);overflow:auto;background:#141418;padding:10px;border-radius:6px;">' +
                 afdEsc +
                 '</div>' +
                 '</div>';
@@ -1261,8 +1261,9 @@
         modal.style.left = '50%';
         modal.style.top = '50%';
         modal.style.transform = 'translate(-50%,-50%)';
-        modal.style.width = 'min(920px, calc(100vw - 32px))';
-        modal.style.height = 'min(640px, calc(100vh - 48px))';
+        modal.style.width = 'min(1600px, calc(100vw - 20px))';
+        modal.style.height = 'calc(100vh - 24px)';
+        modal.style.maxHeight = 'calc(100vh - 24px)';
         modal.style.background = '#1a1a1e';
         modal.style.borderRadius = '10px';
         modal.style.boxShadow = '0 12px 48px rgba(0,0,0,0.55)';
