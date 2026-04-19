@@ -47,7 +47,15 @@
       "note": "Christmas 2023",
       "sortOrder": 6,
       "updatedAt": 1776633131872
+    },
+    {
+      "id": "wof-1776633279881",
+      "title": "Most FIMs sent",
+      "holder": "PAPI",
+      "note": "He gets paid by the FIM",
+      "sortOrder": 7,
+      "updatedAt": 1776633279881
     }
   ],
-  "updatedAt": 1776633133667
+  "updatedAt": 1776633285566
 }
