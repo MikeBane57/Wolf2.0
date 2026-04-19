@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.2.0
+// @version      1.3.0
 // @description  Button near GMT clock: modal with full METAR/TAF for tracked stations, alerts when text changes since you last viewed, optional notifications
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"}}
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":6,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -266,26 +266,66 @@
         }
         var metarURL = 'https://tgftp.nws.noaa.gov/data/observations/metar/stations/' + icao + '.TXT';
         var tafURL = 'https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/' + icao + '.TXT';
+        var metarDone = false;
+        var tafDone = false;
+        var metar = 'N/A';
+        var taf = 'N/A';
+        function finishBoth() {
+            if (!metarDone || !tafDone) {
+                return;
+            }
+            var rec = { iata: iata.toUpperCase(), icao: icao, metar: metar, taf: taf, err: false, t: Date.now() };
+            cacheByIcao[icao] = rec;
+            cb(rec);
+        }
         fetchText(metarURL, function (mt) {
-            var metar = parseMetarBody(mt);
-            fetchText(tafURL, function (tt) {
-                var taf = parseTafBody(tt);
-                var rec = { iata: iata.toUpperCase(), icao: icao, metar: metar, taf: taf, err: false, t: Date.now() };
-                cacheByIcao[icao] = rec;
-                cb(rec);
-            });
+            metar = parseMetarBody(mt);
+            metarDone = true;
+            finishBoth();
+        });
+        fetchText(tafURL, function (tt) {
+            taf = parseTafBody(tt);
+            tafDone = true;
+            finishBoth();
         });
     }
 
-    function fetchAllSequential(list, idx, out, done) {
-        if (!list || idx >= list.length) {
-            done(out);
+    function fetchAllStations(list, done) {
+        if (!list || !list.length) {
+            done([]);
             return;
         }
-        fetchWeatherForIata(list[idx], function (rec) {
-            out.push(rec);
-            fetchAllSequential(list, idx + 1, out, done);
-        });
+        var concurrency = numPref('metarWatchConcurrentStations', 6, 1, 20);
+        var results = new Array(list.length);
+        var next = 0;
+        var active = 0;
+        var completed = 0;
+        var total = list.length;
+
+        function finishOne(rec, index) {
+            results[index] = rec;
+            active--;
+            completed++;
+            if (completed === total) {
+                done(results);
+            } else {
+                pump();
+            }
+        }
+
+        function pump() {
+            while (active < concurrency && next < total) {
+                (function (index) {
+                    active++;
+                    fetchWeatherForIata(list[index], function (rec) {
+                        finishOne(rec, index);
+                    });
+                })(next);
+                next++;
+            }
+        }
+
+        pump();
     }
 
     function snapshotFromResults(results) {
@@ -389,7 +429,7 @@
     var bootstrappedViewed = false;
 
     function runPoll() {
-        fetchAllSequential(stationList, 0, [], function (results) {
+        fetchAllStations(stationList, function (results) {
             var i;
             for (i = 0; i < results.length; i++) {
                 var r = results[i];
@@ -531,7 +571,7 @@
         if (selectedIata) {
             renderDetail(selectedIata);
         }
-        fetchAllSequential(stationList, 0, [], function () {
+        fetchAllStations(stationList, function () {
             renderStationList();
             if (selectedIata) {
                 renderDetail(selectedIata);
