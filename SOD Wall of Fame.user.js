@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      1.4.2
+// @version      1.4.3
 // @description  FIMS tab: wall of fame accolades; password to edit; GitHub file sync or legacy URL
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -532,7 +532,9 @@
             lab.textContent = 'Password';
             var inp = document.createElement('input');
             inp.type = 'password';
-            inp.autocomplete = 'off';
+            inp.setAttribute('autocomplete', 'new-password');
+            inp.setAttribute('data-lpignore', 'true');
+            inp.setAttribute('data-form-type', 'other');
             inp.placeholder = 'Password';
             var btn = document.createElement('button');
             btn.type = 'button';
@@ -570,16 +572,34 @@
         la.textContent = 'Accolade title';
         var ta = document.createElement('input');
         ta.type = 'text';
+        ta.setAttribute('autocomplete', 'off');
+        ta.setAttribute('autocorrect', 'off');
+        ta.setAttribute('autocapitalize', 'off');
+        ta.setAttribute('spellcheck', 'false');
+        ta.setAttribute('data-lpignore', 'true');
+        ta.setAttribute('data-form-type', 'other');
         ta.placeholder = 'e.g. Most holds (PHX)';
         var lb = document.createElement('label');
         lb.textContent = 'Holder name';
         var tb = document.createElement('input');
         tb.type = 'text';
+        tb.setAttribute('autocomplete', 'off');
+        tb.setAttribute('autocorrect', 'off');
+        tb.setAttribute('autocapitalize', 'off');
+        tb.setAttribute('spellcheck', 'false');
+        tb.setAttribute('data-lpignore', 'true');
+        tb.setAttribute('data-form-type', 'other');
         tb.placeholder = 'Name';
         var lc = document.createElement('label');
         lc.textContent = 'Note (optional)';
         var tc = document.createElement('input');
         tc.type = 'text';
+        tc.setAttribute('autocomplete', 'off');
+        tc.setAttribute('autocorrect', 'off');
+        tc.setAttribute('autocapitalize', 'off');
+        tc.setAttribute('spellcheck', 'false');
+        tc.setAttribute('data-lpignore', 'true');
+        tc.setAttribute('data-form-type', 'other');
         tc.placeholder = 'Station, context, etc.';
 
         var addBtn = document.createElement('button');
