@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.4.0
+// @version      1.4.1
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersMaxNames":{"type":"number","group":"Leaderboard","label":"Max names shown","description":"0 = show everyone with a count. Set a positive number only if you want to cap a very long list.","default":0,"min":0,"max":500,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
@@ -626,7 +626,7 @@
         menuTabMo = new MutationObserver(function() {
             scheduleMenuTabRepair();
         });
-        menuTabMo.observe(menu, { childList: true, subtree: true });
+        menuTabMo.observe(menu, { childList: true });
     }
 
     function onFimsTabClick() {
