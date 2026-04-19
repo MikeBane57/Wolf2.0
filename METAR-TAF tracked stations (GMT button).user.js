@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.0.0
+// @version      1.1.0
 // @description  Button near GMT clock: modal with full METAR/TAF for tracked stations, alerts when text changes since you last viewed, optional notifications
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -126,6 +126,25 @@
         return IATA_TO_ICAO[iata.toUpperCase()] || null;
     }
 
+    function iataFromIcao(icao) {
+        if (!icao || icao.length !== 4) {
+            return null;
+        }
+        var u = icao.toUpperCase();
+        var k;
+        for (k in IATA_TO_ICAO) {
+            if (Object.prototype.hasOwnProperty.call(IATA_TO_ICAO, k) && IATA_TO_ICAO[k] === u) {
+                return k;
+            }
+        }
+        return null;
+    }
+
+    /** List label: prefer 4-letter ICAO. */
+    function stationListLabel(iata) {
+        return icaoFor(iata) || String(iata || '').toUpperCase();
+    }
+
     function escapeHtml(s) {
         return String(s)
             .replace(/&/g, '&amp;')
@@ -134,25 +153,59 @@
             .replace(/"/g, '&quot;');
     }
 
-    function fetchText(url, cb) {
-        if (typeof GM_xmlhttpRequest !== 'function') {
+    function xhrResponseText(resp) {
+        if (!resp) {
+            return '';
+        }
+        if (typeof resp.responseText === 'string') {
+            return resp.responseText;
+        }
+        if (resp.response && typeof resp.response === 'string') {
+            return resp.response;
+        }
+        return '';
+    }
+
+    function fetchTextViaPageFetch(url, cb) {
+        if (typeof fetch !== 'function') {
             cb('');
             return;
         }
-        GM_xmlhttpRequest({
-            method: 'GET',
-            url: url,
-            onload: function (r) {
-                try {
-                    cb(typeof r.responseText === 'string' ? r.responseText : '');
-                } catch (e) {
-                    cb('');
-                }
-            },
-            onerror: function () {
+        fetch(url, { credentials: 'omit', cache: 'no-store', mode: 'cors' })
+            .then(function (res) {
+                return res.text();
+            })
+            .then(function (t) {
+                cb(typeof t === 'string' ? t : '');
+            })
+            .catch(function () {
                 cb('');
-            }
-        });
+            });
+    }
+
+    function fetchText(url, cb) {
+        function finish(txt) {
+            cb(typeof txt === 'string' ? txt : '');
+        }
+        if (typeof GM_xmlhttpRequest === 'function') {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: url,
+                onload: function (resp) {
+                    var txt = xhrResponseText(resp);
+                    if (txt) {
+                        finish(txt);
+                        return;
+                    }
+                    fetchTextViaPageFetch(url, finish);
+                },
+                onerror: function () {
+                    fetchTextViaPageFetch(url, finish);
+                }
+            });
+            return;
+        }
+        fetchTextViaPageFetch(url, finish);
     }
 
     function parseMetarBody(txt) {
@@ -374,7 +427,7 @@
                     row.style.background = 'rgba(52,152,219,0.25)';
                 }
                 var label = document.createElement('span');
-                label.textContent = iata + (icaoFor(iata) ? ' (' + icaoFor(iata) + ')' : '');
+                label.textContent = stationListLabel(iata);
                 label.style.fontFamily = 'system-ui, sans-serif';
                 label.style.fontSize = '13px';
                 var x = document.createElement('button');
@@ -427,8 +480,8 @@
             });
             return;
         }
-        var m = escapeHtml(rec.metar).replace(/\n/g, '<br>');
-        var t = escapeHtml(rec.taf).replace(/\n/g, '<br>');
+        var m = escapeHtml(r.metar).replace(/\n/g, '<br>');
+        var t = escapeHtml(r.taf).replace(/\n/g, '<br>');
         detailEl.innerHTML =
             '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;color:#ecf0f1;">' +
             '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">METAR</div>' +
@@ -503,9 +556,6 @@
     }
 
     function mountButtonNearClock() {
-        if (btn && btn.parentNode) {
-            return;
-        }
         var anchor = findGmtClockElement();
         var host = anchor && anchor.parentElement ? anchor.parentElement : document.body;
         if (!btn) {
@@ -514,14 +564,18 @@
             btn.textContent = 'WX';
             btn.title = 'Tracked METAR/TAF (click to view)';
             btn.style.marginLeft = '8px';
-            btn.style.padding = '2px 8px';
-            btn.style.fontSize = '12px';
+            btn.style.padding = '0 10px';
+            btn.style.fontSize = '14px';
             btn.style.fontWeight = '600';
             btn.style.border = 'none';
             btn.style.borderRadius = '4px';
             btn.style.cursor = 'pointer';
             btn.style.verticalAlign = 'middle';
             btn.style.position = 'relative';
+            btn.style.boxSizing = 'border-box';
+            btn.style.display = 'inline-flex';
+            btn.style.alignItems = 'center';
+            btn.style.justifyContent = 'center';
             btn.style.background = '#2c3e50';
             btn.style.color = '#ecf0f1';
             btn.setAttribute('data-dc-metar-watch-btn', '1');
@@ -554,7 +608,32 @@
             if (btn.parentNode !== anchor.parentNode || btn.previousSibling !== anchor) {
                 anchor.parentNode.insertBefore(btn, anchor.nextSibling);
             }
+            var row = anchor.parentElement;
+            var rowH = 0;
+            try {
+                rowH = Math.max(row.offsetHeight || 0, row.clientHeight || 0, anchor.offsetHeight || 0);
+            } catch (e) {}
+            if (rowH < 24) {
+                rowH = 36;
+            }
+            btn.style.minHeight = rowH + 'px';
+            btn.style.height = 'auto';
+            btn.style.alignSelf = 'stretch';
+            var cs = null;
+            try {
+                cs = row ? window.getComputedStyle(row) : null;
+            } catch (e2) {}
+            if (cs && (cs.display === 'flex' || cs.display === 'inline-flex')) {
+                btn.style.alignSelf = 'stretch';
+            } else if (row) {
+                try {
+                    row.style.display = 'flex';
+                    row.style.alignItems = 'stretch';
+                } catch (e3) {}
+            }
         } else {
+            btn.style.minHeight = '';
+            btn.style.alignSelf = '';
             if (btn.parentNode !== host) {
                 host.appendChild(btn);
             }
@@ -589,7 +668,6 @@
         modal.style.boxShadow = '0 12px 48px rgba(0,0,0,0.55)';
         modal.style.zIndex = '10000001';
         modal.style.flexDirection = 'column';
-        modal.style.display = 'none';
         modal.style.overflow = 'hidden';
         modal.addEventListener('click', function (e) {
             e.stopPropagation();
@@ -624,15 +702,17 @@
         });
         header.appendChild(headerTitle);
         header.appendChild(closeB);
+        header.style.flexShrink = '0';
 
         var body = document.createElement('div');
         body.style.display = 'flex';
         body.style.flex = '1';
         body.style.minHeight = '0';
+        body.style.flexBasis = '0';
         body.style.overflow = 'hidden';
 
         var left = document.createElement('div');
-        left.style.width = '220px';
+        left.style.width = '110px';
         left.style.flexShrink = '0';
         left.style.borderRight = '1px solid #333';
         left.style.padding = '12px';
@@ -651,7 +731,7 @@
         addRow.style.gap = '6px';
         addInput = document.createElement('input');
         addInput.type = 'text';
-        addInput.placeholder = 'IATA (e.g. DEN)';
+        addInput.placeholder = 'e.g. KDEN or DEN';
         addInput.maxLength = 4;
         addInput.style.flex = '1';
         addInput.style.padding = '6px 8px';
@@ -671,7 +751,15 @@
         addBtn.style.cursor = 'pointer';
         addBtn.style.fontSize = '13px';
         addBtn.addEventListener('click', function () {
-            var code = String(addInput.value || '').trim().toUpperCase();
+            var raw = String(addInput.value || '').trim().toUpperCase();
+            var code = raw;
+            if (/^[A-Z]{4}$/.test(raw)) {
+                var fromIcao = iataFromIcao(raw);
+                if (!fromIcao) {
+                    return;
+                }
+                code = fromIcao;
+            }
             if (!/^[A-Z]{3}$/.test(code)) {
                 return;
             }
