@@ -36,7 +36,7 @@ From `parseUserScript` (and related logic in `background.js`):
 
 ### `GM_xmlhttpRequest` checklist (cross-origin / GitHub)
 
-Use this for scripts that need cross-origin HTTP. **SOD Wall of Fame** can sync like **DonkeyCODE session sync**: **`donkeycode_github_pat`**, **`donkeycode_github_owner`**, **`donkeycode_github_repo`**, **`donkeycode_github_branch`**, and optional **`donkeycode_github_sessions_root`** (file becomes `{root}/wall-of-fame.json`, or default **`WALL of FAME/wall-of-fame.json`**). Falls back to **`githubToken`** + baked defaults if those prefs are not available to the userscript. Alternatively use **`wall-of-fame-proxy/`** + team key (see **`wall-of-fame-proxy/README.md`**).
+Use this for scripts that need cross-origin HTTP. **SOD Wall of Fame** uses the **same GitHub credentials as session sync** via **`donkeycodeGetPref('donkeycode_github_pat')`** (and owner/repo/branch/sessions root keys) — **no separate userscript PAT**. DonkeyCODE must expose those keys to the injected `getPref` closure (same values as extension `chrome.storage.local`). If not exposed, use **team proxy** prefs or ask for a DonkeyCODE build that merges session-sync settings into script prefs. See **`wall-of-fame-proxy/README.md`** for proxy mode.
 
 Scripts that call **`GM_xmlhttpRequest`** (e.g. GitHub REST API) need all of the following in DonkeyCODE:
 
@@ -122,4 +122,4 @@ Copy `templates/userscript.template.user.js` when starting a new script.
 - Filled DonkeyCODE section from `background.js` / `bridge.js` / `manifest.json` report (parser fields, GM XHR only, updates via listing, storage).
 - Documented `@donkeycode-pref`: grouped UI, `globalThis.donkeycodeGetPref`, debug log, named session folder vs Default.
 - Documented **`window.__myScriptCleanup`** for DonkeyCODE disable / re-inject; template and repo scripts assign teardown (observers, listeners, injected nodes).
-- Documented **`GM_xmlhttpRequest` checklist** (optional host permission, `@connect`, GitHub PAT, **`data` + `Content-Type`** for GitHub REST). Wall of Fame aligns with DonkeyCODE **`donkeycode_github_*`** prefs + proxy option (v2.3.0).
+- Documented **`GM_xmlhttpRequest` checklist** (optional host permission, `@connect`, GitHub PAT, **`data` + `Content-Type`** for GitHub REST). Wall of Fame uses extension **`donkeycode_github_*`** only (v2.4.0); no per-script PAT pref.

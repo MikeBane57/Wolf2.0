@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.3.0
-// @description  FIMS tab: Wall of Fame; local + shared JSON (team proxy, or same GitHub API + prefs as DonkeyCODE session sync)
+// @version      2.4.0
+// @description  FIMS tab: Wall of Fame; local + sync via DonkeyCODE GitHub settings or team proxy (no per-script PAT)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
 // @connect      *
-// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy (GitHub App backend). No trailing slash. If set with team key, PAT is not needed.","default":"","placeholder":"https://wof.example.com"},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — team proxy","label":"Team key (optional)","description":"Shared secret; must match server WOF_TEAM_KEY. Same for all dispatchers.","default":"","placeholder":""},"githubToken":{"type":"string","group":"Wall of Fame — GitHub (fallback)","label":"PAT if not using extension sync settings","description":"Only if donkeycode_github_pat is not available via prefs: same classic repo PAT as DonkeyCODE session sync (Contents read/write). Prefer configuring GitHub in DonkeyCODE settings so owner/repo/branch/PAT match session sync.","default":"","placeholder":"ghp_…"}}
+// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy (GitHub App backend). No trailing slash. If set with team key, no GitHub token needed.","default":"","placeholder":"https://wof.example.com"},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — team proxy","label":"Team key (optional)","description":"Shared secret; must match server WOF_TEAM_KEY. Same for all dispatchers.","default":"","placeholder":""}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // ==/UserScript==
@@ -29,16 +29,12 @@
     var WALL_OF_FAME_FILE_PATH = 'WALL of FAME/wall-of-fame.json';
 
     /**
-     * Align with DonkeyCODE GitHub session sync (settings / chrome.storage keys exposed to getPref):
-     * donkeycode_github_pat, donkeycode_github_owner, donkeycode_github_repo,
-     * donkeycode_github_branch, donkeycode_github_sessions_root — same REST Contents API as background.js.
+     * Same PAT/repo/branch as DonkeyCODE “GitHub session sync” (extension settings).
+     * Injected getPref must expose donkeycode_github_* (same keys as chrome.storage.local).
+     * No separate userscript PAT — use extension settings only.
      */
     function resolvedGithubPat() {
-        var p = String(getPref('donkeycode_github_pat', '') || '').trim();
-        if (p) {
-            return p;
-        }
-        return String(getPref('githubToken', '') || '').trim();
+        return String(getPref('donkeycode_github_pat', '') || '').trim();
     }
 
     function resolvedGithubOwner() {
@@ -596,7 +592,10 @@
         }
 
         if (!githubConfigured()) {
-            cb(false, 'Set wallOfFameProxyUrl + wallOfFameTeamKey, or githubToken in prefs.');
+            cb(
+                false,
+                'Set GitHub in DonkeyCODE settings (session sync), or wallOfFameProxyUrl + wallOfFameTeamKey.'
+            );
             return;
         }
         doGithubPut();
@@ -836,7 +835,7 @@
             ev.preventDefault();
             if (!syncConfigured()) {
                 alert(
-                    'Set wallOfFameProxyUrl + wallOfFameTeamKey (team proxy), or githubToken (direct API) in DonkeyCODE prefs.'
+                    'Enable GitHub sync in DonkeyCODE settings (same PAT as session sync), or set team proxy URL + key in Wall of Fame prefs.'
                 );
                 return;
             }
@@ -856,11 +855,11 @@
         imp.textContent = 'Fetch from GitHub';
         imp.title = proxyConfigured()
             ? 'Fetch via team proxy'
-            : 'GET ' + resolvedGithubFilePath() + ' and merge (DonkeyCODE GitHub prefs or githubToken)';
+            : 'GET ' + resolvedGithubFilePath() + ' and merge (DonkeyCODE GitHub session sync settings)';
         imp.addEventListener('click', function(ev) {
             ev.preventDefault();
             if (!syncConfigured()) {
-                alert('Set proxy URL + team key, or githubToken in DonkeyCODE prefs.');
+                alert('Set GitHub in DonkeyCODE settings, or proxy URL + team key in Wall of Fame prefs.');
                 return;
             }
             fetchCloud(function(remote) {
@@ -881,7 +880,7 @@
         hint.className = 'dc-wof-hint';
         hint.textContent = proxyConfigured()
             ? 'Sync via team proxy (GitHub App on server). Local copy in localStorage. Add proxy host to @connect if needed.'
-            : 'Same GitHub API as DonkeyCODE session sync: donkeycode_github_pat/owner/repo/branch (+ optional sessions root → …/wall-of-fame.json). Fallback githubToken. Local: localStorage.';
+            : 'Uses the same GitHub token and repo as DonkeyCODE session sync (extension settings). File: …/wall-of-fame.json under sessions root or WALL of FAME/. Local cache: localStorage.';
         wrap.appendChild(hint);
 
         syncEditPanelVisibility(panel);

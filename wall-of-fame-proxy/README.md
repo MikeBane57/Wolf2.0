@@ -57,4 +57,4 @@ Deploy behind **HTTPS** in production. Add your proxy base URL to DonkeyCODE **`
 - **`wallOfFameProxyUrl`** — HTTPS base URL of this service (no trailing slash required).
 - **`wallOfFameTeamKey`** — same value as `WOF_TEAM_KEY`.
 
-If both are set, the script uses the proxy. Otherwise it falls back to **`githubToken`** (direct GitHub API) if set.
+If both are set, the script uses the proxy. Otherwise the userscript uses the **same `donkeycode_github_*` keys as DonkeyCODE session sync** (extension settings PAT) — no separate userscript PAT.
