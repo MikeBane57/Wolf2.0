@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.8.0
+// @version      1.8.1
 // @description  Button near GMT clock: METAR/TAF, FAA RVR when available, NWS radar + AFD, alerts on change
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -1055,20 +1055,16 @@
         );
     }
 
-    function markViewedFromCache() {
-        var snap = {};
-        var i;
-        for (i = 0; i < stationList.length; i++) {
-            var icao = icaoFor(stationList[i]);
-            if (icao && cacheByIcao[icao]) {
-                var r = cacheByIcao[icao];
-                snap[icao] = { metar: r.metar, taf: r.taf };
-            }
+    /** Mark one airport as viewed (METAR/TAF snapshot + clear its pending highlight). */
+    function markStationViewed(iata) {
+        var icao = icaoFor(iata);
+        if (!icao || !cacheByIcao[icao]) {
+            return;
         }
-        viewedSnapshot = snap;
+        var r = cacheByIcao[icao];
+        viewedSnapshot[icao] = { metar: r.metar, taf: r.taf };
         saveViewedSnapshot(viewedSnapshot);
-        notifyShownForCurrent = {};
-        pendingChangeTime = {};
+        delete pendingChangeTime[iata];
         updateAlertState();
     }
 
@@ -1086,6 +1082,9 @@
                 refreshThisBtn.disabled = false;
             }
             setStatusBar(stationListLabel(selectedIata) + ' · updated ' + new Date().toLocaleTimeString());
+            if (selectedIata) {
+                markStationViewed(selectedIata);
+            }
             renderStationList();
             if (selectedIata) {
                 renderDetail(selectedIata);
@@ -1203,7 +1202,7 @@
                 });
                 row.addEventListener('click', function () {
                     selectedIata = iata;
-                    delete pendingChangeTime[iata];
+                    markStationViewed(iata);
                     renderStationList();
                     renderDetail(iata);
                 });
@@ -1241,6 +1240,7 @@
             detailEl.innerHTML = '<div style="color:#95a5a6;font-family:system-ui,sans-serif;">Loading…</div>';
             fetchWeatherForIata(iata, function () {
                 if (selectedIata === iata) {
+                    markStationViewed(iata);
                     renderDetail(iata);
                 }
             });
@@ -1352,8 +1352,8 @@
                 renderStationList();
                 if (selectedIata) {
                     renderDetail(selectedIata);
+                    markStationViewed(selectedIata);
                 }
-                markViewedFromCache();
                 setStatusBar('Ready · ' + new Date().toLocaleTimeString());
             },
             function (iata, rec, done, total) {
@@ -1513,7 +1513,6 @@
         backdrop.style.background = 'rgba(0,0,0,0.45)';
         backdrop.style.zIndex = '10000000';
         backdrop.addEventListener('click', function () {
-            markViewedFromCache();
             closeModal();
         });
 
@@ -1594,7 +1593,6 @@
         closeB.style.cursor = 'pointer';
         closeB.style.lineHeight = '1';
         closeB.addEventListener('click', function () {
-            markViewedFromCache();
             closeModal();
         });
         header.appendChild(headerTitle);
@@ -1776,7 +1774,6 @@
 
         onDocKey = function (e) {
             if (e.key === 'Escape' && modal && modal.style.display === 'flex') {
-                markViewedFromCache();
                 closeModal();
             }
         };
