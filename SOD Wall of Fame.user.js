@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.6.2
+// @version      2.7.0
 // @description  FIMS tab: Wall of Fame; data from WALL of FAME/wall-of-fame.json + local cache (no baked-in accolades)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -84,6 +84,8 @@
     var SESSION_KEY = 'dc_wof_unlocked';
     var EDIT_PASSWORD = 'DonkeyWall';
     var editPanelOpen = false;
+    /** When set, that card shows inline edit fields (unlock + Edit panel open). */
+    var wofEditingId = null;
 
     var rootMo = null;
     var onPopState = null;
@@ -100,6 +102,33 @@
             return def;
         }
         return v;
+    }
+
+    function wofAppendPublishLog(panel, msg) {
+        var line =
+            '[' +
+            new Date().toISOString().replace('T', ' ').slice(0, 23) +
+            '] ' +
+            msg;
+        try {
+            console.info('[Wall of Fame]', msg);
+        } catch (e) {}
+        var el = panel
+            ? panel.querySelector('#dc-wof-publish-log')
+            : document.getElementById('dc-wof-publish-log');
+        if (el) {
+            el.textContent = (el.textContent ? el.textContent + '\n' : '') + line;
+            el.scrollTop = el.scrollHeight;
+        }
+    }
+
+    function wofClearPublishLog(panel) {
+        var el = panel
+            ? panel.querySelector('#dc-wof-publish-log')
+            : document.getElementById('dc-wof-publish-log');
+        if (el) {
+            el.textContent = '';
+        }
     }
 
     function proxyBaseUrl() {
@@ -632,23 +661,51 @@
         });
     }
 
-    function postCloud(entries, cb) {
-        var panel = document.getElementById(PANEL_ID);
+    function postCloud(entries, cb, panelOpt) {
+        var panel = panelOpt || document.getElementById(PANEL_ID);
+        var owner = resolvedWallOfFameDataOwner();
+        var repo = resolvedWallOfFameDataRepo();
+        var branch = resolvedWallOfFameDataBranch();
+        var path = resolvedGithubFilePath();
+        var mode = proxyConfigured()
+            ? 'proxy'
+            : actionsModeConfigured()
+              ? 'actions'
+              : 'contents';
+
+        wofAppendPublishLog(panel, 'Publish start — mode: ' + mode + ', repo: ' + owner + '/' + repo + '@' + branch + ', path: ' + path);
+        if (mode === 'actions') {
+            wofAppendPublishLog(
+                panel,
+                'Actions: POST /repos/' + owner + '/' + repo + '/dispatches (needs repo scope + workflow scope on PAT if GitHub requires it)'
+            );
+        } else if (mode === 'contents') {
+            wofAppendPublishLog(panel, 'Direct: PUT Contents API (PAT needs Contents write on ' + owner + '/' + repo + ')');
+        }
 
         function doGithubPut() {
+            wofAppendPublishLog(panel, 'GET file metadata + SHA for merge…');
             githubGetFile(function(remote, sha) {
+                if (remote === null && sha === null) {
+                    wofAppendPublishLog(panel, 'Note: file missing or GET failed (HTTP not 2xx). Attempting create/update anyway.');
+                } else {
+                    wofAppendPublishLog(panel, 'Remote entries: ' + (remote ? remote.length : 0) + ', sha: ' + (sha ? sha.slice(0, 7) + '…' : '(new file)'));
+                }
                 var merged = mergeEntries(entries, remote || []);
                 entriesState = merged;
                 saveLocal(entriesState);
                 if (panel) {
                     render(panel);
                 }
+                wofAppendPublishLog(panel, 'PUT merged ' + merged.length + ' entries…');
                 githubPutFile(merged, sha, function(ok, err) {
                     if (ok) {
+                        wofAppendPublishLog(panel, 'PUT succeeded (HTTP 200/201).');
                         cb(true, null);
                         return;
                     }
                     if (err === 'conflict') {
+                        wofAppendPublishLog(panel, '409 conflict — refetching and retrying once…');
                         githubGetFile(function(remote2, sha2) {
                             var merged2 = mergeEntries(entriesState, remote2 || []);
                             entriesState = merged2;
@@ -657,17 +714,24 @@
                                 render(panel);
                             }
                             githubPutFile(merged2, sha2, function(ok2, err2) {
+                                if (ok2) {
+                                    wofAppendPublishLog(panel, 'Retry PUT succeeded.');
+                                } else {
+                                    wofAppendPublishLog(panel, 'Retry failed: ' + (err2 || ''));
+                                }
                                 cb(ok2, err2 || null);
                             });
                         });
                         return;
                     }
+                    wofAppendPublishLog(panel, 'PUT error: ' + (err || ''));
                     cb(false, err || 'GitHub PUT failed');
                 });
             });
         }
 
         if (proxyConfigured()) {
+            wofAppendPublishLog(panel, 'GET via proxy…');
             proxyGetFile(function(remote) {
                 var merged = mergeEntries(entries, remote || []);
                 entriesState = merged;
@@ -679,12 +743,15 @@
                     entries: merged,
                     updatedAt: Date.now()
                 };
+                wofAppendPublishLog(panel, 'PUT via proxy…');
                 proxyPutDocument(doc, function(ok, err) {
                     if (ok) {
+                        wofAppendPublishLog(panel, 'Proxy PUT OK.');
                         cb(true, null);
                         return;
                     }
                     if (err === 'conflict') {
+                        wofAppendPublishLog(panel, 'Proxy conflict — retry…');
                         proxyGetFile(function(remote2) {
                             var merged2 = mergeEntries(entriesState, remote2 || []);
                             entriesState = merged2;
@@ -695,12 +762,16 @@
                             proxyPutDocument(
                                 { entries: merged2, updatedAt: Date.now() },
                                 function(ok2, err2) {
+                                    if (!ok2) {
+                                        wofAppendPublishLog(panel, 'Retry: ' + (err2 || ''));
+                                    }
                                     cb(ok2, err2 || null);
                                 }
                             );
                         });
                         return;
                     }
+                    wofAppendPublishLog(panel, 'Proxy error: ' + (err || ''));
                     cb(false, err || 'Proxy publish failed');
                 });
             });
@@ -709,14 +780,15 @@
 
         if (actionsModeConfigured()) {
             if (!actionsPublishConfigured()) {
-                cb(
-                    false,
-                    'Actions mode: set donkeycode_github_pat (repo scope) to trigger workflow, and repo secret WOF_TEAM_KEY must match wallOfFameTeamKey.'
-                );
+                var msg =
+                    'Actions mode: set donkeycode_github_pat (repo scope; add workflow if dispatch returns 403) and wallOfFameTeamKey must match WOF_TEAM_KEY.';
+                wofAppendPublishLog(panel, msg);
+                cb(false, msg);
                 return;
             }
             rawGithubGet(function(remote) {
                 if (remote === null && githubConfigured()) {
+                    wofAppendPublishLog(panel, 'raw.githubusercontent.com failed; trying Contents API GET…');
                     githubGetFile(function(r2) {
                         runActionsDispatch(r2 || []);
                     });
@@ -738,20 +810,28 @@
                 entries: merged,
                 updatedAt: Date.now()
             };
+            wofAppendPublishLog(panel, 'POST repository_dispatch (event wall-of-fame-put), payload entries: ' + merged.length);
             githubRepositoryDispatch(doc, function(ok, err) {
                 if (ok) {
+                    wofAppendPublishLog(panel, 'Dispatch accepted (HTTP 204). Check Actions tab on GitHub.');
                     cb(true, null);
                     return;
                 }
-                cb(false, err || 'repository_dispatch failed');
+                var detail = err || 'repository_dispatch failed';
+                if (String(detail).indexOf('403') !== -1) {
+                    detail +=
+                        ' — PAT may need workflow scope, or enable workflow permissions for GITHUB_TOKEN in repo Settings → Actions.';
+                }
+                wofAppendPublishLog(panel, 'Dispatch failed: ' + detail);
+                cb(false, detail);
             });
         }
 
         if (!githubConfigured()) {
-            cb(
-                false,
-                'Set GitHub in DonkeyCODE settings (session sync), wallOfFameUseGithubActions + team key, or wallOfFameProxyUrl + team key.'
-            );
+            var need =
+                'Set donkeycode_github_pat in DonkeyCODE, or enable proxy URL + key, or Actions + team key + PAT.';
+            wofAppendPublishLog(panel, need);
+            cb(false, need);
             return;
         }
         doGithubPut();
@@ -782,6 +862,10 @@
             '#' + PANEL_ID + ' .dc-wof-card-h{font-weight:700;font-size:1rem;color:#fff;line-height:1.3;}',
             '#' + PANEL_ID + ' .dc-wof-card-n{margin-top:8px;font-size:.95rem;color:#ffd700;font-weight:600;}',
             '#' + PANEL_ID + ' .dc-wof-card-note{margin-top:4px;font-size:.78rem;opacity:.75;font-style:italic;}',
+            '#' + PANEL_ID + ' .dc-wof-card-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}',
+            '#' + PANEL_ID + ' .dc-wof-card-actions button{font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.25);',
+            'background:rgba(0,0,0,.2);color:#eee;cursor:pointer;}',
+            '#' + PANEL_ID + ' .dc-wof-card-actions button.dc-wof-card-del{border-color:rgba(255,120,120,.5);color:#ffb4b4;}',
             '#' + PANEL_ID + ' .dc-wof-edit{display:none;margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.12);}',
             '#' + PANEL_ID + ' .dc-wof-edit label{display:block;font-size:.72rem;opacity:.85;margin-bottom:4px;}',
             '#' + PANEL_ID + ' .dc-wof-edit input,.dc-wof-edit textarea{width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.25);color:#fff;margin-bottom:8px;font-size:13px;}',
@@ -791,7 +875,10 @@
             '#' + PANEL_ID + ' .dc-wof-btn-gold{background:linear-gradient(135deg,#b8860b,#ffd700);color:#2a1a00;}',
             '#' + PANEL_ID + ' .dc-wof-btn-sec{background:rgba(255,255,255,.12);color:#eee;}',
             '#' + PANEL_ID + ' .dc-wof-list{margin:8px 0 0;padding-left:1.1em;font-size:.8rem;opacity:.9;}',
-            '#' + PANEL_ID + ' .dc-wof-hint{font-size:.65rem;opacity:.6;margin-top:10px;line-height:1.4;}'
+            '#' + PANEL_ID + ' .dc-wof-hint{font-size:.65rem;opacity:.6;margin-top:10px;line-height:1.4;}',
+            '#' + PANEL_ID + ' #dc-wof-publish-log{display:block;width:100%;max-height:120px;overflow:auto;margin-top:10px;padding:8px;',
+            'font-family:ui-monospace,monospace;font-size:10px;line-height:1.35;white-space:pre-wrap;word-break:break-word;',
+            'background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#c8e0ff;}'
         ].join('');
         var st = document.createElement('style');
         st.id = STYLE_ID;
@@ -801,8 +888,8 @@
 
     var entriesState = loadLocal();
 
-    function renderCards(container) {
-        var grid = container.querySelector('.dc-wof-grid');
+    function renderCards(panel) {
+        var grid = panel.querySelector('.dc-wof-grid');
         if (!grid) {
             return;
         }
@@ -810,6 +897,7 @@
         var list = entriesState.slice().sort(function(a, b) {
             return (a.sortOrder || 0) - (b.sortOrder || 0);
         });
+        var showCardActions = editPanelOpen && isUnlocked();
         if (list.length === 0) {
             var empty = document.createElement('div');
             empty.className = 'dc-wof-card';
@@ -822,29 +910,165 @@
         }
         var i;
         for (i = 0; i < list.length; i++) {
-            var e = list[i];
-            var card = document.createElement('div');
-            card.className = 'dc-wof-card';
-            card.dataset.entryId = e.id;
-            var t = document.createElement('div');
-            t.className = 'dc-wof-card-t';
-            t.textContent = 'Accolade';
-            var h = document.createElement('div');
-            h.className = 'dc-wof-card-h';
-            h.textContent = e.title;
-            var n = document.createElement('div');
-            n.className = 'dc-wof-card-n';
-            n.textContent = e.holder;
-            card.appendChild(t);
-            card.appendChild(h);
-            card.appendChild(n);
-            if (e.note) {
-                var note = document.createElement('div');
-                note.className = 'dc-wof-card-note';
-                note.textContent = e.note;
-                card.appendChild(note);
-            }
-            grid.appendChild(card);
+            (function(ent) {
+                var e = ent;
+                var card = document.createElement('div');
+                card.className = 'dc-wof-card';
+                card.dataset.entryId = e.id;
+                var t = document.createElement('div');
+                t.className = 'dc-wof-card-t';
+                t.textContent = 'Accolade';
+                var h = document.createElement('div');
+                h.className = 'dc-wof-card-h';
+                h.textContent = e.title;
+                var n = document.createElement('div');
+                n.className = 'dc-wof-card-n';
+                n.textContent = e.holder;
+                card.appendChild(t);
+                card.appendChild(h);
+                card.appendChild(n);
+                if (e.note) {
+                    var note = document.createElement('div');
+                    note.className = 'dc-wof-card-note';
+                    note.textContent = e.note;
+                    card.appendChild(note);
+                }
+
+                if (showCardActions) {
+                    var actions = document.createElement('div');
+                    actions.className = 'dc-wof-card-actions';
+                    var editBtn = document.createElement('button');
+                    editBtn.type = 'button';
+                    editBtn.className = 'dc-wof-btn-sec';
+                    editBtn.textContent = wofEditingId === e.id ? 'Cancel edit' : 'Edit';
+                    editBtn.addEventListener('click', function(ev) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        wofEditingId = wofEditingId === e.id ? null : e.id;
+                        renderCards(panel);
+                    });
+                    var delBtn = document.createElement('button');
+                    delBtn.type = 'button';
+                    delBtn.className = 'dc-wof-card-del';
+                    delBtn.textContent = 'Delete';
+                    delBtn.addEventListener('click', function(ev) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        if (!confirm('Remove this accolade?')) {
+                            return;
+                        }
+                        if (wofEditingId === e.id) {
+                            wofEditingId = null;
+                        }
+                        entriesState = entriesState.filter(function(x) {
+                            return x.id !== e.id;
+                        });
+                        saveLocal(entriesState);
+                        renderCards(panel);
+                    });
+                    actions.appendChild(editBtn);
+                    actions.appendChild(delBtn);
+                    card.appendChild(actions);
+                }
+
+                if (showCardActions && wofEditingId === e.id) {
+                    var labT = document.createElement('label');
+                    labT.style.fontSize = '0.72rem';
+                    labT.style.opacity = '0.85';
+                    labT.style.display = 'block';
+                    labT.style.marginTop = '8px';
+                    labT.textContent = 'Title';
+                    var inT = document.createElement('input');
+                    inT.type = 'text';
+                    inT.value = e.title;
+                    inT.setAttribute('autocomplete', 'off');
+                    inT.setAttribute('data-lpignore', 'true');
+                    inT.style.width = '100%';
+                    inT.style.boxSizing = 'border-box';
+                    inT.style.marginBottom = '6px';
+                    var labH = document.createElement('label');
+                    labH.style.fontSize = '0.72rem';
+                    labH.style.opacity = '0.85';
+                    labH.style.display = 'block';
+                    labH.textContent = 'Holder';
+                    var inH = document.createElement('input');
+                    inH.type = 'text';
+                    inH.value = e.holder;
+                    inH.setAttribute('autocomplete', 'off');
+                    inH.setAttribute('data-lpignore', 'true');
+                    inH.style.width = '100%';
+                    inH.style.boxSizing = 'border-box';
+                    inH.style.marginBottom = '6px';
+                    var labN = document.createElement('label');
+                    labN.style.fontSize = '0.72rem';
+                    labN.style.opacity = '0.85';
+                    labN.style.display = 'block';
+                    labN.textContent = 'Note (optional)';
+                    var inN = document.createElement('input');
+                    inN.type = 'text';
+                    inN.value = e.note || '';
+                    inN.setAttribute('autocomplete', 'off');
+                    inN.setAttribute('data-lpignore', 'true');
+                    inN.style.width = '100%';
+                    inN.style.boxSizing = 'border-box';
+                    inN.style.marginBottom = '6px';
+                    var row = document.createElement('div');
+                    row.className = 'dc-wof-btns';
+                    row.style.marginTop = '4px';
+                    var saveBtn = document.createElement('button');
+                    saveBtn.type = 'button';
+                    saveBtn.className = 'dc-wof-btn-gold';
+                    saveBtn.textContent = 'Save';
+                    saveBtn.addEventListener('click', function(ev) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        var title = inT.value.trim();
+                        var holder = inH.value.trim();
+                        if (!title || !holder) {
+                            alert('Title and holder are required.');
+                            return;
+                        }
+                        var j;
+                        for (j = 0; j < entriesState.length; j++) {
+                            if (entriesState[j].id === e.id) {
+                                entriesState[j] = normalizeEntry({
+                                    id: e.id,
+                                    title: title,
+                                    holder: holder,
+                                    note: inN.value.trim(),
+                                    sortOrder: entriesState[j].sortOrder,
+                                    updatedAt: Date.now()
+                                });
+                                break;
+                            }
+                        }
+                        saveLocal(entriesState);
+                        wofEditingId = null;
+                        renderCards(panel);
+                    });
+                    var cancelBtn = document.createElement('button');
+                    cancelBtn.type = 'button';
+                    cancelBtn.className = 'dc-wof-btn-sec';
+                    cancelBtn.textContent = 'Cancel';
+                    cancelBtn.addEventListener('click', function(ev) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        wofEditingId = null;
+                        renderCards(panel);
+                    });
+                    row.appendChild(saveBtn);
+                    row.appendChild(cancelBtn);
+                    card.appendChild(labT);
+                    card.appendChild(inT);
+                    card.appendChild(labH);
+                    card.appendChild(inH);
+                    card.appendChild(labN);
+                    card.appendChild(inN);
+                    card.appendChild(row);
+                }
+
+                grid.appendChild(card);
+            })(list[i]);
         }
     }
 
@@ -857,6 +1081,12 @@
         if (btn) {
             btn.textContent = editPanelOpen ? 'Hide editor' : 'Edit';
             btn.setAttribute('aria-expanded', editPanelOpen ? 'true' : 'false');
+        }
+        if (!editPanelOpen) {
+            wofEditingId = null;
+        }
+        if (panel) {
+            renderCards(panel);
         }
     }
 
@@ -889,6 +1119,8 @@
                 ev.preventDefault();
                 if (inp.value === EDIT_PASSWORD) {
                     setUnlocked(true);
+                    wofEditingId = null;
+                    renderCards(panel);
                     renderEditSection(panel);
                 } else {
                     alert('Incorrect password.');
@@ -909,6 +1141,8 @@
             ev.preventDefault();
             setUnlocked(false);
             editPanelOpen = false;
+            wofEditingId = null;
+            renderCards(panel);
             renderEditSection(panel);
         });
         wrap.appendChild(lockBtn);
@@ -973,7 +1207,6 @@
             tb.value = '';
             tc.value = '';
             renderCards(panel);
-            renderEntryList(panel);
         });
 
         wrap.appendChild(document.createElement('hr'));
@@ -985,10 +1218,13 @@
         wrap.appendChild(tc);
         wrap.appendChild(addBtn);
 
-        var ul = document.createElement('ul');
-        ul.className = 'dc-wof-list';
-        wrap.appendChild(ul);
-        renderEntryList(panel);
+        var editHint = document.createElement('p');
+        editHint.style.fontSize = '0.72rem';
+        editHint.style.opacity = '0.8';
+        editHint.style.marginTop = '10px';
+        editHint.textContent =
+            'Edit or delete entries on each card above (scroll up). Use Publish to push changes to GitHub.';
+        wrap.appendChild(editHint);
 
         var pub = document.createElement('button');
         pub.type = 'button';
@@ -1007,13 +1243,19 @@
                 );
                 return;
             }
+            wofClearPublishLog(panel);
             postCloud(entriesState, function(ok, err) {
                 if (ok) {
-                    alert('Published.');
+                    alert('Published. See the debug log at the bottom of the panel.');
                 } else {
-                    alert('Publish failed: ' + (err || 'unknown'));
+                    wofAppendPublishLog(panel, 'FAILED: ' + (err || 'unknown'));
+                    alert(
+                        'Publish failed: ' +
+                            (err || 'unknown') +
+                            '\n\nSee the debug log at the bottom of this panel and the console [Wall of Fame].'
+                    );
                 }
-            });
+            }, panel);
         });
         wrap.appendChild(pub);
 
@@ -1042,7 +1284,6 @@
                 entriesState = mergeEntries(entriesState, remote);
                 saveLocal(entriesState);
                 renderCards(panel);
-                renderEntryList(panel);
                 alert('Merged from repo: ' + remote.length + ' entr' + (remote.length === 1 ? 'y' : 'ies') + '.');
             });
         });
@@ -1054,48 +1295,10 @@
             ? 'Sync via team proxy (GitHub App on server). Local copy in localStorage. Add proxy host to @connect if needed.'
             : actionsModeConfigured()
               ? 'Actions mode: repo secret WOF_TEAM_KEY must match wallOfFameTeamKey. Publish needs PAT (repository_dispatch). Fetch uses raw.githubusercontent.com if public.'
-              : 'Direct API: same PAT/repo as DonkeyCODE session sync. File under sessions root or WALL of FAME/. Local: localStorage.';
+              : 'Direct API: PAT from DonkeyCODE; data file repo is wallOfFameData* (default Wolf2.0). Local: localStorage.';
         wrap.appendChild(hint);
 
         syncEditPanelVisibility(panel);
-    }
-
-    function renderEntryList(panel) {
-        var ul = panel.querySelector('.dc-wof-list');
-        if (!ul || !isUnlocked()) {
-            return;
-        }
-        ul.innerHTML = '';
-        var list = entriesState.slice().sort(function(a, b) {
-            return (a.sortOrder || 0) - (b.sortOrder || 0);
-        });
-        var i;
-        for (i = 0; i < list.length; i++) {
-            (function(ent) {
-                var li = document.createElement('li');
-                li.style.marginBottom = '6px';
-                li.textContent = ent.title + ' — ' + ent.holder + ' ';
-                var del = document.createElement('button');
-                del.type = 'button';
-                del.textContent = 'Remove';
-                del.style.fontSize = '11px';
-                del.style.marginLeft = '6px';
-                del.style.cursor = 'pointer';
-                del.addEventListener('click', function(ev) {
-                    ev.preventDefault();
-                    if (confirm('Remove this entry?')) {
-                        entriesState = entriesState.filter(function(x) {
-                            return x.id !== ent.id;
-                        });
-                        saveLocal(entriesState);
-                        renderCards(panel);
-                        renderEntryList(panel);
-                    }
-                });
-                li.appendChild(del);
-                ul.appendChild(li);
-            })(list[i]);
-        }
     }
 
     function render(panel) {
@@ -1350,6 +1553,11 @@
         var edit = document.createElement('div');
         edit.className = 'dc-wof-edit';
         inner.appendChild(edit);
+
+        var pubLog = document.createElement('pre');
+        pubLog.id = 'dc-wof-publish-log';
+        pubLog.setAttribute('aria-label', 'Publish debug log');
+        inner.appendChild(pubLog);
 
         panel.appendChild(inner);
         table.parentNode.insertBefore(panel, table);
