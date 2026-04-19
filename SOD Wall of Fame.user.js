@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.5.0
+// @version      2.5.2
 // @description  FIMS tab: Wall of Fame; local + sync (proxy, GitHub PAT, or Actions+repo secret WOF_TEAM_KEY)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
 // @connect      *
-// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameUseGithubActions":{"type":"boolean","group":"Wall of Fame — GitHub Actions","label":"Use Actions + repo secret","description":"If on: fetch from raw.githubusercontent.com; publish via repository_dispatch. Set repo secret WOF_TEAM_KEY to match wallOfFameTeamKey. Publish still needs donkeycode_github_pat to trigger the workflow.","default":false},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"Team key (matches WOF_TEAM_KEY)","description":"Same value as repository secret WOF_TEAM_KEY (Settings → Secrets). Not the GitHub PAT.","default":"","placeholder":""},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy. If set with team key, overrides Actions mode for sync.","default":"","placeholder":"https://wof.example.com"}}
+// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameUseGithubActions":{"type":"boolean","group":"Wall of Fame — GitHub Actions","label":"Use Actions + repo secret","description":"If on: fetch from raw.githubusercontent.com; publish via repository_dispatch. Set repo secret WOF_TEAM_KEY to match wallOfFameTeamKey. Publish still needs donkeycode_github_pat to trigger the workflow.","default":false},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"Team key (matches WOF_TEAM_KEY)","description":"Same value as repository secret WOF_TEAM_KEY (Settings → Secrets). Not the GitHub PAT.","default":"","placeholder":""},"wallOfFameRepoPath":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"JSON path in repo (optional)","description":"Path to wall-of-fame.json in Wolf2.0, e.g. WALL of FAME/wall-of-fame.json. Leave empty for default. Do not use session sync folder unless your file lives there.","default":"","placeholder":"WALL of FAME/wall-of-fame.json"},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy. If set with team key, overrides Actions mode for sync.","default":"","placeholder":"https://wof.example.com"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // ==/UserScript==
@@ -53,14 +53,14 @@
         return b || GITHUB_BRANCH;
     }
 
-    /** Same idea as session files under sessions root: optional nested path for wall-of-fame.json */
+    /**
+     * Path to wall-of-fame.json in the repo. Not derived from donkeycode_github_sessions_root
+     * (that path is for session files and breaks WoF if set to e.g. sessions/).
+     */
     function resolvedGithubFilePath() {
-        var root = String(getPref('donkeycode_github_sessions_root', '') || '')
-            .trim()
-            .replace(/^\/+/, '')
-            .replace(/\/+$/, '');
-        if (root) {
-            return root + '/wall-of-fame.json';
+        var custom = String(getPref('wallOfFameRepoPath', '') || '').trim();
+        if (custom) {
+            return custom.replace(/^\/+/, '');
         }
         return WALL_OF_FAME_FILE_PATH;
     }
@@ -216,25 +216,30 @@
             '/dispatches';
         var headers = githubApiHeaders();
         headers['Content-Type'] = 'application/json';
+        var payload = {
+            team_key: proxyTeamKey(),
+            document: doc,
+            path: resolvedGithubFilePath()
+        };
         var body = {
             event_type: 'wall-of-fame-put',
-            client_payload: {
-                team_key: proxyTeamKey(),
-                document: doc
-            }
+            client_payload: payload
         };
         GM_xmlhttpRequest({
             method: 'POST',
             url: url,
             headers: headers,
-            data: body,
+            data: JSON.stringify(body),
             onload: function(res) {
                 var st = res.status || 0;
                 if (st === 204) {
                     cb(true, null);
                     return;
                 }
-                cb(false, 'Dispatch HTTP ' + st + ' ' + (res.responseText || '').slice(0, 200));
+                cb(
+                    false,
+                    'Dispatch HTTP ' + st + ' ' + (res.responseText || '').slice(0, 400)
+                );
             },
             onerror: function() {
                 cb(false, 'Network error');
@@ -274,11 +279,15 @@
         if (hasBody) {
             headers['Content-Type'] = 'application/json';
         }
+        var pdata = undefined;
+        if (hasBody) {
+            pdata = typeof bodyObj === 'string' ? bodyObj : JSON.stringify(bodyObj);
+        }
         GM_xmlhttpRequest({
             method: method,
             url: url,
             headers: headers,
-            data: hasBody ? bodyObj : undefined,
+            data: pdata,
             onload: function(res) {
                 cb(res.status || 0, res.responseText || '');
             },
@@ -436,11 +445,15 @@
         if (hasBody) {
             headers['Content-Type'] = 'application/json';
         }
+        var payload = undefined;
+        if (hasBody) {
+            payload = typeof bodyObj === 'string' ? bodyObj : JSON.stringify(bodyObj);
+        }
         GM_xmlhttpRequest({
             method: method,
             url: url,
             headers: headers,
-            data: hasBody ? bodyObj : undefined,
+            data: payload,
             onload: function(res) {
                 cb(res.status || 0, res.responseText || '');
             },
@@ -1033,15 +1046,17 @@
                 return;
             }
             fetchCloud(function(remote) {
-                if (remote && remote.length) {
-                    entriesState = mergeEntries(entriesState, remote);
-                    saveLocal(entriesState);
-                    renderCards(panel);
-                    renderEntryList(panel);
-                    alert('Merged ' + remote.length + ' entries from repo.');
-                } else {
-                    alert('No data or could not load (check proxy, team key, or PAT).');
+                if (remote === null) {
+                    alert(
+                        'Could not load (check Actions + team key, PAT, @connect, or wallOfFameRepoPath). See browser / extension service worker logs.'
+                    );
+                    return;
                 }
+                entriesState = mergeEntries(entriesState, remote);
+                saveLocal(entriesState);
+                renderCards(panel);
+                renderEntryList(panel);
+                alert('Merged from repo: ' + remote.length + ' entr' + (remote.length === 1 ? 'y' : 'ies') + '.');
             });
         });
         wrap.appendChild(imp);
@@ -1351,7 +1366,7 @@
 
         if (syncConfigured()) {
             fetchCloud(function(remote) {
-                if (remote && remote.length) {
+                if (remote !== null) {
                     entriesState = mergeEntries(entriesState, remote);
                     saveLocal(entriesState);
                     render(panel);

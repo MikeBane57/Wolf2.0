@@ -24,8 +24,11 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const path = require('path');
+            const core = require('@actions/core');
             const expected = process.env.WOF_TEAM_KEY;
-            const got = context.payload.client_payload && context.payload.client_payload.team_key;
+            const cp = context.payload.client_payload || {};
+            const got = cp.team_key;
             if (!expected) {
               core.setFailed('Repository secret WOF_TEAM_KEY is not set (Settings → Secrets and variables → Actions).');
               return;
@@ -34,24 +37,28 @@ jobs:
               core.setFailed('Invalid team key.');
               return;
             }
-            const doc = context.payload.client_payload.document;
+            const doc = cp.document;
             if (!doc || typeof doc !== 'object' || !Array.isArray(doc.entries)) {
               core.setFailed('client_payload.document must be { entries: [], updatedAt?: number }');
               return;
             }
             doc.updatedAt = Number(doc.updatedAt) || Date.now();
-            fs.mkdirSync('WALL of FAME', { recursive: true });
-            fs.writeFileSync(
-              'WALL of FAME/wall-of-fame.json',
-              JSON.stringify(doc, null, 2) + '\n',
-              'utf8'
-            );
+            let rel = (cp.path && String(cp.path).trim()) || 'WALL of FAME/wall-of-fame.json';
+            rel = rel.replace(/^\/+/, '').replace(/\.\./g, '');
+            const dir = path.dirname(rel);
+            if (dir && dir !== '.') {
+              fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(rel, JSON.stringify(doc, null, 2) + '\n', 'utf8');
+            fs.writeFileSync('wof-git-path.txt', rel, 'utf8');
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "WALL of FAME/wall-of-fame.json"
+          REL="$(cat wof-git-path.txt)"
+          git add -- "$REL"
+          rm -f wof-git-path.txt
           if git diff --staged --quiet; then
             echo "No changes."
             exit 0

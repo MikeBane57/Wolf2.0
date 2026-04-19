@@ -9,8 +9,10 @@ Browser code **cannot** read **repository secrets**. The pattern:
 
 The workflow **`.github/workflows/wall-of-fame-sync.yml`** compares `client_payload.team_key` to **`secrets.WOF_TEAM_KEY`**, then commits **`WALL of FAME/wall-of-fame.json`** with `GITHUB_TOKEN`.
 
-**Fetch:** the script reads the public raw file  
-`https://raw.githubusercontent.com/<owner>/<repo>/<branch>/WALL%20of%20FAME/wall-of-fame.json`  
-(no token if the repo is public). Private repos need a PAT and fall back to the Contents API for GET.
+**Path:** default file is **`WALL of FAME/wall-of-fame.json`**. If session sync uses a different sessions root, set userscript pref **`wallOfFameRepoPath`** so fetch/dispatch match the file on disk (we no longer derive from `donkeycode_github_sessions_root`).
+
+**Fetch:** raw URL built from owner/repo/branch + that path. Private repo needs PAT for Contents API fallback.
+
+**Publish:** `repository_dispatch` body must be sent as **JSON string** in `GM_xmlhttpRequest` `data` (DonkeyCODE must forward body).
 
 **Limits:** `repository_dispatch` `client_payload` must stay under GitHub’s payload size limits (~65KB per field).
