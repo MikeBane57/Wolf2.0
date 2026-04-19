@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.2.0
-// @description  Highlight allowlisted tails (light blue); double-click to mail Anuvu; skips flight pucks
+// @version      1.2.1
+// @description  Highlight allowlisted tails (color from preset list); double-click to mail Anuvu; skips flight pucks
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"wifiResetHighlightEnabled":{"type":"boolean","group":"Wifi reset highlight","label":"Highlight allowlisted tails","description":"Color aircraft registrations that are in the wifi email list.","default":true},"wifiResetHighlightColor":{"type":"string","group":"Wifi reset highlight","label":"Tail text color","description":"CSS color for highlighted registrations (e.g. #87CEFA or lightblue).","default":"#87CEFA","placeholder":"#87CEFA"}}
+// @donkeycode-pref {"wifiResetHighlightEnabled":{"type":"boolean","group":"Wifi reset highlight","label":"Highlight allowlisted tails","description":"Color aircraft registrations that are in the wifi email list.","default":true},"wifiResetHighlightColor":{"type":"select","group":"Wifi reset highlight","label":"Tail highlight color","description":"Normal weight — only the color changes.","default":"#87CEFA","options":[{"value":"#87CEFA","label":"Sky blue"},{"value":"#ADD8E6","label":"Light blue"},{"value":"#B0E0E6","label":"Powder blue"},{"value":"#AFEEEE","label":"Pale turquoise"},{"value":"#7EC8E3","label":"Carolina blue"},{"value":"#6BB6FF","label":"Soft sky"},{"value":"#5DADE2","label":"Soft cyan"},{"value":"#48CAE4","label":"Bright sky"},{"value":"#89CFF0","label":"Baby blue"},{"value":"#9DD9F3","label":"Light cyan blue"},{"value":"#00BFFF","label":"Deep sky blue"},{"value":"#40E0D0","label":"Turquoise"}]}}
 // @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
@@ -89,7 +89,6 @@
         '[data-qe-id="as-flight-leg-puck"], [data-testid="puck-context-menu"], [class*="CScizp4RisE="]';
 
     var HIGHLIGHT_CLASS = 'dc-wifi-reset-tail';
-    var HIGHLIGHT_STYLE_ID = 'dc-wifi-reset-highlight-style';
 
     var onDblClickCapture = null;
     var highlightMo = null;
@@ -136,17 +135,10 @@
 
     function highlightColor() {
         var c = String(getPref('wifiResetHighlightColor', '#87CEFA') || '#87CEFA').trim();
-        return c || '#87CEFA';
-    }
-
-    function ensureHighlightStyle() {
-        if (document.getElementById(HIGHLIGHT_STYLE_ID)) {
-            return;
+        if (/^#[0-9A-Fa-f]{3,8}$/.test(c)) {
+            return c;
         }
-        var st = document.createElement('style');
-        st.id = HIGHLIGHT_STYLE_ID;
-        st.textContent = '.' + HIGHLIGHT_CLASS + '{font-weight:600;}';
-        (document.head || document.documentElement).appendChild(st);
+        return '#87CEFA';
     }
 
     function unwrapHighlights() {
@@ -265,7 +257,6 @@
             unwrapHighlights();
             return;
         }
-        ensureHighlightStyle();
         if (document.body) {
             walkForHighlight(document.body);
         }
@@ -357,10 +348,6 @@
             highlightMo = null;
         }
         unwrapHighlights();
-        var hs = document.getElementById(HIGHLIGHT_STYLE_ID);
-        if (hs && hs.parentNode) {
-            hs.parentNode.removeChild(hs);
-        }
         if (onDblClickCapture) {
             document.removeEventListener('dblclick', onDblClickCapture, true);
             onDblClickCapture = null;
