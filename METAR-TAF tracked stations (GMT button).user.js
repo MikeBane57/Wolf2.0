@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      1.8.1
+// @version      1.8.2
 // @description  Button near GMT clock: METAR/TAF, FAA RVR when available, NWS radar + AFD, alerts on change
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -194,9 +194,31 @@
         return icaoFor(iata) || String(iata || '').toUpperCase();
     }
 
-    function pendingChangeTs(iata) {
-        var t = pendingChangeTime[iata];
-        return typeof t === 'number' && Number.isFinite(t) ? t : 0;
+    function isStationStaleVersusViewed(iata) {
+        var icao = icaoFor(iata);
+        if (!icao || !cacheByIcao[icao]) {
+            return false;
+        }
+        var c = cacheByIcao[icao];
+        var v = viewedSnapshot[icao];
+        return !v || c.metar !== v.metar || c.taf !== v.taf;
+    }
+
+    /** Milliseconds for newest/oldest sort: first-seen pending time, else last fetch time if still stale. */
+    function sortKeyChangeOrFetch(iata) {
+        var pt = pendingChangeTime[iata];
+        if (typeof pt === 'number' && Number.isFinite(pt) && pt > 0) {
+            return pt;
+        }
+        if (!isStationStaleVersusViewed(iata)) {
+            return 0;
+        }
+        var icao = icaoFor(iata);
+        var r = icao && cacheByIcao[icao];
+        if (r && typeof r.t === 'number' && Number.isFinite(r.t)) {
+            return r.t;
+        }
+        return 0;
     }
 
     function displayStationOrder() {
@@ -216,14 +238,19 @@
         }
         if (sortMode === 'newest') {
             base.sort(function (a, b) {
-                return pendingChangeTs(b) - pendingChangeTs(a);
+                var ka = sortKeyChangeOrFetch(a);
+                var kb = sortKeyChangeOrFetch(b);
+                if (ka !== kb) {
+                    return kb - ka;
+                }
+                return indexOf[a] - indexOf[b];
             });
             return base;
         }
         if (sortMode === 'oldest') {
             base.sort(function (a, b) {
-                var ta = pendingChangeTs(a);
-                var tb = pendingChangeTs(b);
+                var ta = sortKeyChangeOrFetch(a);
+                var tb = sortKeyChangeOrFetch(b);
                 if (ta === 0 && tb === 0) {
                     return indexOf[a] - indexOf[b];
                 }
@@ -233,7 +260,10 @@
                 if (tb === 0) {
                     return -1;
                 }
-                return ta - tb;
+                if (ta !== tb) {
+                    return ta - tb;
+                }
+                return indexOf[a] - indexOf[b];
             });
             return base;
         }
@@ -952,7 +982,7 @@
             btn.removeAttribute('data-dc-metar-alert');
             badge.style.display = 'none';
         }
-        if (alertsPrimed && (!modal || modal.style.display !== 'flex')) {
+        if (alertsPrimed) {
             var nowTs = Date.now();
             var si;
             for (si = 0; si < stale.length; si++) {
