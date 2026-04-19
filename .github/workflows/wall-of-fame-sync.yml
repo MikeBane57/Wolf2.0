@@ -1,0 +1,60 @@
+# Wall of Fame: team key lives in repo secret WOF_TEAM_KEY (not readable from browsers).
+# Userscript sends repository_dispatch with the same key in client_payload; this workflow writes
+# WALL of FAME/wall-of-fame.json using GITHUB_TOKEN.
+name: Wall of Fame sync
+
+on:
+  repository_dispatch:
+    types: [wall-of-fame-put]
+
+permissions:
+  contents: write
+
+jobs:
+  update-json:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate team key and write JSON
+        uses: actions/github-script@v7
+        env:
+          WOF_TEAM_KEY: ${{ secrets.WOF_TEAM_KEY }}
+        with:
+          script: |
+            const fs = require('fs');
+            const expected = process.env.WOF_TEAM_KEY;
+            const got = context.payload.client_payload && context.payload.client_payload.team_key;
+            if (!expected) {
+              core.setFailed('Repository secret WOF_TEAM_KEY is not set (Settings → Secrets and variables → Actions).');
+              return;
+            }
+            if (String(got) !== String(expected)) {
+              core.setFailed('Invalid team key.');
+              return;
+            }
+            const doc = context.payload.client_payload.document;
+            if (!doc || typeof doc !== 'object' || !Array.isArray(doc.entries)) {
+              core.setFailed('client_payload.document must be { entries: [], updatedAt?: number }');
+              return;
+            }
+            doc.updatedAt = Number(doc.updatedAt) || Date.now();
+            fs.mkdirSync('WALL of FAME', { recursive: true });
+            fs.writeFileSync(
+              'WALL of FAME/wall-of-fame.json',
+              JSON.stringify(doc, null, 2) + '\n',
+              'utf8'
+            );
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "WALL of FAME/wall-of-fame.json"
+          if git diff --staged --quiet; then
+            echo "No changes."
+            exit 0
+          fi
+          git commit -m "Wall of Fame: sync from repository_dispatch"
+          git push

@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.4.0
-// @description  FIMS tab: Wall of Fame; local + sync via DonkeyCODE GitHub settings or team proxy (no per-script PAT)
+// @version      2.5.0
+// @description  FIMS tab: Wall of Fame; local + sync (proxy, GitHub PAT, or Actions+repo secret WOF_TEAM_KEY)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
+// @connect      raw.githubusercontent.com
 // @connect      *
-// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy (GitHub App backend). No trailing slash. If set with team key, no GitHub token needed.","default":"","placeholder":"https://wof.example.com"},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — team proxy","label":"Team key (optional)","description":"Shared secret; must match server WOF_TEAM_KEY. Same for all dispatchers.","default":"","placeholder":""}}
+// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameUseGithubActions":{"type":"boolean","group":"Wall of Fame — GitHub Actions","label":"Use Actions + repo secret","description":"If on: fetch from raw.githubusercontent.com; publish via repository_dispatch. Set repo secret WOF_TEAM_KEY to match wallOfFameTeamKey. Publish still needs donkeycode_github_pat to trigger the workflow.","default":false},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"Team key (matches WOF_TEAM_KEY)","description":"Same value as repository secret WOF_TEAM_KEY (Settings → Secrets). Not the GitHub PAT.","default":"","placeholder":""},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy. If set with team key, overrides Actions mode for sync.","default":"","placeholder":"https://wof.example.com"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // ==/UserScript==
@@ -133,8 +134,112 @@
         return String(getPref('wallOfFameTeamKey', '') || '').trim();
     }
 
+    function useGithubActions() {
+        var v = getPref('wallOfFameUseGithubActions', false);
+        return v === true || v === 'true';
+    }
+
+    /** Repo secret WOF_TEAM_KEY must match; workflow validates server-side. */
+    function actionsModeConfigured() {
+        return useGithubActions() && !!proxyTeamKey();
+    }
+
     function proxyConfigured() {
         return !!(proxyBaseUrl() && proxyTeamKey());
+    }
+
+    function rawGithubWallOfFameUrl() {
+        var owner = resolvedGithubOwner();
+        var repo = resolvedGithubRepo();
+        var branch = resolvedGithubBranch();
+        var rel = resolvedGithubFilePath().replace(/^\/+/, '');
+        var encodedPath = rel.split('/').map(encodeURIComponent).join('/');
+        return (
+            'https://raw.githubusercontent.com/' +
+            encodeURIComponent(owner) +
+            '/' +
+            encodeURIComponent(repo) +
+            '/' +
+            encodeURIComponent(branch) +
+            '/' +
+            encodedPath
+        );
+    }
+
+    /**
+     * Public raw file GET. Returns null entries → caller may fall back to Contents API (private repo).
+     */
+    function rawGithubGet(cb) {
+        if (typeof GM_xmlhttpRequest !== 'function') {
+            cb(null);
+            return;
+        }
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: rawGithubWallOfFameUrl(),
+            onload: function(res) {
+                var st = res.status || 0;
+                if (st === 404) {
+                    cb([]);
+                    return;
+                }
+                if (st < 200 || st >= 300) {
+                    cb(null);
+                    return;
+                }
+                var text = res.responseText || '';
+                var entries = parseEntriesFromJsonText(text);
+                if (entries === null) {
+                    cb(null);
+                    return;
+                }
+                cb(entries);
+            },
+            onerror: function() {
+                cb(null);
+            }
+        });
+    }
+
+    function githubRepositoryDispatch(doc, cb) {
+        if (typeof GM_xmlhttpRequest !== 'function') {
+            cb(false, 'GM_xmlhttpRequest unavailable');
+            return;
+        }
+        var owner = resolvedGithubOwner();
+        var repo = resolvedGithubRepo();
+        var url =
+            'https://api.github.com/repos/' +
+            encodeURIComponent(owner) +
+            '/' +
+            encodeURIComponent(repo) +
+            '/dispatches';
+        var headers = githubApiHeaders();
+        headers['Content-Type'] = 'application/json';
+        var body = {
+            event_type: 'wall-of-fame-put',
+            client_payload: {
+                team_key: proxyTeamKey(),
+                document: doc
+            }
+        };
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: url,
+            headers: headers,
+            data: body,
+            onload: function(res) {
+                var st = res.status || 0;
+                if (st === 204) {
+                    cb(true, null);
+                    return;
+                }
+                cb(false, 'Dispatch HTTP ' + st + ' ' + (res.responseText || '').slice(0, 200));
+            },
+            onerror: function() {
+                cb(false, 'Network error');
+            }
+        });
     }
 
     /** Last blob SHA for GitHub Contents API (updates require SHA). */
@@ -145,7 +250,12 @@
     }
 
     function syncConfigured() {
-        return proxyConfigured() || githubConfigured();
+        return proxyConfigured() || githubConfigured() || actionsModeConfigured();
+    }
+
+    /** repository_dispatch needs a PAT with repo scope (same as session sync). */
+    function actionsPublishConfigured() {
+        return actionsModeConfigured() && githubConfigured();
     }
 
     function proxyRequest(method, bodyObj, cb) {
@@ -507,6 +617,22 @@
             proxyGetFile(cb);
             return;
         }
+        if (actionsModeConfigured()) {
+            rawGithubGet(function(entries) {
+                if (entries !== null) {
+                    cb(entries);
+                    return;
+                }
+                if (githubConfigured()) {
+                    githubGetFile(function(e2) {
+                        cb(e2);
+                    });
+                    return;
+                }
+                cb(null);
+            });
+            return;
+        }
         if (!githubConfigured()) {
             cb(null);
             return;
@@ -591,10 +717,50 @@
             return;
         }
 
+        if (actionsModeConfigured()) {
+            if (!actionsPublishConfigured()) {
+                cb(
+                    false,
+                    'Actions mode: set donkeycode_github_pat (repo scope) to trigger workflow, and repo secret WOF_TEAM_KEY must match wallOfFameTeamKey.'
+                );
+                return;
+            }
+            rawGithubGet(function(remote) {
+                if (remote === null && githubConfigured()) {
+                    githubGetFile(function(r2) {
+                        runActionsDispatch(r2 || []);
+                    });
+                    return;
+                }
+                runActionsDispatch(remote || []);
+            });
+            return;
+        }
+
+        function runActionsDispatch(remote) {
+            var merged = mergeEntries(entries, remote || []);
+            entriesState = merged;
+            saveLocal(entriesState);
+            if (panel) {
+                render(panel);
+            }
+            var doc = {
+                entries: merged,
+                updatedAt: Date.now()
+            };
+            githubRepositoryDispatch(doc, function(ok, err) {
+                if (ok) {
+                    cb(true, null);
+                    return;
+                }
+                cb(false, err || 'repository_dispatch failed');
+            });
+        }
+
         if (!githubConfigured()) {
             cb(
                 false,
-                'Set GitHub in DonkeyCODE settings (session sync), or wallOfFameProxyUrl + wallOfFameTeamKey.'
+                'Set GitHub in DonkeyCODE settings (session sync), wallOfFameUseGithubActions + team key, or wallOfFameProxyUrl + team key.'
             );
             return;
         }
@@ -830,12 +996,14 @@
         pub.textContent = 'Publish to GitHub';
         pub.title = proxyConfigured()
             ? 'Publish via team proxy (GitHub App on server)'
-            : 'PUT ' + resolvedGithubFilePath() + ' in ' + resolvedGithubOwner() + '/' + resolvedGithubRepo();
+            : actionsModeConfigured()
+              ? 'Trigger Actions workflow (repo secret WOF_TEAM_KEY + PAT to dispatch)'
+              : 'PUT ' + resolvedGithubFilePath() + ' in ' + resolvedGithubOwner() + '/' + resolvedGithubRepo();
         pub.addEventListener('click', function(ev) {
             ev.preventDefault();
             if (!syncConfigured()) {
                 alert(
-                    'Enable GitHub sync in DonkeyCODE settings (same PAT as session sync), or set team proxy URL + key in Wall of Fame prefs.'
+                    'Enable: DonkeyCODE GitHub PAT, or Actions mode + team key + repo secret WOF_TEAM_KEY, or proxy URL + key.'
                 );
                 return;
             }
@@ -855,11 +1023,13 @@
         imp.textContent = 'Fetch from GitHub';
         imp.title = proxyConfigured()
             ? 'Fetch via team proxy'
-            : 'GET ' + resolvedGithubFilePath() + ' and merge (DonkeyCODE GitHub session sync settings)';
+            : actionsModeConfigured()
+              ? 'Fetch from raw.githubusercontent.com (public) or Contents API if PAT set'
+              : 'GET ' + resolvedGithubFilePath() + ' and merge (DonkeyCODE GitHub session sync settings)';
         imp.addEventListener('click', function(ev) {
             ev.preventDefault();
             if (!syncConfigured()) {
-                alert('Set GitHub in DonkeyCODE settings, or proxy URL + team key in Wall of Fame prefs.');
+                alert('Turn on sync: GitHub PAT, Actions + team key, or proxy + team key.');
                 return;
             }
             fetchCloud(function(remote) {
@@ -880,7 +1050,9 @@
         hint.className = 'dc-wof-hint';
         hint.textContent = proxyConfigured()
             ? 'Sync via team proxy (GitHub App on server). Local copy in localStorage. Add proxy host to @connect if needed.'
-            : 'Uses the same GitHub token and repo as DonkeyCODE session sync (extension settings). File: …/wall-of-fame.json under sessions root or WALL of FAME/. Local cache: localStorage.';
+            : actionsModeConfigured()
+              ? 'Actions mode: repo secret WOF_TEAM_KEY must match wallOfFameTeamKey. Publish needs PAT (repository_dispatch). Fetch uses raw.githubusercontent.com if public.'
+              : 'Direct API: same PAT/repo as DonkeyCODE session sync. File under sessions root or WALL of FAME/. Local: localStorage.';
         wrap.appendChild(hint);
 
         syncEditPanelVisibility(panel);

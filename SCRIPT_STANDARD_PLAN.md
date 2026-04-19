@@ -36,7 +36,7 @@ From `parseUserScript` (and related logic in `background.js`):
 
 ### `GM_xmlhttpRequest` checklist (cross-origin / GitHub)
 
-Use this for scripts that need cross-origin HTTP. **SOD Wall of Fame** uses the **same GitHub credentials as session sync** via **`donkeycodeGetPref('donkeycode_github_pat')`** (and owner/repo/branch/sessions root keys) — **no separate userscript PAT**. DonkeyCODE must expose those keys to the injected `getPref` closure (same values as extension `chrome.storage.local`). If not exposed, use **team proxy** prefs or ask for a DonkeyCODE build that merges session-sync settings into script prefs. See **`wall-of-fame-proxy/README.md`** for proxy mode.
+Use this for scripts that need cross-origin HTTP. **SOD Wall of Fame** optional modes: (1) **team proxy** — see **`wall-of-fame-proxy/README.md`**; (2) **GitHub Actions** — repo secret **`WOF_TEAM_KEY`** matches userscript **`wallOfFameTeamKey`**; workflow commits the JSON; **`repository_dispatch`** still needs a **PAT** in DonkeyCODE (same as session sync); (3) **direct Contents API** via **`donkeycode_github_*`** prefs. Repository secrets are **not** readable from the browser; only the workflow sees **`WOF_TEAM_KEY`**.
 
 Scripts that call **`GM_xmlhttpRequest`** (e.g. GitHub REST API) need all of the following in DonkeyCODE:
 
