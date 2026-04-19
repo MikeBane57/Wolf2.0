@@ -1,5 +1,25 @@
 # Wall of Fame (shared data)
 
-Single file **`wall-of-fame.json`** holds accolades for the **SOD Wall of Fame** userscript (`{ entries: [...], updatedAt }`).
+Single file **`wall-of-fame.json`** in this folder holds all accolades for the **SOD Wall of Fame** userscript.
 
-The script targets this path in **`MikeBane57/Wolf2.0`** on branch **`main`**. Editors need a GitHub PAT with **Contents** read/write (set in DonkeyCODE prefs as `githubToken`).
+Shape:
+
+```json
+{
+  "entries": [
+    {
+      "id": "unique-id",
+      "title": "Accolade title",
+      "holder": "Name",
+      "note": "",
+      "sortOrder": 1,
+      "updatedAt": 0
+    }
+  ],
+  "updatedAt": 0
+}
+```
+
+The userscript does **not** embed default accolades; it loads from this path (or your configured `wallOfFameRepoPath`) after sync, and caches in **localStorage** for offline display.
+
+See **`ACTIONS_SYNC.md`** for GitHub Actions + team key setup.

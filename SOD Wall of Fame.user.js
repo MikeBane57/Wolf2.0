@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.5.2
-// @description  FIMS tab: Wall of Fame; local + sync (proxy, GitHub PAT, or Actions+repo secret WOF_TEAM_KEY)
+// @version      2.6.0
+// @description  FIMS tab: Wall of Fame; data from WALL of FAME/wall-of-fame.json + local cache (no baked-in accolades)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
@@ -80,33 +80,6 @@
     var SESSION_KEY = 'dc_wof_unlocked';
     var EDIT_PASSWORD = 'DonkeyWall';
     var editPanelOpen = false;
-
-    var DEFAULT_ENTRIES = [
-        {
-            id: 'mdw-ground',
-            title: 'Most on ground (MDW)',
-            holder: 'Mike Bane',
-            note: '',
-            sortOrder: 1,
-            updatedAt: 0
-        },
-        {
-            id: 'den-divert',
-            title: 'Most diversions away from an airport (DEN)',
-            holder: 'Josh Seiler',
-            note: '',
-            sortOrder: 2,
-            updatedAt: 0
-        },
-        {
-            id: 'atl-ac-ground',
-            title: 'Most aircraft on the ground at ATL at one time',
-            holder: 'Bill Kalivas',
-            note: 'ORF',
-            sortOrder: 3,
-            updatedAt: 0
-        }
-    ];
 
     var rootMo = null;
     var onPopState = null;
@@ -564,22 +537,16 @@
         try {
             var raw = localStorage.getItem(LS_KEY);
             if (!raw) {
-                return DEFAULT_ENTRIES.map(function(x) {
-                    return normalizeEntry(x);
-                });
+                return [];
             }
             var parsed = JSON.parse(raw);
             var arr = Array.isArray(parsed) ? parsed : (parsed.entries || []);
             if (!arr.length) {
-                return DEFAULT_ENTRIES.map(function(x) {
-                    return normalizeEntry(x);
-                });
+                return [];
             }
             return arr.map(normalizeEntry).filter(Boolean);
         } catch (err) {
-            return DEFAULT_ENTRIES.map(function(x) {
-                return normalizeEntry(x);
-            });
+            return [];
         }
     }
 
@@ -833,6 +800,16 @@
         var list = entriesState.slice().sort(function(a, b) {
             return (a.sortOrder || 0) - (b.sortOrder || 0);
         });
+        if (list.length === 0) {
+            var empty = document.createElement('div');
+            empty.className = 'dc-wof-card';
+            empty.style.opacity = '0.85';
+            empty.style.fontStyle = 'italic';
+            empty.textContent =
+                'No accolades yet. Use Fetch from GitHub after configuring sync, or unlock Edit to add entries.';
+            grid.appendChild(empty);
+            return;
+        }
         var i;
         for (i = 0; i < list.length; i++) {
             var e = list[i];
