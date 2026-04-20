@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Worksheet auto replace
 // @namespace    Wolf 2.0
-// @version      1.3.0
-// @description  Worksheet: watch Tails/Lines/Flights (pick metrics) from smart-widget stats; click Replace, Append, or Remove on change or interval.
+// @version      1.3.1
+// @description  Worksheet: compact collapsible filter actions; watch AC/LN/FLT; Replace/Append/Remove on change or interval.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
 // @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto replace","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto replace","label":"Interval Replace (seconds)","description":"Default seconds for “Replace every…” when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
@@ -21,6 +21,7 @@
     var LS_ACTION_WATCH = 'dc_worksheet_auto_replace_action_watch';
     var LS_ACTION_INTERVAL = 'dc_worksheet_auto_replace_action_interval';
     var LS_METRICS = 'dc_worksheet_auto_replace_metrics';
+    var LS_COLLAPSED = 'dc_worksheet_auto_replace_collapsed';
 
     var pollTimer = null;
     var intervalTimer = null;
@@ -29,7 +30,6 @@
     var relocateRaf = 0;
     var lastSig = '';
     var hostEl = null;
-    var statusEl = null;
     var toggleInput = null;
 
     function getPref(key, def) {
@@ -178,6 +178,20 @@
         }
         try {
             localStorage.setItem(LS_METRICS, arr.join(','));
+        } catch (e) {}
+    }
+
+    function readCollapsed() {
+        try {
+            return localStorage.getItem(LS_COLLAPSED) === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function writeCollapsed(collapsed) {
+        try {
+            localStorage.setItem(LS_COLLAPSED, collapsed ? '1' : '0');
         } catch (e) {}
     }
 
@@ -435,7 +449,6 @@
         var name = labelForToolbarAction(action).toLowerCase();
         var btn = findToolbarButtonByLabel(name);
         if (!btn) {
-            setStatus(labelForToolbarAction(action) + ' not found · ' + (reason || ''));
             return false;
         }
         try {
@@ -450,15 +463,9 @@
                 );
             } catch (e2) {}
         }
-        setStatus('Clicked ' + labelForToolbarAction(action) + ' · ' + (reason || ''));
         return true;
     }
 
-    function setStatus(msg) {
-        if (statusEl) {
-            statusEl.textContent = msg || '';
-        }
-    }
 
     function tick() {
         if (!readWatchOn()) {
@@ -468,21 +475,17 @@
         var m = readMetricsSet();
         var sig = fingerprintForMetrics(c, m);
         if (!sig) {
-            setStatus('Watching… (waiting for worksheet stats / Tails·Lines·Flights)');
             return;
         }
         var label = formatCountsLabel(c);
         var act = readActionWatch();
         if (!lastSig) {
             lastSig = sig;
-            setStatus('Watching · ' + label + ' · ' + labelForToolbarAction(act));
             return;
         }
         if (sig !== lastSig) {
             lastSig = sig;
             clickToolbarAction(act, 'counts changed · ' + label);
-        } else {
-            setStatus('Watching · ' + label + ' · ' + labelForToolbarAction(act));
         }
     }
 
@@ -532,35 +535,34 @@
         st.textContent =
             '#' +
             HOST_ID +
-            '{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px;padding:8px 10px;' +
-            'background:rgba(30,40,55,0.92);border:1px solid #3d4f66;border-radius:6px;font:12px/1.4 system-ui,sans-serif;color:#e8eef5;max-width:100%;box-sizing:border-box;}' +
+            '{margin-top:6px;max-width:100%;box-sizing:border-box;font:11px/1.35 system-ui,sans-serif;color:#e8eef5;}' +
             '#' +
             HOST_ID +
-            ' label{cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none;}' +
+            ' details.dc-war-details{background:rgba(30,40,55,0.92);border:1px solid #3d4f66;border-radius:6px;padding:0;overflow:hidden;}' +
             '#' +
             HOST_ID +
-            ' input{accent-color:#5dade2;width:16px;height:16px;}' +
+            ' details.dc-war-details > summary{cursor:pointer;list-style:none;padding:6px 10px;font-weight:600;color:#5dade2;user-select:none;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-status{font-size:11px;color:#aebccf;min-width:0;flex:1;}' +
+            ' details.dc-war-details > summary::-webkit-details-marker{display:none;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-title{font-weight:600;color:#5dade2;}' +
+            ' .dc-war-body{padding:0 10px 8px 10px;display:flex;flex-direction:column;gap:6px;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-interval{display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%;margin-top:4px;padding-top:8px;border-top:1px solid #3d4f66;}' +
+            ' .dc-war-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-interval input[type="number"]{width:64px;padding:3px 6px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:12px;}' +
+            ' label{cursor:pointer;display:inline-flex;align-items:center;gap:3px;user-select:none;font-size:11px;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-metrics{display:flex;flex-wrap:wrap;align-items:center;gap:10px;width:100%;margin-top:6px;font-size:11px;color:#aebccf;}' +
+            ' .dc-war-metric input[type="checkbox"]{accent-color:#5dade2;width:12px;height:12px;margin:0;flex-shrink:0;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;margin-top:6px;}' +
+            ' select.dc-war-sel{padding:2px 6px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:11px;max-width:100%;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-actions select{padding:4px 8px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:12px;max-width:100%;}' +
+            ' .dc-war-num{width:44px;padding:2px 4px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:11px;}' +
             '#' +
             HOST_ID +
             '[data-dc-war-placed="0"]{visibility:hidden!important;opacity:0!important;pointer-events:none!important;}';
@@ -644,28 +646,29 @@
     }
 
     var HOST_HTML =
-        '<span class="dc-war-title">Worksheet filter actions</span>' +
-        '<div class="dc-war-metrics">' +
-        '<span>Watch metrics:</span>' +
-        '<label><input type="checkbox" data-dc-metric="tails" /> Tails</label>' +
-        '<label><input type="checkbox" data-dc-metric="lines" /> Lines</label>' +
-        '<label><input type="checkbox" data-dc-metric="flights" /> Flights</label>' +
-        '</div>' +
-        '<label><input type="checkbox" data-dc-watch-toggle /> When selected counts change, click:</label>' +
-        '<div class="dc-war-actions">' +
-        '<select data-dc-action-watch title="Button to click when counts change">' +
+        '<details class="dc-war-details">' +
+        '<summary>Filter actions</summary>' +
+        '<div class="dc-war-body">' +
+        '<div class="dc-war-row dc-war-watch-row">' +
+        '<label><input type="checkbox" data-dc-watch-toggle /> Watch</label>' +
+        '<label class="dc-war-metric"><input type="checkbox" data-dc-metric="tails" />AC</label>' +
+        '<label class="dc-war-metric"><input type="checkbox" data-dc-metric="lines" />LN</label>' +
+        '<label class="dc-war-metric"><input type="checkbox" data-dc-metric="flights" />FLT</label>' +
+        '<select class="dc-war-sel" data-dc-action-watch title="When counts change">' +
         '<option value="replace">Replace</option><option value="append">Append</option><option value="remove">Remove</option>' +
         '</select>' +
         '</div>' +
-        '<span class="dc-war-status"></span>' +
-        '<div class="dc-war-interval">' +
-        '<label><input type="checkbox" data-dc-interval-toggle /> Also click every</label>' +
-        '<input type="number" min="5" max="3600" step="1" data-dc-interval-sec title="Seconds between clicks" />' +
+        '<div class="dc-war-row dc-war-interval-row">' +
+        '<label><input type="checkbox" data-dc-interval-toggle /> Click</label>' +
+        '<select class="dc-war-sel" data-dc-action-interval title="Interval">' +
+        '<option value="replace">Replace</option><option value="append">Append</option><option value="remove">Remove</option>' +
+        '</select>' +
+        '<span>every</span>' +
+        '<input type="number" class="dc-war-num" min="5" max="3600" step="1" data-dc-interval-sec title="Seconds" />' +
         '<span>sec</span>' +
-        '<select data-dc-action-interval title="Button for interval clicks">' +
-        '<option value="replace">Replace</option><option value="append">Append</option><option value="remove">Remove</option>' +
-        '</select>' +
-        '</div>';
+        '</div>' +
+        '</div>' +
+        '</details>';
 
     function applyMetricsToCheckboxes(host) {
         var m = readMetricsSet();
@@ -728,13 +731,15 @@
                 wt.checked = readWatchOn();
             }
             hostEl = wrap;
-            statusEl = wrap.querySelector('.dc-war-status');
             toggleInput = wt;
+            var detR = wrap.querySelector('details.dc-war-details');
+            if (detR) {
+                detR.open = !readCollapsed();
+            }
             return;
         }
         wrap.setAttribute('data-dc-war-bound', '1');
         hostEl = wrap;
-        statusEl = wrap.querySelector('.dc-war-status');
         toggleInput = wrap.querySelector('input[data-dc-watch-toggle]');
         var selWatch = wrap.querySelector('select[data-dc-action-watch]');
         var selInterval = wrap.querySelector('select[data-dc-action-interval]');
@@ -806,9 +811,6 @@
                     startIntervalReplace();
                 } else {
                     stopIntervalReplace();
-                    if (!readWatchOn()) {
-                        setStatus('Off');
-                    }
                 }
             });
         }
@@ -820,10 +822,14 @@
                     startPoll();
                 } else {
                     stopPoll();
-                    if (!readIntervalOn()) {
-                        setStatus('Off');
-                    }
                 }
+            });
+        }
+        var det = wrap.querySelector('details.dc-war-details');
+        if (det) {
+            det.open = !readCollapsed();
+            det.addEventListener('toggle', function () {
+                writeCollapsed(!det.open);
             });
         }
     }
@@ -854,7 +860,7 @@
         var existing = document.getElementById(HOST_ID);
         var anchor = findToolbarAnchor();
         if (existing) {
-            if (!existing.querySelector('select[data-dc-action-watch]')) {
+            if (!existing.querySelector('details.dc-war-details')) {
                 existing.innerHTML = HOST_HTML;
                 existing.removeAttribute('data-dc-war-bound');
             }
@@ -889,8 +895,6 @@
         bindHostControls(wrap);
         if (readWatchOn()) {
             startPoll();
-        } else if (!readIntervalOn()) {
-            setStatus('Off');
         }
         if (readIntervalOn()) {
             startIntervalReplace();
@@ -946,7 +950,6 @@
             st.remove();
         }
         hostEl = null;
-        statusEl = null;
         toggleInput = null;
         window.__myScriptCleanup = undefined;
     };
