@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.19
+// @version      2.0.20
 // @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (cached), cross-tab poll sync, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -23,6 +23,8 @@
 
     var STORAGE_STATIONS = 'dc-metar-watch-stations-v1';
     var STORAGE_VIEWED = 'dc-metar-watch-viewed-snapshot-v1';
+    /** Per-airport METAR/TAF text last acknowledged in the modal detail (NEW badges / title tint). Separate from viewedSnapshot, which is also used for first-poll alert baseline. */
+    var STORAGE_DETAIL_SEEN = 'dc-metar-watch-detail-seen-v1';
     var STORAGE_SORT = 'dc-metar-watch-sort-v1';
     var LS_POLL_LEADER = 'dc-metar-watch-poll-leader-v1';
     var BC_POLL_NAME = 'dc-metar-watch-poll-sync';
@@ -1164,6 +1166,29 @@
         localStorage.setItem(STORAGE_VIEWED, JSON.stringify(obj));
     }
 
+    function loadDetailSeenSnapshot() {
+        try {
+            var o = JSON.parse(localStorage.getItem(STORAGE_DETAIL_SEEN) || '{}');
+            o = o && typeof o === 'object' ? o : {};
+            if (!Object.keys(o).length) {
+                try {
+                    var legacy = JSON.parse(localStorage.getItem(STORAGE_VIEWED) || '{}');
+                    if (legacy && typeof legacy === 'object' && Object.keys(legacy).length) {
+                        o = legacy;
+                        localStorage.setItem(STORAGE_DETAIL_SEEN, JSON.stringify(o));
+                    }
+                } catch (e2) {}
+            }
+            return o;
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function saveDetailSeenSnapshot(obj) {
+        localStorage.setItem(STORAGE_DETAIL_SEEN, JSON.stringify(obj));
+    }
+
     function loadSortMode() {
         try {
             var v = localStorage.getItem(STORAGE_SORT);
@@ -1191,6 +1216,7 @@
      */
     var pendingChangeTime = {};
     var viewedSnapshot = loadViewedSnapshot();
+    var detailSeenSnapshot = loadDetailSeenSnapshot();
 
     var btn = null;
     var badge = null;
@@ -1362,7 +1388,7 @@
         if (!icao || !r) {
             return { metar: false, taf: false };
         }
-        var v = viewedSnapshot[icao];
+        var v = detailSeenSnapshot[icao];
         var cm = String(r.metar || '');
         var ct = String(r.taf || '');
         if (!v) {
@@ -2855,8 +2881,11 @@
             return;
         }
         var r = cacheByIcao[icao];
-        viewedSnapshot[icao] = { metar: r.metar, taf: r.taf };
+        var snap = { metar: r.metar, taf: r.taf };
+        viewedSnapshot[icao] = snap;
         saveViewedSnapshot(viewedSnapshot);
+        detailSeenSnapshot[icao] = snap;
+        saveDetailSeenSnapshot(detailSeenSnapshot);
         delete pendingChangeTime[iata];
         updateAlertState();
     }
