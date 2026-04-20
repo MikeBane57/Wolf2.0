@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Worksheet auto replace
 // @namespace    Wolf 2.0
-// @version      1.0.2
-// @description  Worksheet: optional watch on Tails / Lines / Flights counts; when any change, click Replace automatically. Toggle sits under the toolbar buttons.
+// @version      1.1.0
+// @description  Worksheet: watch Tails/Lines/Flights counts (line-scoped parse), click Replace on change; optional interval Replace. Toggle under toolbar.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
-// @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto replace","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100}}
+// @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto replace","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto replace","label":"Interval Replace (seconds)","description":"Default seconds for “Replace every…” when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20auto%20replace.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20auto%20replace.user.js
 // ==/UserScript==
@@ -16,8 +16,11 @@
     var HOST_ID = 'dc-worksheet-auto-replace-host';
     var STYLE_ID = 'dc-worksheet-auto-replace-style';
     var LS_KEY = 'dc_worksheet_auto_replace_on';
+    var LS_INTERVAL_ON = 'dc_worksheet_auto_replace_interval_on';
+    var LS_INTERVAL_SEC = 'dc_worksheet_auto_replace_interval_sec';
 
     var pollTimer = null;
+    var intervalTimer = null;
     var relocateRetryTimer = null;
     var mo = null;
     var relocateRaf = 0;
@@ -59,30 +62,98 @@
         } catch (e) {}
     }
 
+    function readIntervalOn() {
+        try {
+            return localStorage.getItem(LS_INTERVAL_ON) === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function writeIntervalOn(on) {
+        try {
+            localStorage.setItem(LS_INTERVAL_ON, on ? '1' : '0');
+        } catch (e) {}
+    }
+
+    function intervalSecFromPref() {
+        var n = Number(getPref('worksheetAutoReplaceIntervalSec', 30));
+        if (!Number.isFinite(n)) {
+            return 30;
+        }
+        return Math.min(3600, Math.max(5, Math.floor(n)));
+    }
+
+    function intervalSecEffective() {
+        try {
+            var raw = localStorage.getItem(LS_INTERVAL_SEC);
+            if (raw !== null && raw !== '') {
+                var n = parseInt(raw, 10);
+                if (Number.isFinite(n)) {
+                    return Math.min(3600, Math.max(5, n));
+                }
+            }
+        } catch (e) {}
+        return intervalSecFromPref();
+    }
+
+    function writeIntervalSec(n) {
+        try {
+            localStorage.setItem(LS_INTERVAL_SEC, String(n));
+        } catch (e) {}
+    }
+
     /**
-     * Pull Tails / Lines / Flights integers from visible text (worksheet summary block).
-     * Tuned for labels like "Tails 3", "Tails: 3", "Lines (12)", etc.
+     * First number after the keyword on the same line (avoids picking unrelated digits from the rest of the page).
+     */
+    function firstIntAfterKeyword(line, wordRe) {
+        var m = line.match(wordRe);
+        return m ? parseInt(m[1], 10) : NaN;
+    }
+
+    /**
+     * Pull Tails / Lines / Flights integers from visible text — scan **line by line** so values match the UI labels.
      */
     function parseCountsFromText(text) {
         if (!text || typeof text !== 'string') {
             return null;
         }
-        var t = text.replace(/\s+/g, ' ');
-        function pick(reAfter, reBefore) {
-            var m = t.match(reAfter);
-            if (m) {
-                return parseInt(m[1], 10);
+        var rawLines = text.split(/\r?\n/);
+        var tails = NaN;
+        var linesCount = NaN;
+        var flights = NaN;
+        var li;
+        for (li = 0; li < rawLines.length; li++) {
+            var line = rawLines[li].replace(/\s+/g, ' ').trim();
+            if (!line) {
+                continue;
             }
-            m = t.match(reBefore);
-            return m ? parseInt(m[1], 10) : NaN;
+            if (Number.isFinite(tails) && Number.isFinite(linesCount) && Number.isFinite(flights)) {
+                break;
+            }
+            if (!Number.isFinite(tails) && /\btails\b/i.test(line) && !/\bairlines?\b/i.test(line)) {
+                var tt = firstIntAfterKeyword(line, /\btails\b[^0-9]{0,48}(\d+)/i);
+                if (Number.isFinite(tt)) {
+                    tails = tt;
+                }
+            }
+            if (!Number.isFinite(linesCount) && /\blines\b/i.test(line)) {
+                var ll = firstIntAfterKeyword(line, /\blines\b[^0-9]{0,48}(\d+)/i);
+                if (Number.isFinite(ll)) {
+                    linesCount = ll;
+                }
+            }
+            if (!Number.isFinite(flights) && /\bflights?\b/i.test(line)) {
+                var ff = firstIntAfterKeyword(line, /\bflights?\b[^0-9]{0,48}(\d+)/i);
+                if (Number.isFinite(ff)) {
+                    flights = ff;
+                }
+            }
         }
-        var tails = pick(/\btails?\b[^0-9]{0,32}(\d+)/i, /(\d+)[^0-9]{0,24}\btails?\b/i);
-        var lines = pick(/\blines?\b[^0-9]{0,32}(\d+)/i, /(\d+)[^0-9]{0,24}\blines?\b/i);
-        var flights = pick(/\bflights?\b[^0-9]{0,32}(\d+)/i, /(\d+)[^0-9]{0,24}\bflights?\b/i);
-        if (!Number.isFinite(tails) || !Number.isFinite(lines) || !Number.isFinite(flights)) {
+        if (!Number.isFinite(tails) || !Number.isFinite(linesCount) || !Number.isFinite(flights)) {
             return null;
         }
-        return { tails: tails, lines: lines, flights: flights };
+        return { tails: tails, lines: linesCount, flights: flights };
     }
 
     function scanCounts() {
@@ -142,7 +213,7 @@
     function clickReplace(reason) {
         var btn = findReplaceControl();
         if (!btn) {
-            setStatus('Replace control not found');
+            setStatus('Replace not found · ' + (reason || ''));
             return false;
         }
         try {
@@ -157,7 +228,7 @@
                 );
             } catch (e2) {}
         }
-        setStatus('Clicked Replace · was ' + (reason || ''));
+        setStatus('Clicked Replace · ' + (reason || ''));
         return true;
     }
 
@@ -185,7 +256,7 @@
         }
         if (sig !== lastSig) {
             lastSig = sig;
-            clickReplace(label);
+            clickReplace('counts changed · ' + label);
         } else {
             setStatus('Watching · ' + label);
         }
@@ -202,6 +273,29 @@
             clearInterval(pollTimer);
             pollTimer = null;
         }
+    }
+
+    function stopIntervalReplace() {
+        if (intervalTimer) {
+            clearInterval(intervalTimer);
+            intervalTimer = null;
+        }
+    }
+
+    function startIntervalReplace() {
+        stopIntervalReplace();
+        if (!readIntervalOn()) {
+            return;
+        }
+        var sec = intervalSecEffective();
+        intervalTimer = setInterval(function () {
+            if (!readIntervalOn()) {
+                stopIntervalReplace();
+                return;
+            }
+            var s = intervalSecEffective();
+            clickReplace('interval · every ' + s + 's');
+        }, sec * 1000);
     }
 
     function ensureStyle() {
@@ -226,7 +320,13 @@
             ' .dc-war-status{font-size:11px;color:#aebccf;min-width:0;flex:1;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-title{font-weight:600;color:#5dade2;}';
+            ' .dc-war-title{font-weight:600;color:#5dade2;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-interval{display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%;margin-top:4px;padding-top:8px;border-top:1px solid #3d4f66;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-interval input[type="number"]{width:64px;padding:3px 6px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:12px;}';
         document.head.appendChild(st);
     }
 
@@ -322,7 +422,11 @@
         if (existing) {
             hostEl = existing;
             statusEl = hostEl.querySelector('.dc-war-status');
-            toggleInput = hostEl.querySelector('input[type="checkbox"]');
+            toggleInput = hostEl.querySelector('input[data-dc-watch-toggle]');
+            var secIn = hostEl.querySelector('input[data-dc-interval-sec]');
+            if (secIn) {
+                secIn.value = String(intervalSecEffective());
+            }
             relocateHost();
             return;
         }
@@ -331,8 +435,13 @@
         wrap.id = HOST_ID;
         wrap.innerHTML =
             '<span class="dc-war-title">Auto replace</span>' +
-            '<label><input type="checkbox" /> Watch Tails / Lines / Flights · click Replace on change</label>' +
-            '<span class="dc-war-status"></span>';
+            '<label><input type="checkbox" data-dc-watch-toggle /> Watch Tails / Lines / Flights · click Replace when any count changes</label>' +
+            '<span class="dc-war-status"></span>' +
+            '<div class="dc-war-interval">' +
+            '<label><input type="checkbox" data-dc-interval-toggle /> Replace every</label>' +
+            '<input type="number" min="5" max="3600" step="1" data-dc-interval-sec title="Seconds between Replace clicks" />' +
+            '<span>sec</span><span style="font-size:10px;opacity:0.85;">(uses Auto replace pref default)</span>' +
+            '</div>';
         if (anchor) {
             if (anchor.nextSibling) {
                 anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
@@ -350,7 +459,39 @@
         }
         hostEl = wrap;
         statusEl = wrap.querySelector('.dc-war-status');
-        toggleInput = wrap.querySelector('input[type="checkbox"]');
+        toggleInput = wrap.querySelector('input[data-dc-watch-toggle]');
+        var intervalToggle = wrap.querySelector('input[data-dc-interval-toggle]');
+        var intervalSecInput = wrap.querySelector('input[data-dc-interval-sec]');
+        if (intervalSecInput) {
+            intervalSecInput.value = String(intervalSecEffective());
+            intervalSecInput.addEventListener('change', function () {
+                var v = parseInt(intervalSecInput.value, 10);
+                if (!Number.isFinite(v)) {
+                    intervalSecInput.value = String(intervalSecEffective());
+                    return;
+                }
+                v = Math.min(3600, Math.max(5, v));
+                intervalSecInput.value = String(v);
+                writeIntervalSec(v);
+                if (readIntervalOn()) {
+                    startIntervalReplace();
+                }
+            });
+        }
+        if (intervalToggle) {
+            intervalToggle.checked = readIntervalOn();
+            intervalToggle.addEventListener('change', function () {
+                writeIntervalOn(intervalToggle.checked);
+                if (intervalToggle.checked) {
+                    startIntervalReplace();
+                } else {
+                    stopIntervalReplace();
+                    if (!readWatchOn()) {
+                        setStatus('Off');
+                    }
+                }
+            });
+        }
         toggleInput.checked = readWatchOn();
         toggleInput.addEventListener('change', function () {
             writeWatchOn(toggleInput.checked);
@@ -359,13 +500,18 @@
                 startPoll();
             } else {
                 stopPoll();
-                setStatus('Off');
+                if (!readIntervalOn()) {
+                    setStatus('Off');
+                }
             }
         });
         if (readWatchOn()) {
             startPoll();
-        } else {
+        } else if (!readIntervalOn()) {
             setStatus('Off');
+        }
+        if (readIntervalOn()) {
+            startIntervalReplace();
         }
         startRelocateRetries();
     }
@@ -394,6 +540,7 @@
 
     window.__myScriptCleanup = function () {
         stopPoll();
+        stopIntervalReplace();
         if (relocateRetryTimer) {
             clearInterval(relocateRetryTimer);
             relocateRetryTimer = null;
