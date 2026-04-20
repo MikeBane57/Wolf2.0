@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.18
+// @version      2.0.19
 // @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (cached), cross-tab poll sync, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -26,6 +26,12 @@
     var STORAGE_SORT = 'dc-metar-watch-sort-v1';
     var LS_POLL_LEADER = 'dc-metar-watch-poll-leader-v1';
     var BC_POLL_NAME = 'dc-metar-watch-poll-sync';
+    /** Shared METAR/TAF text (tgftp-equivalent) for SW tooltip + METAR watch — same origin localStorage + BroadcastChannel. */
+    var LS_METAR_TAF_SHARED = 'dc-metar-taf-shared-v1';
+    var BC_METAR_TAF_SHARED = 'dc-metar-taf-shared';
+    var SHARED_METAR_TAF_TTL_MS = 8 * 60 * 1000;
+    var metarTafSharedChannel = null;
+    var onStorageMetarTaf = null;
     var tabInstanceId = 't' + Date.now() + '_' + Math.random().toString(36).slice(2, 12);
     var pollBroadcastChannel = null;
     var leaderHeartbeatTimer = null;
@@ -157,6 +163,7 @@
             var r = results[i];
             if (r && r.icao) {
                 cacheByIcao[r.icao] = r;
+                publishMetarTafShared(r.icao, r.metar, r.taf);
             }
         }
         primeAlertsBaseline(results);
@@ -258,6 +265,53 @@
             pollBroadcastChannel = null;
         }
         releasePollLeadership();
+    }
+
+    function readSharedMetarTafStore() {
+        try {
+            var raw = localStorage.getItem(LS_METAR_TAF_SHARED);
+            if (!raw) {
+                return {};
+            }
+            var o = JSON.parse(raw);
+            return o && typeof o === 'object' ? o : {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function writeSharedMetarTafEntry(icao, metar, taf) {
+        if (!icao) {
+            return;
+        }
+        var store = readSharedMetarTafStore();
+        store[icao] = { metar: String(metar || ''), taf: String(taf || ''), t: Date.now() };
+        try {
+            localStorage.setItem(LS_METAR_TAF_SHARED, JSON.stringify(store));
+        } catch (e) {}
+    }
+
+    function broadcastSharedMetarTaf(icao, metar, taf) {
+        if (!metarTafSharedChannel) {
+            return;
+        }
+        try {
+            metarTafSharedChannel.postMessage({
+                type: 'metar-taf',
+                icao: icao,
+                metar: metar,
+                taf: taf,
+                t: Date.now()
+            });
+        } catch (e) {}
+    }
+
+    function publishMetarTafShared(icao, metar, taf) {
+        if (!icao) {
+            return;
+        }
+        writeSharedMetarTafEntry(icao, metar, taf);
+        broadcastSharedMetarTaf(icao, metar, taf);
     }
 
     /**
@@ -966,6 +1020,109 @@
         LGA: 'KLGA', RIC: 'KRIC', CLT: 'KCLT', SAV: 'KSAV', MYR: 'KMYR', SRQ: 'KSRQ', PBI: 'KPBI',
         HAV: 'MUHA', PLS: 'MBPV', ITO: 'PHTO', ANC: 'PANC', LIT: 'KLIT', SDF: 'KSDF', TYS: 'KTYS'
     };
+
+    function applySharedMetarTafToCache(icao, metar, taf, ts) {
+        if (!icao) {
+            return;
+        }
+        var tUse = typeof ts === 'number' && Number.isFinite(ts) ? ts : Date.now();
+        var cur = cacheByIcao[icao];
+        if (cur && typeof cur.t === 'number' && cur.t > tUse + 500) {
+            return;
+        }
+        if (!cur) {
+            var iataGuess = '';
+            var k;
+            for (k in IATA_TO_ICAO) {
+                if (Object.prototype.hasOwnProperty.call(IATA_TO_ICAO, k) && IATA_TO_ICAO[k] === icao) {
+                    iataGuess = k;
+                    break;
+                }
+            }
+            cur = {
+                iata: iataGuess,
+                icao: icao,
+                metar: metar,
+                metarLines: metar && metar !== 'N/A' ? [metar] : [],
+                taf: taf,
+                rvrFaa: null,
+                rvrNotFetched: true,
+                datisEntries: null,
+                hrrrHourly: null,
+                radarGifUrl: '',
+                afdText: '',
+                afdMeta: null,
+                err: false,
+                t: tUse
+            };
+        } else {
+            cur.metar = metar;
+            cur.taf = taf;
+            if (metar && metar !== 'N/A') {
+                cur.metarLines = [metar];
+            }
+            cur.t = tUse;
+        }
+        cacheByIcao[icao] = cur;
+        try {
+            if (modal && modal.style.display === 'flex' && selectedIata && icaoFor(selectedIata) === icao) {
+                renderDetail(selectedIata, { skipCodLoop: true });
+            }
+            renderStationList();
+            updateAlertState();
+        } catch (e2) {}
+    }
+
+    function initMetarTafSharedSync() {
+        if (typeof BroadcastChannel !== 'undefined') {
+            try {
+                metarTafSharedChannel = new BroadcastChannel(BC_METAR_TAF_SHARED);
+                metarTafSharedChannel.onmessage = function (ev) {
+                    var d = ev && ev.data;
+                    if (!d || d.type !== 'metar-taf' || !d.icao) {
+                        return;
+                    }
+                    applySharedMetarTafToCache(d.icao, d.metar, d.taf, d.t);
+                };
+            } catch (e) {
+                metarTafSharedChannel = null;
+            }
+        }
+        onStorageMetarTaf = function (e) {
+            if (!e || e.key !== LS_METAR_TAF_SHARED || !e.newValue) {
+                return;
+            }
+            try {
+                var store = JSON.parse(e.newValue);
+                if (!store || typeof store !== 'object') {
+                    return;
+                }
+                var keys = Object.keys(store);
+                var i;
+                for (i = 0; i < keys.length; i++) {
+                    var ic = keys[i];
+                    var ent = store[ic];
+                    if (ent && ent.metar !== undefined && ent.taf !== undefined) {
+                        applySharedMetarTafToCache(ic, ent.metar, ent.taf, ent.t);
+                    }
+                }
+            } catch (e2) {}
+        };
+        window.addEventListener('storage', onStorageMetarTaf);
+    }
+
+    function stopMetarTafSharedSync() {
+        if (onStorageMetarTaf) {
+            window.removeEventListener('storage', onStorageMetarTaf);
+            onStorageMetarTaf = null;
+        }
+        if (metarTafSharedChannel) {
+            try {
+                metarTafSharedChannel.close();
+            } catch (e) {}
+            metarTafSharedChannel = null;
+        }
+    }
 
     function parseDefaultStations() {
         var raw = String(getPref('metarWatchDefaultStations', 'ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU') || '');
@@ -2274,6 +2431,7 @@
             if (deferEnrichment) {
                 var recFast = buildRecFromEnr(null);
                 cacheByIcao[icao] = recFast;
+                publishMetarTafShared(icao, recFast.metar, recFast.taf);
                 cb(recFast);
                 if (needNwsEnrichmentFetch()) {
                     fetchNwsEnrichmentCached(icao, false, function (enr) {
@@ -2299,12 +2457,14 @@
                 fetchNwsEnrichmentCached(icao, false, function (enr) {
                     var rec = buildRecFromEnr(enr);
                     cacheByIcao[icao] = rec;
+                    publishMetarTafShared(icao, rec.metar, rec.taf);
                     cb(rec);
                     patchDetailExtras(icao, iata);
                 });
             } else {
                 var recNoNws = buildRecFromEnr(null);
                 cacheByIcao[icao] = recNoNws;
+                publishMetarTafShared(icao, recNoNws.metar, recNoNws.taf);
                 cb(recNoNws);
                 patchDetailExtras(icao, iata);
             }
@@ -3630,6 +3790,7 @@
         buildModal();
         mountButtonNearClock();
         initCrossTabPollSync();
+        initMetarTafSharedSync();
         runPoll();
         pollTimer = setInterval(runPoll, pollMs());
         domObserver = new MutationObserver(function () {
@@ -3646,6 +3807,7 @@
     }
 
     window.__myScriptCleanup = function () {
+        stopMetarTafSharedSync();
         stopCrossTabPollSync();
         if (pollTimer) {
             clearInterval(pollTimer);

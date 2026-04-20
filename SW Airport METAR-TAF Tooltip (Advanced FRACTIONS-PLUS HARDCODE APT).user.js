@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SW Airport METAR/TAF Tooltip (Advanced FRACTIONS-PLUS HARDCODE APT)
 // @namespace    Wolf 2.0
-// @version      7.3
-// @description  METAR/TAF tooltip with per-token coloring, advanced alerts, prefs for display and alerts
+// @version      7.4
+// @description  METAR/TAF tooltip with per-token coloring, advanced alerts, prefs; shares METAR/TAF cache with METAR watch (same tab)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -49,6 +49,57 @@ function boolPref(key, def) {
 
 function getCacheMs() {
     return numPref('metarCacheMinutes', 5, 1, 120) * 60 * 1000;
+}
+
+/** Same keys as METAR watch — tgftp-equivalent METAR/TAF text shared across scripts via localStorage + BroadcastChannel. */
+var LS_METAR_TAF_SHARED = 'dc-metar-taf-shared-v1';
+var BC_METAR_TAF_SHARED = 'dc-metar-taf-shared';
+var SHARED_METAR_TAF_TTL_MS = 8 * 60 * 1000;
+var metarTafSharedChannel = null;
+var onStorageMetarTaf = null;
+
+function readSharedMetarTafStore() {
+    try {
+        var raw = localStorage.getItem(LS_METAR_TAF_SHARED);
+        if (!raw) {
+            return {};
+        }
+        var o = JSON.parse(raw);
+        return o && typeof o === 'object' ? o : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+function writeSharedMetarTafEntry(icao, metar, taf) {
+    if (!icao) {
+        return;
+    }
+    var store = readSharedMetarTafStore();
+    store[icao] = { metar: String(metar || ''), taf: String(taf || ''), t: Date.now() };
+    try {
+        localStorage.setItem(LS_METAR_TAF_SHARED, JSON.stringify(store));
+    } catch (e) {}
+}
+
+function broadcastSharedMetarTaf(icao, metar, taf) {
+    if (!metarTafSharedChannel) {
+        return;
+    }
+    try {
+        metarTafSharedChannel.postMessage({
+            type: 'metar-taf',
+            icao: icao,
+            metar: metar,
+            taf: taf,
+            t: Date.now()
+        });
+    } catch (e) {}
+}
+
+function publishMetarTafShared(icao, metar, taf) {
+    writeSharedMetarTafEntry(icao, metar, taf);
+    broadcastSharedMetarTaf(icao, metar, taf);
 }
 
 function logDebug() {
@@ -196,6 +247,15 @@ function fetchWeather(iata, cb){
         cb(cache[icao]); return;
     }
 
+    var shared = readSharedMetarTafStore()[icao];
+    if (shared && shared.metar !== undefined && shared.taf !== undefined && now - (shared.t || 0) < SHARED_METAR_TAF_TTL_MS) {
+        mergeSharedIntoTooltipCache(icao, shared.metar, shared.taf, shared.t);
+        if (cache[icao] && now - cache[icao].t < cacheMs) {
+            cb(cache[icao]);
+            return;
+        }
+    }
+
     const metarURL = `https://tgftp.nws.noaa.gov/data/observations/metar/stations/${icao}.TXT`;
     const tafURL = `https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/${icao}.TXT`;
 
@@ -211,6 +271,7 @@ function fetchWeather(iata, cb){
             logDebug("Tooltip HTML generated for", iata, ":\n", html);
             const result={metar, taf, html, t:Date.now()};
             cache[icao]=result;
+            publishMetarTafShared(icao, metar, taf);
             cb(result);
         }});
     }});
@@ -347,6 +408,80 @@ function selectiveHighlightTAF(taf,iata){
     }).join("\n")}`;
 }
 
+function mergeSharedIntoTooltipCache(icao, metar, taf, ts) {
+    if (!icao) {
+        return;
+    }
+    var tUse = typeof ts === 'number' && Number.isFinite(ts) ? ts : Date.now();
+    var prev = cache[icao];
+    if (prev && prev.t && prev.t > tUse + 500) {
+        return;
+    }
+    var iata = '';
+    var k;
+    for (k in IATA_TO_ICAO) {
+        if (Object.prototype.hasOwnProperty.call(IATA_TO_ICAO, k) && IATA_TO_ICAO[k] === icao) {
+            iata = k;
+            break;
+        }
+    }
+    var metarHTML = selectiveHighlightMETAR(metar, iata);
+    var tafHTML = selectiveHighlightTAF(taf, iata);
+    var html = '<b>' + iata + ' (' + icao + ')</b>\n' + metarHTML + '\n\n' + tafHTML;
+    cache[icao] = { metar: metar, taf: taf, html: html, t: tUse };
+}
+
+function initMetarTafSharedSync() {
+    if (typeof BroadcastChannel !== 'undefined') {
+        try {
+            metarTafSharedChannel = new BroadcastChannel(BC_METAR_TAF_SHARED);
+            metarTafSharedChannel.onmessage = function (ev) {
+                var d = ev && ev.data;
+                if (!d || d.type !== 'metar-taf' || !d.icao) {
+                    return;
+                }
+                mergeSharedIntoTooltipCache(d.icao, d.metar, d.taf, d.t);
+            };
+        } catch (e) {
+            metarTafSharedChannel = null;
+        }
+    }
+    onStorageMetarTaf = function (e) {
+        if (!e || e.key !== LS_METAR_TAF_SHARED || !e.newValue) {
+            return;
+        }
+        try {
+            var store = JSON.parse(e.newValue);
+            if (!store || typeof store !== 'object') {
+                return;
+            }
+            var keys = Object.keys(store);
+            var i;
+            for (i = 0; i < keys.length; i++) {
+                var ic = keys[i];
+                var ent = store[ic];
+                if (ent && ent.metar !== undefined && ent.taf !== undefined) {
+                    mergeSharedIntoTooltipCache(ic, ent.metar, ent.taf, ent.t);
+                }
+            }
+        } catch (e2) {}
+    };
+    window.addEventListener('storage', onStorageMetarTaf);
+}
+
+function stopMetarTafSharedSync() {
+    if (onStorageMetarTaf) {
+        window.removeEventListener('storage', onStorageMetarTaf);
+        onStorageMetarTaf = null;
+    }
+    if (metarTafSharedChannel) {
+        try {
+            metarTafSharedChannel.close();
+        } catch (e) {}
+        metarTafSharedChannel = null;
+    }
+}
+
 // ---------------- CLICK DETECTION ----------------
 function detectAirport(x,y){
     const stack=document.elementsFromPoint(x,y);
@@ -379,7 +514,10 @@ function onPointerUpShow(e){
 }
 window.addEventListener("pointerup", onPointerUpShow, true);
 
+initMetarTafSharedSync();
+
 window.__myScriptCleanup = function() {
+    stopMetarTafSharedSync();
     if (tipHideTimer) {
         clearTimeout(tipHideTimer);
         tipHideTimer = null;
