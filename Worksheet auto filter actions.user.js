@@ -1,13 +1,13 @@
 // ==UserScript==
-// @name         Worksheet filter auto actions
+// @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.3.4
-// @description  Worksheet: compact collapsible filter auto-actions; watch AC/LN/FLT; Replace/Append/Remove on change or interval.
+// @version      1.3.5
+// @description  Worksheet: compact collapsible auto filter actions; watch AC/LN/FLT; Replace/Append/Remove on change or interval.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
-// @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Filter auto actions","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Filter auto actions","label":"Interval (seconds)","description":"Default seconds for interval clicks when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
-// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20filter%20auto%20actions.user.js
-// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20filter%20auto%20actions.user.js
+// @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto filter actions","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto filter actions","label":"Interval (seconds)","description":"Default seconds for interval clicks when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20auto%20filter%20actions.user.js
+// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20auto%20filter%20actions.user.js
 // ==/UserScript==
 
 (function () {
@@ -578,7 +578,7 @@
         st.textContent =
             '#' +
             HOST_ID +
-            '{width:100%;margin-top:21px;box-sizing:border-box;font:11px/1.35 system-ui,sans-serif;color:#e8eef5;}' +
+            '{width:100%;margin-top:8px;box-sizing:border-box;font:11px/1.35 system-ui,sans-serif;color:#e8eef5;}' +
             '#' +
             HOST_ID +
             ' details.dc-war-details{background:rgba(30,40,55,0.92);border:1px solid #3d4f66;border-radius:6px;padding:0;overflow:hidden;width:100%;box-sizing:border-box;}' +
@@ -699,7 +699,7 @@
 
     var HOST_HTML =
         '<details class="dc-war-details">' +
-        '<summary>Worksheet filter auto actions</summary>' +
+        '<summary>Worksheet auto filter actions</summary>' +
         '<div class="dc-war-body">' +
         '<div class="dc-war-row dc-war-watch-row">' +
         '<label><input type="checkbox" data-dc-watch-toggle /> Watch</label>' +
