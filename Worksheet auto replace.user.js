@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto replace
 // @namespace    Wolf 2.0
-// @version      1.2.0
+// @version      1.2.1
 // @description  Worksheet: watch Tails/Lines/Flights from #smart-widget statistics (.value cells), fallback to text parse; Replace on change; optional interval.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -429,8 +429,18 @@
             ' .dc-war-interval{display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%;margin-top:4px;padding-top:8px;border-top:1px solid #3d4f66;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-interval input[type="number"]{width:64px;padding:3px 6px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:12px;}';
+            ' .dc-war-interval input[type="number"]{width:64px;padding:3px 6px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:12px;}' +
+            '#' +
+            HOST_ID +
+            '[data-dc-war-placed="0"]{visibility:hidden!important;opacity:0!important;pointer-events:none!important;}';
         document.head.appendChild(st);
+    }
+
+    function setHostPlaced(host, placed) {
+        if (!host) {
+            return;
+        }
+        host.setAttribute('data-dc-war-placed', placed ? '1' : '0');
     }
 
     function findToolbarAnchor() {
@@ -466,6 +476,7 @@
             host.style.zIndex = '';
             host.style.maxWidth = '';
             host.removeAttribute('data-dc-war-fallback');
+            setHostPlaced(host, true);
         }
     }
 
@@ -487,6 +498,7 @@
             if (anchor.nextSibling !== host) {
                 parent.insertBefore(host, anchor.nextSibling);
             }
+            setHostPlaced(host, true);
         } catch (e) {}
     }
 
@@ -513,6 +525,9 @@
             var h = document.getElementById(HOST_ID);
             var stillFloating = h && h.getAttribute('data-dc-war-fallback') === '1';
             if (!stillFloating || n >= max) {
+                if (stillFloating && n >= max && h) {
+                    setHostPlaced(h, true);
+                }
                 clearInterval(relocateRetryTimer);
                 relocateRetryTimer = null;
             }
@@ -531,6 +546,9 @@
                 secIn.value = String(intervalSecEffective());
             }
             relocateHost();
+            if (hostEl.getAttribute('data-dc-war-placed') !== '1') {
+                setHostPlaced(hostEl, findToolbarAnchor() !== null);
+            }
             return;
         }
         ensureStyle();
@@ -551,6 +569,7 @@
             } else {
                 anchor.parentNode.appendChild(wrap);
             }
+            setHostPlaced(wrap, true);
         } else {
             wrap.setAttribute('data-dc-war-fallback', '1');
             wrap.style.position = 'fixed';
@@ -558,6 +577,7 @@
             wrap.style.bottom = '12px';
             wrap.style.zIndex = '99999';
             wrap.style.maxWidth = 'min(420px,calc(100vw - 24px))';
+            setHostPlaced(wrap, false);
             document.body.appendChild(wrap);
         }
         hostEl = wrap;
