@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Worksheet auto replace
 // @namespace    Wolf 2.0
-// @version      1.2.1
-// @description  Worksheet: watch Tails/Lines/Flights from #smart-widget statistics (.value cells), fallback to text parse; Replace on change; optional interval.
+// @version      1.3.0
+// @description  Worksheet: watch Tails/Lines/Flights (pick metrics) from smart-widget stats; click Replace, Append, or Remove on change or interval.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
 // @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto replace","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto replace","label":"Interval Replace (seconds)","description":"Default seconds for “Replace every…” when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
@@ -18,6 +18,9 @@
     var LS_KEY = 'dc_worksheet_auto_replace_on';
     var LS_INTERVAL_ON = 'dc_worksheet_auto_replace_interval_on';
     var LS_INTERVAL_SEC = 'dc_worksheet_auto_replace_interval_sec';
+    var LS_ACTION_WATCH = 'dc_worksheet_auto_replace_action_watch';
+    var LS_ACTION_INTERVAL = 'dc_worksheet_auto_replace_action_interval';
+    var LS_METRICS = 'dc_worksheet_auto_replace_metrics';
 
     var pollTimer = null;
     var intervalTimer = null;
@@ -100,6 +103,81 @@
     function writeIntervalSec(n) {
         try {
             localStorage.setItem(LS_INTERVAL_SEC, String(n));
+        } catch (e) {}
+    }
+
+    function readActionWatch() {
+        try {
+            var v = localStorage.getItem(LS_ACTION_WATCH);
+            if (v === 'append' || v === 'remove' || v === 'replace') {
+                return v;
+            }
+        } catch (e) {}
+        return 'replace';
+    }
+
+    function writeActionWatch(a) {
+        try {
+            localStorage.setItem(LS_ACTION_WATCH, a === 'append' || a === 'remove' ? a : 'replace');
+        } catch (e) {}
+    }
+
+    function readActionInterval() {
+        try {
+            var v = localStorage.getItem(LS_ACTION_INTERVAL);
+            if (v === 'append' || v === 'remove' || v === 'replace') {
+                return v;
+            }
+        } catch (e) {}
+        return 'replace';
+    }
+
+    function writeActionInterval(a) {
+        try {
+            localStorage.setItem(LS_ACTION_INTERVAL, a === 'append' || a === 'remove' ? a : 'replace');
+        } catch (e) {}
+    }
+
+    function readMetricsSet() {
+        try {
+            var raw = localStorage.getItem(LS_METRICS);
+            if (!raw || raw === '') {
+                return { tails: true, lines: true, flights: true };
+            }
+            var parts = String(raw)
+                .split(',')
+                .map(function (s) {
+                    return s.trim().toLowerCase();
+                });
+            var o = {
+                tails: parts.indexOf('tails') >= 0,
+                lines: parts.indexOf('lines') >= 0,
+                flights: parts.indexOf('flights') >= 0
+            };
+            if (!o.tails && !o.lines && !o.flights) {
+                return { tails: true, lines: true, flights: true };
+            }
+            return o;
+        } catch (e) {}
+        return { tails: true, lines: true, flights: true };
+    }
+
+    function writeMetricsSet(o) {
+        var arr = [];
+        if (o.tails) {
+            arr.push('tails');
+        }
+        if (o.lines) {
+            arr.push('lines');
+        }
+        if (o.flights) {
+            arr.push('flights');
+        }
+        if (!arr.length) {
+            arr = ['tails', 'lines', 'flights'];
+        }
+        try {
+            localStorage.setItem(LS_METRICS, arr.join(','));
         } catch (e) {}
     }
 
@@ -268,6 +346,23 @@
         return c.tails + '|' + c.lines + '|' + c.flights;
     }
 
+    function fingerprintForMetrics(c, m) {
+        if (!c || !m) {
+            return '';
+        }
+        var parts = [];
+        if (m.tails) {
+            parts.push('t:' + c.tails);
+        }
+        if (m.lines) {
+            parts.push('l:' + c.lines);
+        }
+        if (m.flights) {
+            parts.push('f:' + c.flights);
+        }
+        return parts.join('|');
+    }
+
     /** Human-readable counts for the status line (confirms which metrics are watched). */
     function formatCountsLabel(c) {
         if (!c) {
@@ -283,7 +378,18 @@
         return base;
     }
 
-    function findReplaceControl() {
+    function labelForToolbarAction(action) {
+        if (action === 'append') {
+            return 'Append';
+        }
+        if (action === 'remove') {
+            return 'Remove';
+        }
+        return 'Replace';
+    }
+
+    function findToolbarButtonByLabel(exactName) {
+        var want = String(exactName || '').toLowerCase();
         var i;
         var list = document.querySelectorAll('button,[role="button"],a[href]');
         for (i = 0; i < list.length; i++) {
@@ -299,24 +405,37 @@
             }
             parts.push(el.textContent || '');
             var lab = parts.join(' ').replace(/\s+/g, ' ').trim();
-            if (/^replace$/i.test(lab)) {
+            if (new RegExp('^' + want + '$', 'i').test(lab)) {
                 return el;
             }
         }
         for (i = 0; i < list.length; i++) {
             var el2 = list[i];
             var txt = (el2.textContent || '').replace(/\s+/g, ' ').trim();
-            if (txt.length > 0 && txt.length <= 24 && /^replace$/i.test(txt)) {
+            if (txt.length > 0 && txt.length <= 32 && new RegExp('^' + want + '$', 'i').test(txt)) {
                 return el2;
             }
         }
         return null;
     }
 
-    function clickReplace(reason) {
-        var btn = findReplaceControl();
+    function findToolbarAnchorForAnyAction() {
+        var order = ['replace', 'append', 'remove'];
+        var i;
+        for (i = 0; i < order.length; i++) {
+            var b = findToolbarButtonByLabel(order[i]);
+            if (b) {
+                return b;
+            }
+        }
+        return null;
+    }
+
+    function clickToolbarAction(action, reason) {
+        var name = labelForToolbarAction(action).toLowerCase();
+        var btn = findToolbarButtonByLabel(name);
         if (!btn) {
-            setStatus('Replace not found · ' + (reason || ''));
+            setStatus(labelForToolbarAction(action) + ' not found · ' + (reason || ''));
             return false;
         }
         try {
@@ -331,7 +450,7 @@
                 );
             } catch (e2) {}
         }
-        setStatus('Clicked Replace · ' + (reason || ''));
+        setStatus('Clicked ' + labelForToolbarAction(action) + ' · ' + (reason || ''));
         return true;
     }
 
@@ -346,22 +465,24 @@
             return;
         }
         var c = scanCounts();
-        var sig = fingerprint(c);
+        var m = readMetricsSet();
+        var sig = fingerprintForMetrics(c, m);
         if (!sig) {
-            setStatus('Watching… (waiting for Tails/Lines/Flights text)');
+            setStatus('Watching… (waiting for worksheet stats / Tails·Lines·Flights)');
             return;
         }
         var label = formatCountsLabel(c);
+        var act = readActionWatch();
         if (!lastSig) {
             lastSig = sig;
-            setStatus('Watching · ' + label);
+            setStatus('Watching · ' + label + ' · ' + labelForToolbarAction(act));
             return;
         }
         if (sig !== lastSig) {
             lastSig = sig;
-            clickReplace('counts changed · ' + label);
+            clickToolbarAction(act, 'counts changed · ' + label);
         } else {
-            setStatus('Watching · ' + label);
+            setStatus('Watching · ' + label + ' · ' + labelForToolbarAction(act));
         }
     }
 
@@ -397,7 +518,8 @@
                 return;
             }
             var s = intervalSecEffective();
-            clickReplace('interval · every ' + s + 's');
+            var ia = readActionInterval();
+            clickToolbarAction(ia, 'interval · every ' + s + 's');
         }, sec * 1000);
     }
 
@@ -432,6 +554,15 @@
             ' .dc-war-interval input[type="number"]{width:64px;padding:3px 6px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:12px;}' +
             '#' +
             HOST_ID +
+            ' .dc-war-metrics{display:flex;flex-wrap:wrap;align-items:center;gap:10px;width:100%;margin-top:6px;font-size:11px;color:#aebccf;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;margin-top:6px;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-actions select{padding:4px 8px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:12px;max-width:100%;}' +
+            '#' +
+            HOST_ID +
             '[data-dc-war-placed="0"]{visibility:hidden!important;opacity:0!important;pointer-events:none!important;}';
         document.head.appendChild(st);
     }
@@ -444,7 +575,7 @@
     }
 
     function findToolbarAnchor() {
-        var btn = findReplaceControl();
+        var btn = findToolbarAnchorForAnyAction();
         if (!btn) {
             return null;
         }
@@ -512,6 +643,191 @@
         });
     }
 
+    var HOST_HTML =
+        '<span class="dc-war-title">Worksheet filter actions</span>' +
+        '<div class="dc-war-metrics">' +
+        '<span>Watch metrics:</span>' +
+        '<label><input type="checkbox" data-dc-metric="tails" /> Tails</label>' +
+        '<label><input type="checkbox" data-dc-metric="lines" /> Lines</label>' +
+        '<label><input type="checkbox" data-dc-metric="flights" /> Flights</label>' +
+        '</div>' +
+        '<label><input type="checkbox" data-dc-watch-toggle /> When selected counts change, click:</label>' +
+        '<div class="dc-war-actions">' +
+        '<select data-dc-action-watch title="Button to click when counts change">' +
+        '<option value="replace">Replace</option><option value="append">Append</option><option value="remove">Remove</option>' +
+        '</select>' +
+        '</div>' +
+        '<span class="dc-war-status"></span>' +
+        '<div class="dc-war-interval">' +
+        '<label><input type="checkbox" data-dc-interval-toggle /> Also click every</label>' +
+        '<input type="number" min="5" max="3600" step="1" data-dc-interval-sec title="Seconds between clicks" />' +
+        '<span>sec</span>' +
+        '<select data-dc-action-interval title="Button for interval clicks">' +
+        '<option value="replace">Replace</option><option value="append">Append</option><option value="remove">Remove</option>' +
+        '</select>' +
+        '</div>';
+
+    function applyMetricsToCheckboxes(host) {
+        var m = readMetricsSet();
+        var boxes = host.querySelectorAll('input[data-dc-metric]');
+        var i;
+        for (i = 0; i < boxes.length; i++) {
+            var name = (boxes[i].getAttribute('data-dc-metric') || '').toLowerCase();
+            if (name === 'tails') {
+                boxes[i].checked = !!m.tails;
+            } else if (name === 'lines') {
+                boxes[i].checked = !!m.lines;
+            } else if (name === 'flights') {
+                boxes[i].checked = !!m.flights;
+            }
+        }
+    }
+
+    function readMetricsFromCheckboxes(host) {
+        var o = { tails: false, lines: false, flights: false };
+        var boxes = host.querySelectorAll('input[data-dc-metric]');
+        var i;
+        for (i = 0; i < boxes.length; i++) {
+            var name = (boxes[i].getAttribute('data-dc-metric') || '').toLowerCase();
+            if (boxes[i].checked) {
+                if (name === 'tails') {
+                    o.tails = true;
+                }
+                if (name === 'lines') {
+                    o.lines = true;
+                }
+                if (name === 'flights') {
+                    o.flights = true;
+                }
+            }
+        }
+        return o;
+    }
+
+    function bindHostControls(wrap) {
+        if (wrap.getAttribute('data-dc-war-bound') === '1') {
+            applyMetricsToCheckboxes(wrap);
+            var sw = wrap.querySelector('select[data-dc-action-watch]');
+            var si = wrap.querySelector('select[data-dc-action-interval]');
+            var sec = wrap.querySelector('input[data-dc-interval-sec]');
+            var it = wrap.querySelector('input[data-dc-interval-toggle]');
+            var wt = wrap.querySelector('input[data-dc-watch-toggle]');
+            if (sw) {
+                sw.value = readActionWatch();
+            }
+            if (si) {
+                si.value = readActionInterval();
+            }
+            if (sec) {
+                sec.value = String(intervalSecEffective());
+            }
+            if (it) {
+                it.checked = readIntervalOn();
+            }
+            if (wt) {
+                wt.checked = readWatchOn();
+            }
+            hostEl = wrap;
+            statusEl = wrap.querySelector('.dc-war-status');
+            toggleInput = wt;
+            return;
+        }
+        wrap.setAttribute('data-dc-war-bound', '1');
+        hostEl = wrap;
+        statusEl = wrap.querySelector('.dc-war-status');
+        toggleInput = wrap.querySelector('input[data-dc-watch-toggle]');
+        var selWatch = wrap.querySelector('select[data-dc-action-watch]');
+        var selInterval = wrap.querySelector('select[data-dc-action-interval]');
+        var intervalToggle = wrap.querySelector('input[data-dc-interval-toggle]');
+        var intervalSecInput = wrap.querySelector('input[data-dc-interval-sec]');
+        applyMetricsToCheckboxes(wrap);
+        if (selWatch) {
+            selWatch.value = readActionWatch();
+        }
+        if (selInterval) {
+            selInterval.value = readActionInterval();
+        }
+        if (intervalSecInput) {
+            intervalSecInput.value = String(intervalSecEffective());
+        }
+        if (intervalToggle) {
+            intervalToggle.checked = readIntervalOn();
+        }
+        if (toggleInput) {
+            toggleInput.checked = readWatchOn();
+        }
+        var metricBoxes = wrap.querySelectorAll('input[data-dc-metric]');
+        var mi;
+        for (mi = 0; mi < metricBoxes.length; mi++) {
+            metricBoxes[mi].addEventListener('change', function () {
+                writeMetricsSet(readMetricsFromCheckboxes(wrap));
+                lastSig = '';
+                if (readWatchOn()) {
+                    tick();
+                }
+            });
+        }
+        if (selWatch) {
+            selWatch.addEventListener('change', function () {
+                writeActionWatch(selWatch.value);
+                lastSig = '';
+                if (readWatchOn()) {
+                    tick();
+                }
+            });
+        }
+        if (selInterval) {
+            selInterval.addEventListener('change', function () {
+                writeActionInterval(selInterval.value);
+                if (readIntervalOn()) {
+                    startIntervalReplace();
+                }
+            });
+        }
+        if (intervalSecInput) {
+            intervalSecInput.addEventListener('change', function () {
+                var v = parseInt(intervalSecInput.value, 10);
+                if (!Number.isFinite(v)) {
+                    intervalSecInput.value = String(intervalSecEffective());
+                    return;
+                }
+                v = Math.min(3600, Math.max(5, v));
+                intervalSecInput.value = String(v);
+                writeIntervalSec(v);
+                if (readIntervalOn()) {
+                    startIntervalReplace();
+                }
+            });
+        }
+        if (intervalToggle) {
+            intervalToggle.addEventListener('change', function () {
+                writeIntervalOn(intervalToggle.checked);
+                if (intervalToggle.checked) {
+                    startIntervalReplace();
+                } else {
+                    stopIntervalReplace();
+                    if (!readWatchOn()) {
+                        setStatus('Off');
+                    }
+                }
+            });
+        }
+        if (toggleInput) {
+            toggleInput.addEventListener('change', function () {
+                writeWatchOn(toggleInput.checked);
+                lastSig = '';
+                if (toggleInput.checked) {
+                    startPoll();
+                } else {
+                    stopPoll();
+                    if (!readIntervalOn()) {
+                        setStatus('Off');
+                    }
+                }
+            });
+        }
+    }
+
     function startRelocateRetries() {
         if (relocateRetryTimer) {
             clearInterval(relocateRetryTimer);
@@ -538,13 +854,11 @@
         var existing = document.getElementById(HOST_ID);
         var anchor = findToolbarAnchor();
         if (existing) {
-            hostEl = existing;
-            statusEl = hostEl.querySelector('.dc-war-status');
-            toggleInput = hostEl.querySelector('input[data-dc-watch-toggle]');
-            var secIn = hostEl.querySelector('input[data-dc-interval-sec]');
-            if (secIn) {
-                secIn.value = String(intervalSecEffective());
+            if (!existing.querySelector('select[data-dc-action-watch]')) {
+                existing.innerHTML = HOST_HTML;
+                existing.removeAttribute('data-dc-war-bound');
             }
+            bindHostControls(existing);
             relocateHost();
             if (hostEl.getAttribute('data-dc-war-placed') !== '1') {
                 setHostPlaced(hostEl, findToolbarAnchor() !== null);
@@ -554,15 +868,7 @@
         ensureStyle();
         var wrap = document.createElement('div');
         wrap.id = HOST_ID;
-        wrap.innerHTML =
-            '<span class="dc-war-title">Auto replace</span>' +
-            '<label><input type="checkbox" data-dc-watch-toggle /> Watch Tails / Lines / Flights · click Replace when any count changes</label>' +
-            '<span class="dc-war-status"></span>' +
-            '<div class="dc-war-interval">' +
-            '<label><input type="checkbox" data-dc-interval-toggle /> Replace every</label>' +
-            '<input type="number" min="5" max="3600" step="1" data-dc-interval-sec title="Seconds between Replace clicks" />' +
-            '<span>sec</span><span style="font-size:10px;opacity:0.85;">(uses Auto replace pref default)</span>' +
-            '</div>';
+        wrap.innerHTML = HOST_HTML;
         if (anchor) {
             if (anchor.nextSibling) {
                 anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
@@ -580,54 +886,7 @@
             setHostPlaced(wrap, false);
             document.body.appendChild(wrap);
         }
-        hostEl = wrap;
-        statusEl = wrap.querySelector('.dc-war-status');
-        toggleInput = wrap.querySelector('input[data-dc-watch-toggle]');
-        var intervalToggle = wrap.querySelector('input[data-dc-interval-toggle]');
-        var intervalSecInput = wrap.querySelector('input[data-dc-interval-sec]');
-        if (intervalSecInput) {
-            intervalSecInput.value = String(intervalSecEffective());
-            intervalSecInput.addEventListener('change', function () {
-                var v = parseInt(intervalSecInput.value, 10);
-                if (!Number.isFinite(v)) {
-                    intervalSecInput.value = String(intervalSecEffective());
-                    return;
-                }
-                v = Math.min(3600, Math.max(5, v));
-                intervalSecInput.value = String(v);
-                writeIntervalSec(v);
-                if (readIntervalOn()) {
-                    startIntervalReplace();
-                }
-            });
-        }
-        if (intervalToggle) {
-            intervalToggle.checked = readIntervalOn();
-            intervalToggle.addEventListener('change', function () {
-                writeIntervalOn(intervalToggle.checked);
-                if (intervalToggle.checked) {
-                    startIntervalReplace();
-                } else {
-                    stopIntervalReplace();
-                    if (!readWatchOn()) {
-                        setStatus('Off');
-                    }
-                }
-            });
-        }
-        toggleInput.checked = readWatchOn();
-        toggleInput.addEventListener('change', function () {
-            writeWatchOn(toggleInput.checked);
-            lastSig = '';
-            if (toggleInput.checked) {
-                startPoll();
-            } else {
-                stopPoll();
-                if (!readIntervalOn()) {
-                    setStatus('Off');
-                }
-            }
-        });
+        bindHostControls(wrap);
         if (readWatchOn()) {
             startPoll();
         } else if (!readIntervalOn()) {
