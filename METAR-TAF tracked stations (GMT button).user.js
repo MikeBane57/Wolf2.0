@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.13
+// @version      2.0.14
 // @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), optional COD loop, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -2651,6 +2651,7 @@
             btn.style.verticalAlign = 'middle';
             btn.style.position = 'relative';
             btn.style.boxSizing = 'border-box';
+            btn.style.maxHeight = '50px';
             btn.style.display = 'inline-flex';
             btn.style.alignItems = 'center';
             btn.style.justifyContent = 'center';
@@ -2694,6 +2695,7 @@
             if (rowH < 24) {
                 rowH = 36;
             }
+            rowH = Math.min(rowH, 50);
             btn.style.minHeight = rowH + 'px';
             btn.style.height = 'auto';
             btn.style.alignSelf = 'stretch';
@@ -2711,6 +2713,7 @@
             }
         } else {
             btn.style.minHeight = '';
+            btn.style.maxHeight = '50px';
             btn.style.alignSelf = '';
             if (btn.parentNode !== host) {
                 host.appendChild(btn);
