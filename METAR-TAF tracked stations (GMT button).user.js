@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.10
+// @version      2.0.11
 // @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), optional COD loop, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -2481,7 +2481,7 @@
         modal.style.left = '50%';
         modal.style.top = '50%';
         modal.style.transform = 'translate(-50%,-50%)';
-        modal.style.width = 'min(960px, calc((100vw - 20px) * 0.6))';
+        modal.style.width = 'min(1152px, calc((100vw - 20px) * 0.72))';
         modal.style.height = 'calc((100vh - 24px) * 0.7)';
         modal.style.maxHeight = 'calc((100vh - 24px) * 0.7)';
         modal.style.background = '#1a1a1e';
