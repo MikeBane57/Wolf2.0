@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.15
+// @version      2.0.16
 // @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), optional COD loop, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -2120,7 +2120,7 @@
             return;
         }
         var snap = snapshotFromResults(results);
-        /** Merge with existing viewed state so background refresh does not wipe "not yet viewed" baselines. */
+        /** Merge: keep existing per-airport viewed baselines; only add ICAOs from first poll that we have not seen yet. */
         var merged = {};
         var k;
         for (k in viewedSnapshot) {
@@ -2130,7 +2130,7 @@
         }
         var sk;
         for (sk in snap) {
-            if (Object.prototype.hasOwnProperty.call(snap, sk)) {
+            if (Object.prototype.hasOwnProperty.call(snap, sk) && !Object.prototype.hasOwnProperty.call(merged, sk)) {
                 merged[sk] = snap[sk];
             }
         }
@@ -2276,12 +2276,9 @@
                     refreshThisBtn.disabled = false;
                 }
                 setStatusBar(stationListLabel(selectedIata) + ' · updated ' + new Date().toLocaleTimeString());
-                if (selectedIata) {
-                    markStationViewed(selectedIata);
-                }
                 renderStationList();
                 if (selectedIata) {
-                    renderDetail(selectedIata);
+                    renderDetail(selectedIata, { markViewedAfter: true });
                 }
                 updateRefreshThisLabel();
                 updateAlertState();
@@ -2399,9 +2396,8 @@
                 });
                 row.addEventListener('click', function () {
                     selectedIata = iata;
-                    markStationViewed(iata);
                     renderStationList();
-                    renderDetail(iata);
+                    renderDetail(iata, { markViewedAfter: true });
                     ensureFaaRvrLoaded(iata);
                 });
                 row.appendChild(label);
@@ -2431,6 +2427,7 @@
     function renderDetail(iata, opts) {
         opts = opts || {};
         var skipCodLoop = opts.skipCodLoop === true;
+        var markViewedAfter = opts.markViewedAfter === true;
         ensureDetailStructure();
         if (!detailContentEl) {
             return;
@@ -2457,8 +2454,7 @@
                 iata,
                 function () {
                     if (selectedIata === iata) {
-                        markStationViewed(iata);
-                        renderDetail(iata);
+                        renderDetail(iata, { markViewedAfter: true });
                         ensureFaaRvrLoaded(iata);
                     }
                 },
@@ -2622,6 +2618,9 @@
             if (codLoopHostEl) {
                 codLoopHostEl.style.display = 'none';
             }
+        }
+        if (markViewedAfter && iata && selectedIata === iata) {
+            markStationViewed(iata);
         }
     }
 
