@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.9
+// @version      2.0.10
 // @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), optional COD loop, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -1781,7 +1781,8 @@
                     if (icaoFor(stationList[idx]) === ic) {
                         var iataK = stationList[idx];
                         if (!pendingChangeTime[iataK]) {
-                            pendingChangeTime[iataK] = nowTs;
+                            /* +si so newest/oldest sort differs when many go stale in one poll (same millisecond). */
+                            pendingChangeTime[iataK] = nowTs + si;
                         }
                         break;
                     }
@@ -1815,7 +1816,21 @@
             return;
         }
         var snap = snapshotFromResults(results);
-        viewedSnapshot = snap;
+        /** Merge with existing viewed state so background refresh does not wipe "not yet viewed" baselines. */
+        var merged = {};
+        var k;
+        for (k in viewedSnapshot) {
+            if (Object.prototype.hasOwnProperty.call(viewedSnapshot, k)) {
+                merged[k] = viewedSnapshot[k];
+            }
+        }
+        var sk;
+        for (sk in snap) {
+            if (Object.prototype.hasOwnProperty.call(snap, sk)) {
+                merged[sk] = snap[sk];
+            }
+        }
+        viewedSnapshot = merged;
         saveViewedSnapshot(viewedSnapshot);
         notifyShownForCurrent = {};
         alertsPrimed = true;
@@ -2102,7 +2117,7 @@
                 break;
             }
         }
-        if (hasP && sortMode === 'newest' && listEl) {
+        if (hasP && (sortMode === 'newest' || sortMode === 'oldest') && listEl) {
             try {
                 listEl.scrollTop = 0;
             } catch (e) {}
@@ -2294,9 +2309,9 @@
                 renderStationList();
                 if (selectedIata) {
                     renderDetail(selectedIata);
-                    markStationViewed(selectedIata);
                     ensureFaaRvrLoaded(selectedIata);
                 }
+                updateAlertState();
                 setStatusBar('Ready · ' + new Date().toLocaleTimeString());
             },
             function (iata, rec, done, total) {
@@ -2672,7 +2687,6 @@
             fetchWeatherForIata(
                 code,
                 function () {
-                    markStationViewed(code);
                     renderStationList();
                     if (selectedIata === code) {
                         renderDetail(code);
