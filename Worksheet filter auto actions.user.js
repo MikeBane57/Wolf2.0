@@ -1,13 +1,13 @@
 // ==UserScript==
-// @name         Worksheet auto replace
+// @name         Worksheet filter auto actions
 // @namespace    Wolf 2.0
-// @version      1.3.3
-// @description  Worksheet: compact collapsible filter actions; watch AC/LN/FLT; Replace/Append/Remove on change or interval.
+// @version      1.3.4
+// @description  Worksheet: compact collapsible filter auto-actions; watch AC/LN/FLT; Replace/Append/Remove on change or interval.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
-// @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto replace","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto replace","label":"Interval Replace (seconds)","description":"Default seconds for “Replace every…” when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
-// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20auto%20replace.user.js
-// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20auto%20replace.user.js
+// @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Filter auto actions","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Filter auto actions","label":"Interval (seconds)","description":"Default seconds for interval clicks when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20filter%20auto%20actions.user.js
+// @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20filter%20auto%20actions.user.js
 // ==/UserScript==
 
 (function () {
@@ -699,7 +699,7 @@
 
     var HOST_HTML =
         '<details class="dc-war-details">' +
-        '<summary>Filter actions</summary>' +
+        '<summary>Worksheet filter auto actions</summary>' +
         '<div class="dc-war-body">' +
         '<div class="dc-war-row dc-war-watch-row">' +
         '<label><input type="checkbox" data-dc-watch-toggle /> Watch</label>' +
