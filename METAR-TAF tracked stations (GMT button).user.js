@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.4
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR chart, AFD; panel prefs; METAR/TAF title highlights
+// @version      2.0.5
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR chart, optional TT HRRR loop, AFD; panel prefs
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -12,7 +12,8 @@
 // @connect      rvr.data.faa.gov
 // @connect      atis.info
 // @connect      api.open-meteo.com
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show HRRR chart","description":"Hourly temperature/PoP chart (Open-Meteo).","default":true},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true}}
+// @connect      www.tropicaltidbits.com
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show HRRR chart","description":"Hourly temperature/PoP chart (Open-Meteo).","default":true},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowTtHrrrLoop":{"type":"boolean","group":"METAR watch · panels","label":"Tropical Tidbits HRRR loop","description":"Animated Radar (Rain/Frozen) frames from tropicaltidbits.com (third-party; not an iframe — loads PNGs). Respect site Terms of Use.","default":false},"metarWatchTtHrrrRegion":{"type":"string","group":"METAR watch · panels","label":"TT HRRR map region","description":"Tropical Tidbits region code for the loop, e.g. seus, scus, ncus, neus, nwus, swus, mwus, us (full CONUS).","default":"seus"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -99,6 +100,258 @@
 
     function showHrrrPanel() {
         return boolPref('metarWatchShowHrrr', true);
+    }
+
+    function showTtHrrrLoopPanel() {
+        return boolPref('metarWatchShowTtHrrrLoop', false);
+    }
+
+    function ttHrrrRegionPref() {
+        var r = String(getPref('metarWatchTtHrrrRegion', 'seus') || 'seus')
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]/g, '');
+        return r || 'seus';
+    }
+
+    var TT_HRRR_PKG = 'ref_frzn';
+    var TT_BASE = 'https://www.tropicaltidbits.com';
+    var ttLoopTimer = null;
+    var ttLoopRevokeUrls = [];
+    var ttLoopGen = 0;
+
+    function ttRefererHeaders() {
+        return {
+            Referer: TT_BASE + '/',
+            Origin: TT_BASE,
+            Accept: 'image/png,image/*;q=0.8,*/*;q=0.5'
+        };
+    }
+
+    function parseTtRuntimeFromHtml(html) {
+        if (!html || typeof html !== 'string') {
+            return null;
+        }
+        var m = html.match(/img\.src\s*=\s*["']([^"']*hrrr\/(\d{10,12})\/hrrr_[^"']+\.png)["']/i);
+        if (m && m[2]) {
+            return { runtime: m[2], samplePath: m[1] };
+        }
+        m = html.match(/\/analysis\/models\/hrrr\/(\d{10,12})\/hrrr_[a-z0-9_]+_[a-z0-9]+_\d+\.png/i);
+        if (m && m[1]) {
+            return { runtime: m[1], samplePath: null };
+        }
+        m = html.match(/model=hrrr[^"']*runtime=(\d{10,12})/i);
+        if (m && m[1]) {
+            return { runtime: m[1], samplePath: null };
+        }
+        return null;
+    }
+
+    function fetchTtPngBlob(url, cb) {
+        var headers = ttRefererHeaders();
+        function fromArrayBuffer(ab) {
+            if (!ab || !ab.byteLength) {
+                cb(null);
+                return;
+            }
+            try {
+                cb(new Blob([ab], { type: 'image/png' }));
+            } catch (e) {
+                cb(null);
+            }
+        }
+        if (typeof GM_xmlhttpRequest === 'function') {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: url,
+                headers: headers,
+                responseType: 'arraybuffer',
+                onload: function (resp) {
+                    if (!xhrStatusOk(resp)) {
+                        cb(null);
+                        return;
+                    }
+                    var ab = resp.response;
+                    if (ab && typeof ArrayBuffer !== 'undefined' && ab instanceof ArrayBuffer) {
+                        fromArrayBuffer(ab);
+                        return;
+                    }
+                    cb(null);
+                },
+                onerror: function () {
+                    cb(null);
+                },
+                ontimeout: function () {
+                    cb(null);
+                }
+            });
+            return;
+        }
+        fetch(url, { credentials: 'omit', mode: 'cors', headers: headers })
+            .then(function (res) {
+                return res.ok ? res.blob() : null;
+            })
+            .then(function (b) {
+                cb(b && b.size ? b : null);
+            })
+            .catch(function () {
+                cb(null);
+            });
+    }
+
+    function stopTtHrrrLoop() {
+        if (ttLoopTimer) {
+            clearInterval(ttLoopTimer);
+            ttLoopTimer = null;
+        }
+        ttLoopGen++;
+        var u;
+        for (u = 0; u < ttLoopRevokeUrls.length; u++) {
+            try {
+                URL.revokeObjectURL(ttLoopRevokeUrls[u]);
+            } catch (e) {}
+        }
+        ttLoopRevokeUrls = [];
+        var img = document.querySelector('[data-dc-tt-hrrr-img="1"]');
+        if (img) {
+            try {
+                img.removeAttribute('src');
+            } catch (e2) {}
+        }
+    }
+
+    function startTtHrrrLoopFromDetail() {
+        stopTtHrrrLoop();
+        if (!showTtHrrrLoopPanel()) {
+            return;
+        }
+        if (!detailEl || !modal || modal.style.display !== 'flex') {
+            return;
+        }
+        var imgEl = document.querySelector('[data-dc-tt-hrrr-img="1"]');
+        if (!imgEl) {
+            return;
+        }
+        var myGen = ++ttLoopGen;
+        var region = ttHrrrRegionPref();
+        var pageUrl =
+            TT_BASE +
+            '/analysis/models/?model=hrrr&region=' +
+            encodeURIComponent(region) +
+            '&pkg=' +
+            encodeURIComponent(TT_HRRR_PKG);
+        fetchText(
+            pageUrl,
+            function (html) {
+                if (myGen !== ttLoopGen) {
+                    return;
+                }
+                if (!html || html.length < 100) {
+                    imgEl.alt = 'Could not load Tropical Tidbits page (blocked or empty).';
+                    return;
+                }
+                var parsed = parseTtRuntimeFromHtml(html);
+                if (!parsed || !parsed.runtime) {
+                    imgEl.alt = 'Could not read Tropical Tidbits model run from page.';
+                    return;
+                }
+                var rt = parsed.runtime;
+                var frameUrls = [];
+                var fh;
+                for (fh = 1; fh <= 18; fh++) {
+                    frameUrls.push(
+                        TT_BASE +
+                            '/analysis/models/hrrr/' +
+                            rt +
+                            '/hrrr_' +
+                            TT_HRRR_PKG +
+                            '_' +
+                            region +
+                            '_' +
+                            fh +
+                            '.png'
+                    );
+                }
+                var blobs = new Array(frameUrls.length);
+                var pending = frameUrls.length;
+                var fi;
+                function tryStart() {
+                    if (myGen !== ttLoopGen) {
+                        return;
+                    }
+                    if (pending > 0) {
+                        return;
+                    }
+                    var urls = [];
+                    var good = [];
+                    var gi;
+                    for (gi = 0; gi < blobs.length; gi++) {
+                        if (blobs[gi]) {
+                            try {
+                                var ou = URL.createObjectURL(blobs[gi]);
+                                urls.push(ou);
+                                good.push(ou);
+                            } catch (e) {}
+                        }
+                    }
+                    ttLoopRevokeUrls = good;
+                    if (!good.length) {
+                        imgEl.alt = 'Tropical Tidbits images failed to load (hotlink/CORS).';
+                        return;
+                    }
+                    var idx = 0;
+                    imgEl.src = good[0];
+                    imgEl.alt = 'HRRR Radar (Rain/Frozen) ' + region.toUpperCase() + ' · TT';
+                    ttLoopTimer = setInterval(function () {
+                        if (myGen !== ttLoopGen || !imgEl.parentNode) {
+                            return;
+                        }
+                        idx = (idx + 1) % good.length;
+                        imgEl.src = good[idx];
+                    }, 450);
+                }
+                for (fi = 0; fi < frameUrls.length; fi++) {
+                    (function (ix) {
+                        fetchTtPngBlob(frameUrls[ix], function (blob) {
+                            if (myGen !== ttLoopGen) {
+                                return;
+                            }
+                            blobs[ix] = blob;
+                            pending--;
+                            tryStart();
+                        });
+                    })(fi);
+                }
+            },
+            {
+                headers: (function () {
+                    var h = ttRefererHeaders();
+                    h.Accept = 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8';
+                    return h;
+                })()
+            }
+        );
+    }
+
+    function buildTtHrrrLoopPlaceholderHtml() {
+        var region = ttHrrrRegionPref();
+        var pageUrl =
+            TT_BASE +
+            '/analysis/models/?model=hrrr&region=' +
+            encodeURIComponent(region) +
+            '&pkg=' +
+            encodeURIComponent(TT_HRRR_PKG);
+        return (
+            '<div style="margin-bottom:16px;">' +
+            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">HRRR model · Radar (Rain/Frozen) <span style="font-weight:400;color:#95a5a6;font-size:11px;">(Tropical Tidbits)</span></div>' +
+            '<div style="max-width:100%;overflow:auto;background:#111;border-radius:6px;padding:8px;">' +
+            '<img data-dc-tt-hrrr-img="1" alt="Loading TT HRRR loop…" style="max-width:100%;height:auto;display:block;min-height:120px;background:#0d0d0f;" />' +
+            '</div>' +
+            '<div style="font-size:10px;color:#7f8c8d;margin-top:8px;font-family:system-ui,sans-serif;line-height:1.45;">Third-party imagery — not endorsed. Full map and GIF tools: <a href="' +
+            escapeHtml(pageUrl) +
+            '" target="_blank" rel="noopener noreferrer" style="color:#5dade2;">tropicaltidbits.com</a>. Site may block requests without a proper Referer; uses extension XHR.</div>' +
+            '</div>'
+        );
     }
 
     function pollMs() {
@@ -2030,6 +2283,7 @@
                 '</div>';
         }
         var hrrrBlock = showHrrrPanel() ? buildHrrrChartHtml(r.hrrrHourly) : '';
+        var ttHrrrBlock = showTtHrrrLoopPanel() ? buildTtHrrrLoopPlaceholderHtml() : '';
         var afdBlock = '';
         if (showAfdPanel() && r.afdText && String(r.afdText).trim()) {
             var afdEsc = escapeHtml(r.afdText);
@@ -2061,8 +2315,14 @@
             datisBlock +
             radarBlock +
             hrrrBlock +
+            ttHrrrBlock +
             afdBlock +
             '</div>';
+        if (ttHrrrBlock) {
+            startTtHrrrLoopFromDetail();
+        } else {
+            stopTtHrrrLoop();
+        }
     }
 
     function openModal() {
@@ -2101,6 +2361,7 @@
         modal.style.display = 'none';
         backdrop.style.display = 'none';
         stopListColorTimer();
+        stopTtHrrrLoop();
     }
 
     function findGmtClockElement() {
@@ -2589,6 +2850,7 @@
                 btn.remove();
             }
         } catch (e) {}
+        stopTtHrrrLoop();
         if (onDocKey) {
             document.removeEventListener('keydown', onDocKey);
             onDocKey = null;
