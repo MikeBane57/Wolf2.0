@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.22
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (cached), cross-tab poll + alert/view sync, collapsible AFD
+// @version      2.0.23
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache), cross-tab poll + alert/view sync, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -13,7 +13,7 @@
 // @connect      atis.info
 // @connect      api.open-meteo.com
 // @connect      weather.cod.edu
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1},"metarWatchSharedPoll":{"type":"boolean","group":"METAR watch","label":"Share poll across tabs","description":"One browser tab leads background METAR/TAF polls and broadcasts results to other Ops Suite tabs; reduces duplicate API traffic. Best with the same station list in each tab.","default":true}}
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1},"metarWatchCodPrefetchSectors":{"type":"boolean","group":"METAR watch · panels","label":"COD: prefetch tracked sectors","description":"After each METAR poll, background-download COD frames once per NEXLAB sector covering your station list (same cache for all airports in that sector). Turn off to save bandwidth.","default":true},"metarWatchSharedPoll":{"type":"boolean","group":"METAR watch","label":"Share poll across tabs","description":"One browser tab leads background METAR/TAF polls and broadcasts results to other Ops Suite tabs; reduces duplicate API traffic. Best with the same station list in each tab.","default":true}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -492,12 +492,140 @@
     var codLoopGen = 0;
     /** JSON poll only (light); full image fetch when run fingerprint changes. */
     var codCacheCheckTimer = null;
+    /** Round-robin: which product parms to check this tick (displayed + tracked sectors). */
+    var codPollParmsList = [];
+    var codPollIndex = 0;
+    /** ICAO → { lat, lon } from api.weather.gov/stations (for sector prefetch). */
+    var stationCoordsByIcao = {};
+    var stationCoordsPending = {};
+    var codPrefetchQueue = [];
+    var codPrefetchActive = false;
     /** parms string → { runKey, blobUrls: string[], fileUrls: string[] } */
     var codCacheByParms = {};
     var codDisplayedParms = null;
 
     function codCachePollMs() {
         return numPref('metarWatchCodCachePollMinutes', 3, 0, 60) * 60 * 1000;
+    }
+
+    function codPrefetchSectorsEnabled() {
+        return boolPref('metarWatchCodPrefetchSectors', true);
+    }
+
+    function mergeStationCoordsFromFetch(icao, st) {
+        if (!icao || !st || !st.geometry || !st.geometry.coordinates) {
+            return;
+        }
+        var coords = st.geometry.coordinates;
+        var lon = coords[0];
+        var lat = coords[1];
+        if (typeof lat !== 'number' || typeof lon !== 'number') {
+            return;
+        }
+        stationCoordsByIcao[icao] = { lat: lat, lon: lon };
+    }
+
+    function ensureStationCoordsForIcao(icao, cb) {
+        if (!icao) {
+            if (typeof cb === 'function') {
+                cb(false);
+            }
+            return;
+        }
+        var c = stationCoordsByIcao[icao];
+        if (c && typeof c.lat === 'number' && typeof c.lon === 'number') {
+            if (typeof cb === 'function') {
+                cb(true);
+            }
+            return;
+        }
+        if (stationCoordsPending[icao]) {
+            stationCoordsPending[icao].push(cb);
+            return;
+        }
+        stationCoordsPending[icao] = [cb];
+        fetchJson('https://api.weather.gov/stations/' + encodeURIComponent(icao), function (st) {
+            mergeStationCoordsFromFetch(icao, st);
+            var arr = stationCoordsPending[icao];
+            delete stationCoordsPending[icao];
+            var ok = !!(stationCoordsByIcao[icao]);
+            var ai;
+            for (ai = 0; ai < arr.length; ai++) {
+                try {
+                    if (typeof arr[ai] === 'function') {
+                        arr[ai](ok);
+                    }
+                } catch (e) {}
+            }
+        });
+    }
+
+    /**
+     * parms to poll: current loop (if any) + one entry per NEXLAB sector covering tracked stations (deduped).
+     */
+    function rebuildCodPollParmsList() {
+        var list = [];
+        if (codDisplayedParms) {
+            list.push(codDisplayedParms);
+        }
+        if (codPrefetchSectorsEnabled() && showCodModelLoopPanel() && codLoopLoadTrigger() !== 'manual') {
+            var model = codLoopModelPref();
+            var seen = {};
+            var si;
+            for (si = 0; si < stationList.length; si++) {
+                var ic = icaoFor(stationList[si]);
+                if (!ic) {
+                    continue;
+                }
+                var coord = stationCoordsByIcao[ic];
+                if (!coord) {
+                    continue;
+                }
+                var sec = codPickSectorForLatLon(coord.lat, coord.lon, model);
+                var parms = codBuildParms(model, sec);
+                if (!seen[parms]) {
+                    seen[parms] = true;
+                    list.push(parms);
+                }
+            }
+        }
+        var out = [];
+        var o = {};
+        var li;
+        for (li = 0; li < list.length; li++) {
+            var p = list[li];
+            if (p && !o[p]) {
+                o[p] = true;
+                out.push(p);
+            }
+        }
+        codPollParmsList = out;
+        codPollIndex = 0;
+    }
+
+    function codStopLoopAnimationOnly() {
+        if (codLoopTimer) {
+            clearInterval(codLoopTimer);
+            codLoopTimer = null;
+        }
+        codLoopGen++;
+        lastCodLoopIata = null;
+        if (codLoopWrapEl) {
+            codLoopWrapEl.style.visibility = 'hidden';
+            codLoopWrapEl.style.minHeight = '';
+        }
+        if (codLoopImgA) {
+            try {
+                codLoopImgA.removeAttribute('src');
+            } catch (e) {}
+            codLoopImgA.style.opacity = '0';
+        }
+        if (codLoopImgB) {
+            try {
+                codLoopImgB.removeAttribute('src');
+            } catch (e) {}
+            codLoopImgB.style.opacity = '0';
+        }
     }
 
     function codRunFingerprint(fileUrls) {
@@ -715,87 +843,207 @@
         first.src = urls[0];
     }
 
-    function codScheduleCachePoll(parms) {
-        codClearCachePoll();
+    function codPollOneParmsTick(parms) {
+        if (!parms) {
+            return;
+        }
+        var apiUrl = COD_BASE + '/assets/php/scripts/get-files.php?parms=' + encodeURIComponent(parms);
+        fetchText(apiUrl, function (txt) {
+            if (!txt) {
+                return;
+            }
+            var j;
+            try {
+                j = JSON.parse(txt);
+            } catch (e1) {
+                return;
+            }
+            if (!j || j.err !== 'false' || !j.files || !j.files.length) {
+                return;
+            }
+            var files = j.files;
+            var newKey = codRunFingerprint(files);
+            var cur = codCacheByParms[parms];
+            if (cur && cur.runKey === newKey) {
+                return;
+            }
+            codFillCacheFromHttpFiles(parms, files, function (ok) {
+                if (!ok) {
+                    return;
+                }
+                if (codDisplayedParms === parms && modal && modal.style.display === 'flex' && selectedIata) {
+                    var myGen = ++codLoopGen;
+                    var tag = 'updated';
+                    var m = j.parms;
+                    var sub =
+                        Array.isArray(m) && m.length >= 3
+                            ? String(m[1]) + ' · ' + String(m[2]) + ' · simulated reflectivity'
+                            : 'COD NEXLAB';
+                    codStartLoopFromUrls(
+                        codCacheByParms[parms].blobUrls,
+                        myGen,
+                        parms,
+                        tag,
+                        sub,
+                        'new run (cached)'
+                    );
+                }
+            });
+        });
+    }
+
+    function codEnsureCodCachePollRunning() {
         var ms = codCachePollMs();
-        if (ms <= 0 || !parms) {
+        if (!showCodModelLoopPanel() || ms <= 0) {
+            codClearCachePoll();
+            return;
+        }
+        rebuildCodPollParmsList();
+        if (!codPollParmsList.length) {
+            codClearCachePoll();
+            return;
+        }
+        if (codCacheCheckTimer) {
             return;
         }
         codCacheCheckTimer = setInterval(function () {
             if (!showCodModelLoopPanel()) {
+                codClearCachePoll();
                 return;
             }
-            var apiUrl = COD_BASE + '/assets/php/scripts/get-files.php?parms=' + encodeURIComponent(parms);
-            fetchText(apiUrl, function (txt) {
-                if (!txt) {
-                    return;
-                }
-                var j;
-                try {
-                    j = JSON.parse(txt);
-                } catch (e1) {
-                    return;
-                }
-                if (!j || j.err !== 'false' || !j.files || !j.files.length) {
-                    return;
-                }
-                var files = j.files;
-                var newKey = codRunFingerprint(files);
-                var cur = codCacheByParms[parms];
-                if (cur && cur.runKey === newKey) {
-                    return;
-                }
-                codFillCacheFromHttpFiles(parms, files, function (ok) {
-                    if (!ok) {
-                        return;
-                    }
-                    if (codDisplayedParms === parms && modal && modal.style.display === 'flex' && selectedIata) {
-                        var myGen = ++codLoopGen;
-                        var tag = 'updated';
-                        var m = j.parms;
-                        var sub =
-                            Array.isArray(m) && m.length >= 3
-                                ? String(m[1]) + ' · ' + String(m[2]) + ' · simulated reflectivity'
-                                : 'COD NEXLAB';
-                        codStartLoopFromUrls(
-                            codCacheByParms[parms].blobUrls,
-                            myGen,
-                            parms,
-                            tag,
-                            sub,
-                            'new run (cached)'
-                        );
-                    }
-                });
-            });
+            rebuildCodPollParmsList();
+            if (!codPollParmsList.length) {
+                return;
+            }
+            var parmsTick = codPollParmsList[codPollIndex % codPollParmsList.length];
+            codPollIndex++;
+            codPollOneParmsTick(parmsTick);
         }, ms);
     }
 
+    function codScheduleCachePoll(parms) {
+        codDisplayedParms = parms || null;
+        rebuildCodPollParmsList();
+        codEnsureCodCachePollRunning();
+    }
+
     function stopCodModelLoop() {
-        if (codLoopTimer) {
-            clearInterval(codLoopTimer);
-            codLoopTimer = null;
-        }
-        codClearCachePoll();
+        codStopLoopAnimationOnly();
         codDisplayedParms = null;
-        codLoopGen++;
-        lastCodLoopIata = null;
-        if (codLoopWrapEl) {
-            codLoopWrapEl.style.visibility = 'hidden';
-            codLoopWrapEl.style.minHeight = '';
+        rebuildCodPollParmsList();
+        codEnsureCodCachePollRunning();
+    }
+
+    function codPrefetchDrainQueue() {
+        if (codPrefetchActive || !codPrefetchQueue.length) {
+            return;
         }
-        if (codLoopImgA) {
+        var parms = codPrefetchQueue.shift();
+        if (!parms) {
+            codPrefetchDrainQueue();
+            return;
+        }
+        codPrefetchActive = true;
+        var apiUrl = COD_BASE + '/assets/php/scripts/get-files.php?parms=' + encodeURIComponent(parms);
+        fetchText(apiUrl, function (txt) {
+            if (!txt) {
+                codPrefetchActive = false;
+                codPrefetchDrainQueue();
+                return;
+            }
+            var j;
             try {
-                codLoopImgA.removeAttribute('src');
-            } catch (e) {}
-            codLoopImgA.style.opacity = '0';
+                j = JSON.parse(txt);
+            } catch (e1) {
+                codPrefetchActive = false;
+                codPrefetchDrainQueue();
+                return;
+            }
+            if (!j || j.err !== 'false' || !j.files || !j.files.length) {
+                codPrefetchActive = false;
+                codPrefetchDrainQueue();
+                return;
+            }
+            var files = j.files;
+            var newKey = codRunFingerprint(files);
+            var cur = codCacheByParms[parms];
+            if (cur && cur.runKey === newKey) {
+                codPrefetchActive = false;
+                codPrefetchDrainQueue();
+                return;
+            }
+            codFillCacheFromHttpFiles(parms, files, function () {
+                codPrefetchActive = false;
+                codPrefetchDrainQueue();
+            });
+        });
+    }
+
+    /**
+     * After METAR poll: resolve coords for tracked stations, then queue one COD download per unique NEXLAB sector (reuses codCacheByParms).
+     */
+    function codPrefetchTrackedSectorsAfterPoll() {
+        if (!codPrefetchSectorsEnabled() || !showCodModelLoopPanel() || codLoopLoadTrigger() === 'manual') {
+            return;
         }
-        if (codLoopImgB) {
-            try {
-                codLoopImgB.removeAttribute('src');
-            } catch (e) {}
-            codLoopImgB.style.opacity = '0';
+        if (codAutoSectorPref()) {
+            var need = [];
+            var si;
+            for (si = 0; si < stationList.length; si++) {
+                var ic = icaoFor(stationList[si]);
+                if (ic && !stationCoordsByIcao[ic]) {
+                    need.push(ic);
+                }
+            }
+            var pending = need.length;
+            if (pending === 0) {
+                codEnqueueSectorPrefetchParms();
+                return;
+            }
+            var ni;
+            for (ni = 0; ni < need.length; ni++) {
+                (function (ic) {
+                    ensureStationCoordsForIcao(ic, function () {
+                        pending--;
+                        if (pending <= 0) {
+                            codEnqueueSectorPrefetchParms();
+                        }
+                    });
+                })(need[ni]);
+            }
+            return;
         }
+        var manualParms = codModelParmsManual();
+        if (manualParms && !codCacheByParms[manualParms]) {
+            codPrefetchQueue.push(manualParms);
+            codPrefetchDrainQueue();
+        }
+    }
+
+    function codEnqueueSectorPrefetchParms() {
+        var model = codLoopModelPref();
+        var seen = {};
+        var si;
+        for (si = 0; si < stationList.length; si++) {
+            var ic = icaoFor(stationList[si]);
+            if (!ic) {
+                continue;
+            }
+            var coord = stationCoordsByIcao[ic];
+            if (!coord) {
+                continue;
+            }
+            var sec = codPickSectorForLatLon(coord.lat, coord.lon, model);
+            var parms = codBuildParms(model, sec);
+            if (seen[parms] || codCacheByParms[parms]) {
+                continue;
+            }
+            seen[parms] = true;
+            codPrefetchQueue.push(parms);
+        }
+        rebuildCodPollParmsList();
+        codPrefetchDrainQueue();
+        codEnsureCodCachePollRunning();
     }
 
     function setCodLoadButtonState(loading) {
@@ -818,6 +1066,7 @@
             return;
         }
         fetchJson('https://api.weather.gov/stations/' + encodeURIComponent(icao), function (st) {
+            mergeStationCoordsFromFetch(icao, st);
             if (!st || !st.geometry || !st.geometry.coordinates) {
                 cb(codBuildParms(model, 'US'), 'fallback');
                 return;
@@ -2230,6 +2479,7 @@
             return;
         }
         fetchJson('https://api.weather.gov/stations/' + encodeURIComponent(icao), function (st) {
+            mergeStationCoordsFromFetch(icao, st);
             var lat = null;
             var lon = null;
             if (st && st.geometry && st.geometry.coordinates) {
@@ -2303,6 +2553,7 @@
             return;
         }
         fetchJson('https://api.weather.gov/stations/' + encodeURIComponent(icao), function (st) {
+            mergeStationCoordsFromFetch(icao, st);
             if (!st || !st.geometry || !st.geometry.coordinates) {
                 cb(null);
                 return;
@@ -2562,6 +2813,7 @@
         }
 
         function finalizeRecord() {
+            ensureStationCoordsForIcao(icao);
             if (deferEnrichment) {
                 var recFast = buildRecFromEnr(null);
                 cacheByIcao[icao] = recFast;
@@ -2979,6 +3231,7 @@
                 } else {
                     renderStationList();
                 }
+                codPrefetchTrackedSectorsAfterPoll();
             },
             function (iata, rec, done, total) {
                 if (modal && modal.style.display === 'flex') {
