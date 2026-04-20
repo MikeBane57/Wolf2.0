@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.20
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (cached), cross-tab poll sync, collapsible AFD
+// @version      2.0.21
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (cached), cross-tab poll + alert/view sync, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -31,9 +31,13 @@
     /** Shared METAR/TAF text (tgftp-equivalent) for SW tooltip + METAR watch — same origin localStorage + BroadcastChannel. */
     var LS_METAR_TAF_SHARED = 'dc-metar-taf-shared-v1';
     var BC_METAR_TAF_SHARED = 'dc-metar-taf-shared';
+    var BC_VIEWED_SYNC = 'dc-metar-watch-viewed-sync';
+    var LS_NOTIFY_DEDUPE = 'dc-metar-watch-notify-dedupe-v1';
     var SHARED_METAR_TAF_TTL_MS = 8 * 60 * 1000;
     var metarTafSharedChannel = null;
+    var viewedSyncChannel = null;
     var onStorageMetarTaf = null;
+    var onStorageViewedSync = null;
     var tabInstanceId = 't' + Date.now() + '_' + Math.random().toString(36).slice(2, 12);
     var pollBroadcastChannel = null;
     var leaderHeartbeatTimer = null;
@@ -1189,6 +1193,25 @@
         localStorage.setItem(STORAGE_DETAIL_SEEN, JSON.stringify(obj));
     }
 
+    function notifyContentKey(metar, taf) {
+        return String(metar || '') + '\u0000' + String(taf || '');
+    }
+
+    function loadNotifyDedupeMap() {
+        try {
+            var o = JSON.parse(localStorage.getItem(LS_NOTIFY_DEDUPE) || '{}');
+            return o && typeof o === 'object' ? o : {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function saveNotifyDedupeMap(obj) {
+        try {
+            localStorage.setItem(LS_NOTIFY_DEDUPE, JSON.stringify(obj));
+        } catch (e) {}
+    }
+
     function loadSortMode() {
         try {
             var v = localStorage.getItem(STORAGE_SORT);
@@ -1217,6 +1240,93 @@
     var pendingChangeTime = {};
     var viewedSnapshot = loadViewedSnapshot();
     var detailSeenSnapshot = loadDetailSeenSnapshot();
+    var notifyDedupeMap = loadNotifyDedupeMap();
+
+    function reloadViewedSnapshotsFromStorage() {
+        viewedSnapshot = loadViewedSnapshot();
+        detailSeenSnapshot = loadDetailSeenSnapshot();
+    }
+
+    function applyViewedSyncFromOtherTab(icao) {
+        reloadViewedSnapshotsFromStorage();
+        notifyDedupeMap = loadNotifyDedupeMap();
+        if (icao) {
+            var idx;
+            for (idx = 0; idx < stationList.length; idx++) {
+                if (icaoFor(stationList[idx]) === icao) {
+                    delete pendingChangeTime[stationList[idx]];
+                    break;
+                }
+            }
+        }
+        updateAlertState();
+        try {
+            renderStationList();
+            if (modal && modal.style.display === 'flex' && selectedIata) {
+                renderDetail(selectedIata, { skipCodLoop: true });
+            }
+        } catch (e) {}
+    }
+
+    function initViewedSync() {
+        if (typeof BroadcastChannel !== 'undefined') {
+            try {
+                viewedSyncChannel = new BroadcastChannel(BC_VIEWED_SYNC);
+                viewedSyncChannel.onmessage = function (ev) {
+                    var d = ev && ev.data;
+                    if (!d || d.type !== 'viewed-read' || !d.icao) {
+                        return;
+                    }
+                    if (d.tabId === tabInstanceId) {
+                        return;
+                    }
+                    applyViewedSyncFromOtherTab(d.icao);
+                };
+            } catch (e) {
+                viewedSyncChannel = null;
+            }
+        }
+        onStorageViewedSync = function (e) {
+            if (!e || !e.key) {
+                return;
+            }
+            if (e.key === STORAGE_VIEWED || e.key === STORAGE_DETAIL_SEEN) {
+                applyViewedSyncFromOtherTab(null);
+            }
+            if (e.key === LS_NOTIFY_DEDUPE && e.newValue) {
+                try {
+                    notifyDedupeMap = JSON.parse(e.newValue) || {};
+                } catch (e2) {}
+            }
+        };
+        window.addEventListener('storage', onStorageViewedSync);
+    }
+
+    function stopViewedSync() {
+        if (onStorageViewedSync) {
+            window.removeEventListener('storage', onStorageViewedSync);
+            onStorageViewedSync = null;
+        }
+        if (viewedSyncChannel) {
+            try {
+                viewedSyncChannel.close();
+            } catch (e) {}
+            viewedSyncChannel = null;
+        }
+    }
+
+    function broadcastViewedRead(icao) {
+        if (!icao || !viewedSyncChannel) {
+            return;
+        }
+        try {
+            viewedSyncChannel.postMessage({
+                type: 'viewed-read',
+                tabId: tabInstanceId,
+                icao: icao
+            });
+        } catch (e) {}
+    }
 
     var btn = null;
     var badge = null;
@@ -2644,7 +2754,17 @@
             if (notifyShownForCurrent[icao]) {
                 continue;
             }
+            var rec = cacheByIcao[icao];
+            var ck = rec ? notifyContentKey(rec.metar, rec.taf) : '';
+            if (ck && notifyDedupeMap[icao] === ck) {
+                notifyShownForCurrent[icao] = true;
+                continue;
+            }
             notifyShownForCurrent[icao] = true;
+            if (ck) {
+                notifyDedupeMap[icao] = ck;
+                saveNotifyDedupeMap(notifyDedupeMap);
+            }
             try {
                 var title = 'METAR/TAF update';
                 var body = icao + ': new weather text since you last checked.';
@@ -2886,7 +3006,14 @@
         saveViewedSnapshot(viewedSnapshot);
         detailSeenSnapshot[icao] = snap;
         saveDetailSeenSnapshot(detailSeenSnapshot);
+        try {
+            if (notifyDedupeMap[icao]) {
+                delete notifyDedupeMap[icao];
+                saveNotifyDedupeMap(notifyDedupeMap);
+            }
+        } catch (e) {}
         delete pendingChangeTime[iata];
+        broadcastViewedRead(icao);
         updateAlertState();
     }
 
@@ -3820,6 +3947,7 @@
         mountButtonNearClock();
         initCrossTabPollSync();
         initMetarTafSharedSync();
+        initViewedSync();
         runPoll();
         pollTimer = setInterval(runPoll, pollMs());
         domObserver = new MutationObserver(function () {
@@ -3837,6 +3965,7 @@
 
     window.__myScriptCleanup = function () {
         stopMetarTafSharedSync();
+        stopViewedSync();
         stopCrossTabPollSync();
         if (pollTimer) {
             clearInterval(pollTimer);
