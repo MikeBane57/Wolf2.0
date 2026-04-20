@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.21
+// @version      2.0.22
 // @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (cached), cross-tab poll + alert/view sync, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -1064,9 +1064,7 @@
         } else {
             cur.metar = metar;
             cur.taf = taf;
-            if (metar && metar !== 'N/A') {
-                cur.metarLines = [metar];
-            }
+            cur.metarLines = metar && metar !== 'N/A' ? [metar] : [];
             cur.t = tUse;
         }
         cacheByIcao[icao] = cur;
