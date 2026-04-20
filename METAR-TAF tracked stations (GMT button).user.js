@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.26
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache), cross-tab poll (BC + storage) + alert/view sync, NEW highlight until you leave station, collapsible AFD
+// @version      2.0.27
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache), cross-tab poll (BC + storage) + alert/view sync, optional conditional notify rules (global + per IATA), NEW highlight until you leave station, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -13,7 +13,7 @@
 // @connect      atis.info
 // @connect      api.open-meteo.com
 // @connect      weather.cod.edu
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1},"metarWatchCodPrefetchSectors":{"type":"boolean","group":"METAR watch · panels","label":"COD: prefetch tracked sectors","description":"After each METAR poll, background-download COD frames once per NEXLAB sector covering your station list (same cache for all airports in that sector). Turn off to save bandwidth.","default":true},"metarWatchSharedPoll":{"type":"boolean","group":"METAR watch","label":"Share poll across tabs","description":"One browser tab leads background METAR/TAF polls and broadcasts results to other Ops Suite tabs; reduces duplicate API traffic. Best with the same station list in each tab.","default":true}}
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchNotifyRulesMode":{"type":"select","group":"METAR watch · notify rules","label":"Notify only when rules match","description":"Off: notify on any METAR/TAF change. Global: JSON rules apply to every station. Per IATA: global rules plus optional per-airport JSON overrides.","default":"off","options":[{"value":"off","label":"Off (any change)"},{"value":"global","label":"Global rules only"},{"value":"per_iata","label":"Global + per-IATA overrides"}]},"metarWatchNotifyRulesGlobal":{"type":"string","group":"METAR watch · notify rules","label":"Global rules (JSON)","description":"Array of rules, OR empty. Example: [{\"metar\":{\"ceilingFtMax\":1000}},{\"taf\":{\"visibilitySmMax\":0.5}}]. Ceiling from BKN/OVC/VV (ft AGL); TAF vis in statute miles. If mode is not Off and this is empty, no notifications fire.","default":""},"metarWatchNotifyRulesPerIata":{"type":"string","group":"METAR watch · notify rules","label":"Per-IATA rules (JSON)","description":"Optional. Example: {\"ATL\":[{\"metar\":{\"ceilingFtMax\":500}}],\"DEN\":[{\"taf\":{\"visibilitySmMax\":1}}]}. Used when mode is Global + per-IATA.","default":""},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1},"metarWatchCodPrefetchSectors":{"type":"boolean","group":"METAR watch · panels","label":"COD: prefetch tracked sectors","description":"After each METAR poll, background-download COD frames once per NEXLAB sector covering your station list (same cache for all airports in that sector). Turn off to save bandwidth.","default":true},"metarWatchSharedPoll":{"type":"boolean","group":"METAR watch","label":"Share poll across tabs","description":"One browser tab leads background METAR/TAF polls and broadcasts results to other Ops Suite tabs; reduces duplicate API traffic. Best with the same station list in each tab.","default":true}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -395,6 +395,204 @@
     function metarTafLooksEmpty(s) {
         var t = normalizeMetarTafText(s);
         return !t || t === 'N/A' || /^n\s*\/\s*a$/i.test(t);
+    }
+
+    /** Lowest BKN/OVC/VV ceiling in feet AGL from raw METAR text, or null if none. */
+    function ceilingFtFromMetar(metar) {
+        var s = String(metar || '').toUpperCase();
+        var minH = Infinity;
+        var re = /\b(BKN|OVC|VV)(\d{3})\b/g;
+        var m;
+        while ((m = re.exec(s)) !== null) {
+            var h = parseInt(m[2], 10) * 100;
+            if (h > 0 && h < 60000) {
+                minH = Math.min(minH, h);
+            }
+        }
+        return minH === Infinity ? null : minH;
+    }
+
+    /** Parse a visibility token to statute miles (number), or null if unknown. */
+    function parseOneVisToken(tok) {
+        var t = String(tok || '')
+            .toUpperCase()
+            .replace(/\s+/g, '')
+            .trim();
+        if (!t) {
+            return null;
+        }
+        if (t.indexOf('SM') === -1) {
+            return null;
+        }
+        t = t.replace(/SM$/i, '');
+        if (/^P\d+$/i.test(t)) {
+            return parseInt(t.slice(1), 10);
+        }
+        if (/^P\d+(\/\d+)?$/.test(t)) {
+            var pm = t.match(/^P(\d+)(?:\/(\d+))?$/);
+            if (pm) {
+                return parseInt(pm[1], 10) + (pm[2] ? parseInt(pm[2], 10) / (pm[2].length ? 10 : 1) : 0);
+            }
+        }
+        if (/^M\d+\/\d+$/.test(t)) {
+            var fm = t.match(/^M(\d+)\/(\d+)$/);
+            if (fm) {
+                return parseInt(fm[1], 10) / parseInt(fm[2], 10);
+            }
+        }
+        var frac = t.match(/^(\d+)\/(\d+)$/);
+        if (frac) {
+            return parseInt(frac[1], 10) / parseInt(frac[2], 10);
+        }
+        var mixed = t.match(/^(\d+)(\d)\/(\d)$/);
+        if (mixed) {
+            return parseInt(mixed[1], 10) + parseInt(mixed[2], 10) / parseInt(mixed[3], 10);
+        }
+        var whole = t.match(/^(\d+)$/);
+        if (whole) {
+            var n = parseInt(whole[1], 10);
+            if (n >= 1 && n <= 50) {
+                return n;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Minimum reported visibility in statute miles found in TAF/METAR text (best-effort).
+     * Handles e.g. 1/2SM, 2SM, P6SM, 2 1/2SM, M1/4SM.
+     */
+    function minVisibilitySmInText(txt) {
+        var s = String(txt || '');
+        var minV = Infinity;
+        var u = s.toUpperCase().replace(/\s+/g, ' ');
+        var re =
+            /\b(P\d+(?:\/\d+)?|M?\d+\s+\d\/\d|M?\d+\/\d+|\d+)\s*SM\b/gi;
+        var m;
+        while ((m = re.exec(u)) !== null) {
+            var tok = m[0].replace(/\s+/g, '');
+            var v = parseOneVisToken(tok);
+            if (v !== null && Number.isFinite(v) && v >= 0 && v < 100) {
+                minV = Math.min(minV, v);
+            }
+        }
+        return minV === Infinity ? null : minV;
+    }
+
+    function parseNotifyRulesArray(str) {
+        var t = String(str || '').trim();
+        if (!t) {
+            return [];
+        }
+        try {
+            var a = JSON.parse(t);
+            return Array.isArray(a) ? a : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function parseNotifyRulesPerIataMap(str) {
+        try {
+            var o = JSON.parse(String(str || '').trim() || '{}');
+            return o && typeof o === 'object' ? o : {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function notifyRulesMode() {
+        var v = String(getPref('metarWatchNotifyRulesMode', 'off') || 'off').toLowerCase();
+        if (v === 'global' || v === 'per_iata') {
+            return v;
+        }
+        return 'off';
+    }
+
+    function mergeNotifyRulesForIata(iata) {
+        var mode = notifyRulesMode();
+        if (typeof donkeycodeGetPref !== 'function') {
+            return [];
+        }
+        var rawG = donkeycodeGetPref('metarWatchNotifyRulesGlobal');
+        var globalArr = parseNotifyRulesArray(rawG !== undefined && rawG !== null ? String(rawG) : '');
+        if (mode === 'global') {
+            return globalArr;
+        }
+        if (mode === 'per_iata') {
+            var map = parseNotifyRulesPerIataMap(donkeycodeGetPref('metarWatchNotifyRulesPerIata'));
+            var u = String(iata || '').toUpperCase();
+            var extra = map[u];
+            var out = globalArr.slice();
+            if (extra && Array.isArray(extra)) {
+                var ei;
+                for (ei = 0; ei < extra.length; ei++) {
+                    out.push(extra[ei]);
+                }
+            }
+            return out;
+        }
+        return [];
+    }
+
+    function ruleMatchesOne(rule, metar, taf) {
+        if (!rule || typeof rule !== 'object') {
+            return false;
+        }
+        if (!rule.metar && !rule.taf) {
+            return false;
+        }
+        var ok = true;
+        if (rule.metar && typeof rule.metar === 'object') {
+            var rm = rule.metar;
+            if (rm.ceilingFtMax != null && Number.isFinite(Number(rm.ceilingFtMax))) {
+                var c = ceilingFtFromMetar(metar);
+                if (c === null || c > Number(rm.ceilingFtMax)) {
+                    ok = false;
+                }
+            }
+            if (ok && rm.visibilitySmMax != null && Number.isFinite(Number(rm.visibilitySmMax))) {
+                var vm = minVisibilitySmInText(metar);
+                if (vm === null || vm > Number(rm.visibilitySmMax)) {
+                    ok = false;
+                }
+            }
+        }
+        if (ok && rule.taf && typeof rule.taf === 'object') {
+            var rt = rule.taf;
+            if (rt.ceilingFtMax != null && Number.isFinite(Number(rt.ceilingFtMax))) {
+                var ct = ceilingFtFromMetar(taf);
+                if (ct === null || ct > Number(rt.ceilingFtMax)) {
+                    ok = false;
+                }
+            }
+            if (ok && rt.visibilitySmMax != null && Number.isFinite(Number(rt.visibilitySmMax))) {
+                var vt = minVisibilitySmInText(taf);
+                if (vt === null || vt > Number(rt.visibilitySmMax)) {
+                    ok = false;
+                }
+            }
+        }
+        return ok;
+    }
+
+    function notifyRulesPassForStation(iata, rec) {
+        if (notifyRulesMode() === 'off') {
+            return true;
+        }
+        var rules = mergeNotifyRulesForIata(iata);
+        if (!rules.length) {
+            return false;
+        }
+        var metar = rec && rec.metar ? String(rec.metar) : '';
+        var taf = rec && rec.taf ? String(rec.taf) : '';
+        var i;
+        for (i = 0; i < rules.length; i++) {
+            if (ruleMatchesOne(rules[i], metar, taf)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -3119,6 +3317,11 @@
                 continue;
             }
             var rec = cacheByIcao[icao];
+            var iataForNotify = iataFromIcao(icao);
+            if (iataForNotify && !notifyRulesPassForStation(iataForNotify, rec)) {
+                notifyShownForCurrent[icao] = true;
+                continue;
+            }
             var ck = rec ? notifyContentKey(rec.metar, rec.taf) : '';
             if (ck && notifyDedupeMap[icao] === ck) {
                 notifyShownForCurrent[icao] = true;
