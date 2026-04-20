@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.17
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (cached), collapsible AFD
+// @version      2.0.18
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (cached), cross-tab poll sync, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -13,7 +13,7 @@
 // @connect      atis.info
 // @connect      api.open-meteo.com
 // @connect      weather.cod.edu
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1}}
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1},"metarWatchSharedPoll":{"type":"boolean","group":"METAR watch","label":"Share poll across tabs","description":"One browser tab leads background METAR/TAF polls and broadcasts results to other Ops Suite tabs; reduces duplicate API traffic. Best with the same station list in each tab.","default":true}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -24,6 +24,14 @@
     var STORAGE_STATIONS = 'dc-metar-watch-stations-v1';
     var STORAGE_VIEWED = 'dc-metar-watch-viewed-snapshot-v1';
     var STORAGE_SORT = 'dc-metar-watch-sort-v1';
+    var LS_POLL_LEADER = 'dc-metar-watch-poll-leader-v1';
+    var BC_POLL_NAME = 'dc-metar-watch-poll-sync';
+    var tabInstanceId = 't' + Date.now() + '_' + Math.random().toString(36).slice(2, 12);
+    var pollBroadcastChannel = null;
+    var leaderHeartbeatTimer = null;
+    var leaderElectTimer = null;
+    var onStorageLeader = null;
+    var onPageHidePoll = null;
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -56,6 +64,200 @@
             return false;
         }
         return def;
+    }
+
+    function sharedPollEnabled() {
+        return boolPref('metarWatchSharedPoll', true);
+    }
+
+    function readPollLeaderRecord() {
+        try {
+            var raw = localStorage.getItem(LS_POLL_LEADER);
+            if (!raw) {
+                return null;
+            }
+            var o = JSON.parse(raw);
+            if (!o || typeof o.tabId !== 'string' || typeof o.ts !== 'number') {
+                return null;
+            }
+            return o;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function isPollLeaderTab() {
+        if (!sharedPollEnabled()) {
+            return true;
+        }
+        var o = readPollLeaderRecord();
+        var now = Date.now();
+        if (!o || now - o.ts > 8000) {
+            return true;
+        }
+        return o.tabId === tabInstanceId;
+    }
+
+    function writePollLeaderHeartbeat() {
+        if (!sharedPollEnabled()) {
+            return;
+        }
+        try {
+            var o = readPollLeaderRecord();
+            var now = Date.now();
+            if (!o || now - o.ts > 8000 || o.tabId === tabInstanceId) {
+                localStorage.setItem(LS_POLL_LEADER, JSON.stringify({ tabId: tabInstanceId, ts: now }));
+            }
+        } catch (e) {}
+    }
+
+    function tryClaimPollLeadership() {
+        if (!sharedPollEnabled()) {
+            return;
+        }
+        var o = readPollLeaderRecord();
+        var now = Date.now();
+        if (!o || now - o.ts > 8000) {
+            try {
+                localStorage.setItem(LS_POLL_LEADER, JSON.stringify({ tabId: tabInstanceId, ts: now }));
+            } catch (e) {}
+        }
+    }
+
+    function releasePollLeadership() {
+        try {
+            var o = readPollLeaderRecord();
+            if (o && o.tabId === tabInstanceId) {
+                localStorage.removeItem(LS_POLL_LEADER);
+            }
+        } catch (e) {}
+    }
+
+    function broadcastPollResults(results) {
+        if (!sharedPollEnabled() || !results || !pollBroadcastChannel) {
+            return;
+        }
+        try {
+            pollBroadcastChannel.postMessage({
+                type: 'poll-results',
+                tabId: tabInstanceId,
+                results: results,
+                stationSig: stationList.slice().sort().join(',')
+            });
+        } catch (e) {}
+    }
+
+    function applySharedPollResults(results, remoteSig) {
+        if (!results || !results.length) {
+            return;
+        }
+        var localSig = stationList.slice().sort().join(',');
+        var i;
+        for (i = 0; i < results.length; i++) {
+            var r = results[i];
+            if (r && r.icao) {
+                cacheByIcao[r.icao] = r;
+            }
+        }
+        primeAlertsBaseline(results);
+        updateAlertState();
+        if (remoteSig && remoteSig !== localSig) {
+            var got = {};
+            for (i = 0; i < results.length; i++) {
+                if (results[i] && results[i].icao) {
+                    got[results[i].icao] = true;
+                }
+            }
+            var sj;
+            for (sj = 0; sj < stationList.length; sj++) {
+                var iata = stationList[sj];
+                var ic = icaoFor(iata);
+                if (ic && !got[ic]) {
+                    fetchWeatherForIata(iata, function () {
+                        renderStationList();
+                        if (selectedIata) {
+                            renderDetail(selectedIata, { skipCodLoop: true });
+                        }
+                        updateAlertState();
+                    });
+                }
+            }
+        }
+        if (modal && modal.style.display === 'flex' && selectedIata) {
+            renderDetail(selectedIata, { skipCodLoop: true });
+            renderStationList();
+            setStatusBar('Updated from another tab · ' + new Date().toLocaleTimeString());
+        } else {
+            renderStationList();
+        }
+    }
+
+    function initCrossTabPollSync() {
+        if (!sharedPollEnabled()) {
+            return;
+        }
+        if (typeof BroadcastChannel !== 'undefined') {
+            try {
+                pollBroadcastChannel = new BroadcastChannel(BC_POLL_NAME);
+                pollBroadcastChannel.onmessage = function (ev) {
+                    var d = ev && ev.data;
+                    if (!d || d.type !== 'poll-results' || !d.results) {
+                        return;
+                    }
+                    if (d.tabId === tabInstanceId) {
+                        return;
+                    }
+                    applySharedPollResults(d.results, d.stationSig);
+                };
+            } catch (e) {
+                pollBroadcastChannel = null;
+            }
+        }
+        tryClaimPollLeadership();
+        leaderHeartbeatTimer = setInterval(function () {
+            if (isPollLeaderTab()) {
+                writePollLeaderHeartbeat();
+            }
+        }, 2000);
+        leaderElectTimer = setInterval(function () {
+            tryClaimPollLeadership();
+        }, 4000);
+        onStorageLeader = function (e) {
+            if (e && e.key === LS_POLL_LEADER) {
+                tryClaimPollLeadership();
+            }
+        };
+        window.addEventListener('storage', onStorageLeader);
+        onPageHidePoll = function () {
+            releasePollLeadership();
+        };
+        window.addEventListener('pagehide', onPageHidePoll);
+    }
+
+    function stopCrossTabPollSync() {
+        if (onPageHidePoll) {
+            window.removeEventListener('pagehide', onPageHidePoll);
+            onPageHidePoll = null;
+        }
+        if (leaderHeartbeatTimer) {
+            clearInterval(leaderHeartbeatTimer);
+            leaderHeartbeatTimer = null;
+        }
+        if (leaderElectTimer) {
+            clearInterval(leaderElectTimer);
+            leaderElectTimer = null;
+        }
+        if (onStorageLeader) {
+            window.removeEventListener('storage', onStorageLeader);
+            onStorageLeader = null;
+        }
+        if (pollBroadcastChannel) {
+            try {
+                pollBroadcastChannel.close();
+            } catch (e) {}
+            pollBroadcastChannel = null;
+        }
+        releasePollLeadership();
     }
 
     /**
@@ -2447,6 +2649,9 @@
     }
 
     function runPoll() {
+        if (sharedPollEnabled() && pollBroadcastChannel && !isPollLeaderTab()) {
+            return;
+        }
         if (modal && modal.style.display === 'flex') {
             setStatusBar('Background refresh…');
         }
@@ -2462,10 +2667,13 @@
                 }
                 primeAlertsBaseline(results);
                 updateAlertState();
+                broadcastPollResults(results);
                 if (modal && modal.style.display === 'flex' && selectedIata) {
                     renderDetail(selectedIata);
                     renderStationList();
                     setStatusBar('Background refresh done · ' + new Date().toLocaleTimeString());
+                } else {
+                    renderStationList();
                 }
             },
             function (iata, rec, done, total) {
@@ -3421,6 +3629,7 @@
     function init() {
         buildModal();
         mountButtonNearClock();
+        initCrossTabPollSync();
         runPoll();
         pollTimer = setInterval(runPoll, pollMs());
         domObserver = new MutationObserver(function () {
@@ -3437,6 +3646,7 @@
     }
 
     window.__myScriptCleanup = function () {
+        stopCrossTabPollSync();
         if (pollTimer) {
             clearInterval(pollTimer);
             pollTimer = null;
