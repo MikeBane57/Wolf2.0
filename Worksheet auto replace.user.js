@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto replace
 // @namespace    Wolf 2.0
-// @version      1.3.2
+// @version      1.3.3
 // @description  Worksheet: compact collapsible filter actions; watch AC/LN/FLT; Replace/Append/Remove on change or interval.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -578,28 +578,28 @@
         st.textContent =
             '#' +
             HOST_ID +
-            '{margin-top:6px;max-width:100%;box-sizing:border-box;font:11px/1.35 system-ui,sans-serif;color:#e8eef5;}' +
+            '{width:100%;margin-top:21px;box-sizing:border-box;font:11px/1.35 system-ui,sans-serif;color:#e8eef5;}' +
             '#' +
             HOST_ID +
-            ' details.dc-war-details{background:rgba(30,40,55,0.92);border:1px solid #3d4f66;border-radius:6px;padding:0;overflow:hidden;}' +
+            ' details.dc-war-details{background:rgba(30,40,55,0.92);border:1px solid #3d4f66;border-radius:6px;padding:0;overflow:hidden;width:100%;box-sizing:border-box;}' +
             '#' +
             HOST_ID +
-            ' details.dc-war-details > summary{cursor:pointer;list-style:none;padding:6px 10px;font-weight:600;color:#5dade2;user-select:none;}' +
+            ' details.dc-war-details > summary{cursor:pointer;list-style:none;padding:4px;font-weight:600;color:#5dade2;user-select:none;}' +
             '#' +
             HOST_ID +
             ' details.dc-war-details > summary::-webkit-details-marker{display:none;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-body{padding:0 10px 8px 10px;display:flex;flex-direction:column;gap:6px;}' +
+            ' .dc-war-body{padding:4px;display:flex;flex-direction:column;gap:4px;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;width:100%;}' +
+            ' .dc-war-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;width:100%;}' +
             '#' +
             HOST_ID +
             ' .dc-war-interval-row{justify-content:space-between;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-interval-left{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;flex:1;min-width:0;}' +
+            ' .dc-war-interval-left{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;flex:1;min-width:0;}' +
             '#' +
             HOST_ID +
             ' .dc-war-countdown{font-size:11px;color:#95a5a6;flex-shrink:0;margin-left:auto;min-width:4ch;text-align:right;font-variant-numeric:tabular-nums;}' +
@@ -611,10 +611,10 @@
             ' .dc-war-metric input[type="checkbox"]{accent-color:#5dade2;width:12px;height:12px;margin:0;flex-shrink:0;}' +
             '#' +
             HOST_ID +
-            ' select.dc-war-sel{padding:2px 6px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:11px;max-width:100%;}' +
+            ' select.dc-war-sel{padding:2px 4px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:11px;max-width:100%;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-num{width:44px;padding:2px 4px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:11px;}' +
+            ' .dc-war-num{width:44px;padding:2px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:11px;}' +
             '#' +
             HOST_ID +
             '[data-dc-war-placed="0"]{visibility:hidden!important;opacity:0!important;pointer-events:none!important;}';
