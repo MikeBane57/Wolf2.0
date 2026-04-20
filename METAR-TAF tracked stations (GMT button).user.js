@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.7
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR chart, optional COD model loop, collapsible AFD; panel prefs
+// @version      2.0.8
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), optional COD loop, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -13,7 +13,7 @@
 // @connect      atis.info
 // @connect      api.open-meteo.com
 // @connect      weather.cod.edu
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show HRRR chart","description":"Hourly temperature/PoP chart (Open-Meteo).","default":true},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default is RAP simulated reflectivity, full CONUS.","default":false},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms","description":"Dash-separated parms for COD get-files.php. Default = RAP CONUS reflectivity. HRRR example (mesoscale sector): current-HRRR-MW-prec-radar-1-0-100","default":"current-RAP-US-prec-radar-1-0-100"}}
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":false},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms","description":"Dash-separated parms for COD get-files.php. Default = RAP CONUS reflectivity. HRRR example (mesoscale sector): current-HRRR-MW-prec-radar-1-0-100","default":"current-RAP-US-prec-radar-1-0-100"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -100,6 +100,15 @@
 
     function showHrrrPanel() {
         return boolPref('metarWatchShowHrrr', true);
+    }
+
+    /** Hourly temp/PoP chart: NOAA grid (default) vs Open-Meteo GFS blend. */
+    function hrrrHourlySource() {
+        var v = String(getPref('metarWatchHrrrHourlySource', 'noaa') || 'noaa').toLowerCase();
+        if (v === 'openmeteo' || v === 'open-meteo') {
+            return 'openmeteo';
+        }
+        return 'noaa';
     }
 
     function showCodModelLoopPanel() {
@@ -640,11 +649,12 @@
         );
     }
 
-    /** SVG combo chart: temperature (line) + PoP (bars). Open-Meteo hourly blend. */
+    /** SVG combo chart: temperature (line) + PoP (bars). Data from NOAA hourly or Open-Meteo. */
     function buildHrrrChartHtml(h) {
         if (!h || !h.times || !h.times.length) {
             return '';
         }
+        var chartSub = h.chartSubtitle || 'Hourly forecast';
         var maxPts = 24;
         var n = Math.min(h.times.length, maxPts);
         var W = 800;
@@ -835,7 +845,9 @@
             ')  ▌ PoP</text>';
         return (
             '<div style="margin-bottom:16px;">' +
-            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">HRRR forecast <span style="font-weight:400;color:#95a5a6;font-size:11px;">(hourly chart, Open-Meteo GFS+HRRR)</span></div>' +
+            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">Hourly forecast <span style="font-weight:400;color:#95a5a6;font-size:11px;">(' +
+            escapeHtml(chartSub) +
+            ')</span></div>' +
             '<div style="max-width:100%;overflow:auto;background:#141418;padding:10px;border-radius:6px;">' +
             '<svg viewBox="0 0 ' +
             W +
@@ -1018,8 +1030,8 @@
         });
     }
 
-    /** NOAA HRRR (CONUS) hourly via Open-Meteo GFS+HRRR blend. */
-    function fetchHrrrHourlyForecast(lat, lon, cb) {
+    /** Open-Meteo GFS blend (optional; not official NWS grid). */
+    function fetchHrrrHourlyOpenMeteo(lat, lon, cb) {
         var url =
             'https://api.open-meteo.com/v1/gfs?latitude=' +
             encodeURIComponent(lat) +
@@ -1047,12 +1059,86 @@
                     wspd: h.wind_speed_10m || [],
                     wdir: h.wind_direction_10m || [],
                     unitTemp: (j.hourly_units && j.hourly_units.temperature_2m) || '°F',
-                    unitWind: (j.hourly_units && j.hourly_units.wind_speed_10m) || 'mph'
+                    unitWind: (j.hourly_units && j.hourly_units.wind_speed_10m) || 'mph',
+                    chartSubtitle: 'Open-Meteo GFS blend'
                 });
             } catch (e) {
                 cb(null);
             }
         });
+    }
+
+    /** NOAA api.weather.gov grid hourly forecast at lat/lon (official NWS product). */
+    function fetchNwsGridHourlyForecast(lat, lon, cb) {
+        fetchJson(
+            'https://api.weather.gov/points/' + encodeURIComponent(lat) + ',' + encodeURIComponent(lon),
+            function (ptFeat) {
+                if (!ptFeat || !ptFeat.properties) {
+                    cb(null);
+                    return;
+                }
+                var hourlyUrl = ptFeat.properties.forecastHourly;
+                if (!hourlyUrl || typeof hourlyUrl !== 'string') {
+                    cb(null);
+                    return;
+                }
+                fetchJson(hourlyUrl, function (hourlyFeat) {
+                    if (!hourlyFeat || !hourlyFeat.properties || !hourlyFeat.properties.periods) {
+                        cb(null);
+                        return;
+                    }
+                    var periods = hourlyFeat.properties.periods;
+                    var times = [];
+                    var tempF = [];
+                    var pop = [];
+                    var pi;
+                    for (pi = 0; pi < periods.length; pi++) {
+                        var p = periods[pi];
+                        if (!p) {
+                            continue;
+                        }
+                        if (p.startTime) {
+                            times.push(p.startTime);
+                        }
+                        var t = p.temperature;
+                        var tu = String(p.temperatureUnit || 'F').toUpperCase();
+                        if (tu === 'C' && typeof t === 'number' && Number.isFinite(t)) {
+                            t = (t * 9) / 5 + 32;
+                        }
+                        tempF.push(typeof t === 'number' && Number.isFinite(t) ? t : null);
+                        var popv = p.probabilityOfPrecipitation && p.probabilityOfPrecipitation.value;
+                        pop.push(
+                            typeof popv === 'number' && Number.isFinite(popv)
+                                ? Math.max(0, Math.min(100, popv))
+                                : 0
+                        );
+                    }
+                    if (!times.length) {
+                        cb(null);
+                        return;
+                    }
+                    cb({
+                        times: times,
+                        tempF: tempF,
+                        pop: pop,
+                        wcode: [],
+                        wspd: [],
+                        wdir: [],
+                        unitTemp: '°F',
+                        unitWind: 'mph',
+                        chartSubtitle: 'NOAA grid hourly · weather.gov'
+                    });
+                });
+            }
+        );
+    }
+
+    function fetchHourlyForecastChart(lat, lon, cb) {
+        if (hrrrHourlySource() === 'openmeteo') {
+            fetchHrrrHourlyOpenMeteo(lat, lon, cb);
+        } else {
+            fetchNwsGridHourlyForecast(lat, lon, cb);
+        }
     }
 
     /** Pass `undefined` for datis or hrrr to leave that field unchanged (partial refresh). */
@@ -1131,7 +1217,7 @@
                     mergeDetailExtras(icao, iata, dArg, null);
                     return;
                 }
-                fetchHrrrHourlyForecast(lat, lon, function (hrrr) {
+                fetchHourlyForecastChart(lat, lon, function (hrrr) {
                     mergeDetailExtras(icao, iata, dArg, hrrr);
                 });
             }
