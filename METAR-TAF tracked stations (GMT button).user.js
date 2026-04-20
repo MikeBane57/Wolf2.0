@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.23
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache), cross-tab poll + alert/view sync, collapsible AFD
+// @version      2.0.24
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache), cross-tab poll (BC + storage) + alert/view sync, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -33,6 +33,9 @@
     var BC_METAR_TAF_SHARED = 'dc-metar-taf-shared';
     var BC_VIEWED_SYNC = 'dc-metar-watch-viewed-sync';
     var LS_NOTIFY_DEDUPE = 'dc-metar-watch-notify-dedupe-v1';
+    /** When BroadcastChannel is unavailable, leader writes poll payload here so other tabs can apply via storage event. */
+    var LS_POLL_RESULTS = 'dc-metar-watch-poll-results-v1';
+    var lastAppliedPollResultsTs = 0;
     var SHARED_METAR_TAF_TTL_MS = 8 * 60 * 1000;
     var metarTafSharedChannel = null;
     var viewedSyncChannel = null;
@@ -146,22 +149,44 @@
     }
 
     function broadcastPollResults(results) {
-        if (!sharedPollEnabled() || !results || !pollBroadcastChannel) {
+        if (!sharedPollEnabled() || !results || !results.length) {
             return;
         }
+        var sig = stationList.slice().sort().join(',');
+        var ts = Date.now();
+        if (pollBroadcastChannel) {
+            try {
+                pollBroadcastChannel.postMessage({
+                    type: 'poll-results',
+                    tabId: tabInstanceId,
+                    ts: ts,
+                    results: results,
+                    stationSig: sig
+                });
+            } catch (e) {}
+        }
         try {
-            pollBroadcastChannel.postMessage({
-                type: 'poll-results',
-                tabId: tabInstanceId,
-                results: results,
-                stationSig: stationList.slice().sort().join(',')
-            });
+            localStorage.setItem(
+                LS_POLL_RESULTS,
+                JSON.stringify({
+                    tabId: tabInstanceId,
+                    ts: ts,
+                    results: results,
+                    stationSig: sig
+                })
+            );
         } catch (e) {}
     }
 
-    function applySharedPollResults(results, remoteSig) {
+    function applySharedPollResults(results, remoteSig, ts) {
         if (!results || !results.length) {
             return;
+        }
+        if (typeof ts === 'number' && Number.isFinite(ts)) {
+            if (ts <= lastAppliedPollResultsTs) {
+                return;
+            }
+            lastAppliedPollResultsTs = ts;
         }
         var localSig = stationList.slice().sort().join(',');
         var i;
@@ -205,6 +230,29 @@
         }
     }
 
+    function tryApplyStoredPollResults() {
+        if (!sharedPollEnabled()) {
+            return;
+        }
+        try {
+            var raw = localStorage.getItem(LS_POLL_RESULTS);
+            if (!raw) {
+                return;
+            }
+            var d = JSON.parse(raw);
+            if (!d || !d.results || !d.results.length || typeof d.ts !== 'number') {
+                return;
+            }
+            if (Date.now() - d.ts > 15 * 60 * 1000) {
+                return;
+            }
+            if (d.tabId === tabInstanceId) {
+                return;
+            }
+            applySharedPollResults(d.results, d.stationSig, d.ts);
+        } catch (e) {}
+    }
+
     function initCrossTabPollSync() {
         if (!sharedPollEnabled()) {
             return;
@@ -220,7 +268,7 @@
                     if (d.tabId === tabInstanceId) {
                         return;
                     }
-                    applySharedPollResults(d.results, d.stationSig);
+                    applySharedPollResults(d.results, d.stationSig, d.ts);
                 };
             } catch (e) {
                 pollBroadcastChannel = null;
@@ -239,12 +287,21 @@
             if (e && e.key === LS_POLL_LEADER) {
                 tryClaimPollLeadership();
             }
+            if (e && e.key === LS_POLL_RESULTS && e.newValue && sharedPollEnabled()) {
+                try {
+                    var d = JSON.parse(e.newValue);
+                    if (d && d.tabId && d.tabId !== tabInstanceId && d.results) {
+                        applySharedPollResults(d.results, d.stationSig, d.ts);
+                    }
+                } catch (e2) {}
+            }
         };
         window.addEventListener('storage', onStorageLeader);
         onPageHidePoll = function () {
             releasePollLeadership();
         };
         window.addEventListener('pagehide', onPageHidePoll);
+        tryApplyStoredPollResults();
     }
 
     function stopCrossTabPollSync() {
@@ -290,11 +347,18 @@
         if (!icao) {
             return;
         }
-        var store = readSharedMetarTafStore();
-        store[icao] = { metar: String(metar || ''), taf: String(taf || ''), t: Date.now() };
+        var now = Date.now();
         try {
+            var store = readSharedMetarTafStore();
+            store[icao] = { metar: String(metar || ''), taf: String(taf || ''), t: now };
             localStorage.setItem(LS_METAR_TAF_SHARED, JSON.stringify(store));
-        } catch (e) {}
+        } catch (e) {
+            try {
+                var store2 = readSharedMetarTafStore();
+                store2[icao] = { metar: String(metar || ''), taf: String(taf || ''), t: now };
+                localStorage.setItem(LS_METAR_TAF_SHARED, JSON.stringify(store2));
+            } catch (e2) {}
+        }
     }
 
     function broadcastSharedMetarTaf(icao, metar, taf) {
@@ -318,6 +382,19 @@
         }
         writeSharedMetarTafEntry(icao, metar, taf);
         broadcastSharedMetarTaf(icao, metar, taf);
+    }
+
+    /** Normalize for comparisons and cross-tab merge (avoids false NEW / stale from whitespace). */
+    function normalizeMetarTafText(s) {
+        return String(s || '')
+            .replace(/\r\n/g, '\n')
+            .replace(/\r/g, '\n')
+            .trim();
+    }
+
+    function metarTafLooksEmpty(s) {
+        var t = normalizeMetarTafText(s);
+        return !t || t === 'N/A' || /^n\s*\/\s*a$/i.test(t);
     }
 
     /**
@@ -1281,9 +1358,19 @@
             return;
         }
         var tUse = typeof ts === 'number' && Number.isFinite(ts) ? ts : Date.now();
+        var nm = normalizeMetarTafText(metar);
+        var nt = normalizeMetarTafText(taf);
         var cur = cacheByIcao[icao];
         if (cur && typeof cur.t === 'number' && cur.t > tUse + 500) {
-            return;
+            var localM = normalizeMetarTafText(cur.metar);
+            var localT = normalizeMetarTafText(cur.taf);
+            var sharedHasM = !metarTafLooksEmpty(nm);
+            var sharedHasT = !metarTafLooksEmpty(nt);
+            var localWeakM = metarTafLooksEmpty(localM);
+            var localWeakT = metarTafLooksEmpty(localT);
+            if (!(sharedHasM && localWeakM) && !(sharedHasT && localWeakT)) {
+                return;
+            }
         }
         if (!cur) {
             var iataGuess = '';
@@ -1297,9 +1384,9 @@
             cur = {
                 iata: iataGuess,
                 icao: icao,
-                metar: metar,
-                metarLines: metar && metar !== 'N/A' ? [metar] : [],
-                taf: taf,
+                metar: nm || 'N/A',
+                metarLines: nm && !metarTafLooksEmpty(nm) ? [nm] : [],
+                taf: nt || 'N/A',
                 rvrFaa: null,
                 rvrNotFetched: true,
                 datisEntries: null,
@@ -1311,10 +1398,15 @@
                 t: tUse
             };
         } else {
-            cur.metar = metar;
-            cur.taf = taf;
-            cur.metarLines = metar && metar !== 'N/A' ? [metar] : [];
-            cur.t = tUse;
+            if (!metarTafLooksEmpty(nm)) {
+                cur.metar = nm;
+                cur.metarLines = [nm];
+            }
+            if (!metarTafLooksEmpty(nt)) {
+                cur.taf = nt;
+            }
+            var prevT = typeof cur.t === 'number' && Number.isFinite(cur.t) ? cur.t : 0;
+            cur.t = Math.max(prevT, tUse);
         }
         cacheByIcao[icao] = cur;
         try {
@@ -1441,7 +1533,7 @@
     }
 
     function notifyContentKey(metar, taf) {
-        return String(metar || '') + '\u0000' + String(taf || '');
+        return normalizeMetarTafText(metar) + '\u0000' + normalizeMetarTafText(taf);
     }
 
     function loadNotifyDedupeMap() {
@@ -1639,7 +1731,11 @@
         }
         var c = cacheByIcao[icao];
         var v = viewedSnapshot[icao];
-        return !v || c.metar !== v.metar || c.taf !== v.taf;
+        return (
+            !v ||
+            normalizeMetarTafText(c.metar) !== normalizeMetarTafText(v.metar) ||
+            normalizeMetarTafText(c.taf) !== normalizeMetarTafText(v.taf)
+        );
     }
 
     /** Milliseconds for newest/oldest sort: first-seen pending time, else last fetch time if still stale. */
@@ -1746,14 +1842,14 @@
             return { metar: false, taf: false };
         }
         var v = detailSeenSnapshot[icao];
-        var cm = String(r.metar || '');
-        var ct = String(r.taf || '');
+        var cm = normalizeMetarTafText(r.metar);
+        var ct = normalizeMetarTafText(r.taf);
         if (!v) {
             return { metar: true, taf: true };
         }
         return {
-            metar: cm !== String(v.metar || ''),
-            taf: ct !== String(v.taf || '')
+            metar: cm !== normalizeMetarTafText(v.metar),
+            taf: ct !== normalizeMetarTafText(v.taf)
         };
     }
 
@@ -2959,7 +3055,10 @@
         for (i = 0; i < results.length; i++) {
             var r = results[i];
             if (r.icao) {
-                snap[r.icao] = { metar: r.metar, taf: r.taf };
+                snap[r.icao] = {
+                    metar: normalizeMetarTafText(r.metar) || 'N/A',
+                    taf: normalizeMetarTafText(r.taf) || 'N/A'
+                };
             }
         }
         return snap;
@@ -2975,7 +3074,10 @@
             if (!v) {
                 return true;
             }
-            if (c.metar !== v.metar || c.taf !== v.taf) {
+            if (
+                normalizeMetarTafText(c.metar) !== normalizeMetarTafText(v.metar) ||
+                normalizeMetarTafText(c.taf) !== normalizeMetarTafText(v.taf)
+            ) {
                 return true;
             }
         }
@@ -3252,7 +3354,7 @@
             return;
         }
         var r = cacheByIcao[icao];
-        var snap = { metar: r.metar, taf: r.taf };
+        var snap = { metar: normalizeMetarTafText(r.metar), taf: normalizeMetarTafText(r.taf) };
         viewedSnapshot[icao] = snap;
         saveViewedSnapshot(viewedSnapshot);
         detailSeenSnapshot[icao] = snap;
