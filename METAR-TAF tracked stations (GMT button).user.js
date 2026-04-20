@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.6
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR chart, optional COD model loop, AFD; panel prefs
+// @version      2.0.7
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR chart, optional COD model loop, collapsible AFD; panel prefs
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -2148,23 +2148,23 @@
                 var afdEsc = escapeHtml(r.afdText);
                 var metaStr = afdMetaLine(r.afdMeta);
                 afdBlock =
-                    '<div style="margin-bottom:16px;">' +
-                    '<div style="font-weight:600;margin-bottom:6px;color:#3498db;">Area Forecast Discussion</div>' +
+                    '<details style="margin-bottom:16px;">' +
+                    '<summary style="cursor:pointer;font-weight:600;color:#3498db;font-family:system-ui,sans-serif;list-style-position:outside;padding:4px 0;">Area Forecast Discussion <span style="font-weight:400;color:#95a5a6;font-size:11px;">(click to expand)</span></summary>' +
                     (metaStr
-                        ? '<div style="font-size:11px;color:#95a5a6;margin-bottom:8px;font-family:system-ui,sans-serif;">' +
+                        ? '<div style="font-size:11px;color:#95a5a6;margin:8px 0 8px 0;font-family:system-ui,sans-serif;">' +
                           escapeHtml(metaStr) +
                           '</div>'
                         : '') +
                     '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;color:#bdc3c7;white-space:pre-wrap;word-break:break-word;max-height:min(52vh,720px);overflow:auto;background:#141418;padding:10px;border-radius:6px;">' +
                     afdEsc +
                     '</div>' +
-                    '</div>';
+                    '</details>';
             } else {
                 afdBlock =
-                    '<div style="margin-bottom:16px;">' +
-                    '<div style="font-weight:600;margin-bottom:6px;color:#3498db;">Area Forecast Discussion</div>' +
-                    '<div style="font-size:11px;color:#95a5a6;font-family:system-ui,sans-serif;line-height:1.45;">No AFD text loaded yet, or weather.gov returned empty. Try <strong>Refresh</strong> for this airport; if it persists, the NWS product list may be unavailable.</div>' +
-                    '</div>';
+                    '<details style="margin-bottom:16px;">' +
+                    '<summary style="cursor:pointer;font-weight:600;color:#3498db;font-family:system-ui,sans-serif;list-style-position:outside;padding:4px 0;">Area Forecast Discussion</summary>' +
+                    '<div style="font-size:11px;color:#95a5a6;font-family:system-ui,sans-serif;line-height:1.45;margin-top:8px;">No AFD text loaded yet, or weather.gov returned empty. Try <strong>Refresh</strong> for this airport; if it persists, the NWS product list may be unavailable.</div>' +
+                    '</details>';
             }
         }
         detailEl.innerHTML =
