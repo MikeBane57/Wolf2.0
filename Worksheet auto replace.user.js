@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto replace
 // @namespace    Wolf 2.0
-// @version      1.3.1
+// @version      1.3.2
 // @description  Worksheet: compact collapsible filter actions; watch AC/LN/FLT; Replace/Append/Remove on change or interval.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -502,28 +502,71 @@
         }
     }
 
+    function intervalCountdownEl() {
+        var h = document.getElementById(HOST_ID);
+        return h ? h.querySelector('[data-dc-interval-countdown]') : null;
+    }
+
+    function setIntervalCountdownText(text) {
+        var el = intervalCountdownEl();
+        if (el) {
+            el.textContent = text;
+        }
+    }
+
+    function pad2(n) {
+        return n < 10 ? '0' + n : String(n);
+    }
+
+    function formatCountdownSeconds(n) {
+        if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
+            return '—';
+        }
+        if (n >= 3600) {
+            var h = Math.floor(n / 3600);
+            var m = Math.floor((n % 3600) / 60);
+            var s = n % 60;
+            return h + ':' + pad2(m) + ':' + pad2(s);
+        }
+        if (n >= 60) {
+            var mm = Math.floor(n / 60);
+            var ss = n % 60;
+            return mm + ':' + pad2(ss);
+        }
+        return String(n) + 's';
+    }
+
     function stopIntervalReplace() {
         if (intervalTimer) {
             clearInterval(intervalTimer);
             intervalTimer = null;
         }
+        setIntervalCountdownText('—');
     }
 
+    /**
+     * One 1s timer: countdown display + fire click when remaining hits 0 (synced, no drift).
+     */
     function startIntervalReplace() {
         stopIntervalReplace();
         if (!readIntervalOn()) {
             return;
         }
-        var sec = intervalSecEffective();
-        intervalTimer = setInterval(function () {
+        var remaining = intervalSecEffective();
+        function tick() {
             if (!readIntervalOn()) {
                 stopIntervalReplace();
                 return;
             }
-            var s = intervalSecEffective();
-            var ia = readActionInterval();
-            clickToolbarAction(ia, 'interval · every ' + s + 's');
-        }, sec * 1000);
+            if (remaining <= 0) {
+                clickToolbarAction(readActionInterval(), 'interval');
+                remaining = intervalSecEffective();
+            }
+            setIntervalCountdownText(formatCountdownSeconds(remaining));
+            remaining--;
+        }
+        tick();
+        intervalTimer = setInterval(tick, 1000);
     }
 
     function ensureStyle() {
@@ -550,7 +593,16 @@
             ' .dc-war-body{padding:0 10px 8px 10px;display:flex;flex-direction:column;gap:6px;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}' +
+            ' .dc-war-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;width:100%;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-interval-row{justify-content:space-between;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-interval-left{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;flex:1;min-width:0;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-countdown{font-size:11px;color:#95a5a6;flex-shrink:0;margin-left:auto;min-width:4ch;text-align:right;font-variant-numeric:tabular-nums;}' +
             '#' +
             HOST_ID +
             ' label{cursor:pointer;display:inline-flex;align-items:center;gap:3px;user-select:none;font-size:11px;}' +
@@ -659,6 +711,7 @@
         '</select>' +
         '</div>' +
         '<div class="dc-war-row dc-war-interval-row">' +
+        '<div class="dc-war-interval-left">' +
         '<label><input type="checkbox" data-dc-interval-toggle /> Click</label>' +
         '<select class="dc-war-sel" data-dc-action-interval title="Interval">' +
         '<option value="replace">Replace</option><option value="append">Append</option><option value="remove">Remove</option>' +
@@ -666,6 +719,8 @@
         '<span>every</span>' +
         '<input type="number" class="dc-war-num" min="5" max="3600" step="1" data-dc-interval-sec title="Seconds" />' +
         '<span>sec</span>' +
+        '</div>' +
+        '<span class="dc-war-countdown" data-dc-interval-countdown>—</span>' +
         '</div>' +
         '</div>' +
         '</details>';
@@ -860,7 +915,7 @@
         var existing = document.getElementById(HOST_ID);
         var anchor = findToolbarAnchor();
         if (existing) {
-            if (!existing.querySelector('details.dc-war-details')) {
+            if (!existing.querySelector('details.dc-war-details') || !existing.querySelector('[data-dc-interval-countdown]')) {
                 existing.innerHTML = HOST_HTML;
                 existing.removeAttribute('data-dc-war-bound');
             }
