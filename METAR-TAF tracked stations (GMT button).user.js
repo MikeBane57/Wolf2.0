@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.3
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR chart, AFD, alerts; METAR/TAF title highlights
+// @version      2.0.13
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), optional COD loop, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -12,7 +12,8 @@
 // @connect      rvr.data.faa.gov
 // @connect      atis.info
 // @connect      api.open-meteo.com
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"}}
+// @connect      weather.cod.edu
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -55,6 +56,388 @@
             return false;
         }
         return def;
+    }
+
+    /**
+     * FAA RVR: optional. Background poll skips RVR unless "Fetch RVR during background poll".
+     * With modal open, only the selected row hits rvr.data.faa.gov (avoids N requests per open).
+     * forceFetchRvr: refresh-all loads RVR for every station.
+     */
+    function shouldFetchFaaRvr(opts) {
+        opts = opts || {};
+        if (!boolPref('metarWatchShowRvr', true)) {
+            return false;
+        }
+        if (opts.forceFetchRvr === true || opts.fetchRvrNow === true) {
+            return true;
+        }
+        if (boolPref('metarWatchFetchRvrInPoll', false)) {
+            return true;
+        }
+        try {
+            if (modal && modal.style.display === 'flex' && opts.iataForFetch && selectedIata) {
+                return opts.iataForFetch.toUpperCase() === selectedIata.toUpperCase();
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function showRadarPanel() {
+        return boolPref('metarWatchShowRadar', true);
+    }
+
+    function showAfdPanel() {
+        return boolPref('metarWatchShowAfd', true);
+    }
+
+    function needNwsEnrichmentFetch() {
+        return showRadarPanel() || showAfdPanel();
+    }
+
+    function showDatisPanel() {
+        return boolPref('metarWatchShowDatis', true);
+    }
+
+    function showHrrrPanel() {
+        return boolPref('metarWatchShowHrrr', true);
+    }
+
+    /** Hourly temp/PoP chart: NOAA grid (default) vs Open-Meteo GFS blend. */
+    function hrrrHourlySource() {
+        var v = String(getPref('metarWatchHrrrHourlySource', 'noaa') || 'noaa').toLowerCase();
+        if (v === 'openmeteo' || v === 'open-meteo') {
+            return 'openmeteo';
+        }
+        return 'noaa';
+    }
+
+    function showCodModelLoopPanel() {
+        return boolPref('metarWatchShowCodModelLoop', true);
+    }
+
+    function codAutoSectorPref() {
+        return boolPref('metarWatchCodAutoSector', true);
+    }
+
+    function codLoopModelPref() {
+        var v = String(getPref('metarWatchCodLoopModel', 'HRRR') || 'HRRR').toUpperCase();
+        return v === 'RAP' ? 'RAP' : 'HRRR';
+    }
+
+    /** Manual COD get-files.php parms when auto region is off. */
+    function codModelParmsManual() {
+        var d = 'current-HRRR-MW-prec-radar-1-0-100';
+        var r = String(getPref('metarWatchCodModelParms', d) || d).trim();
+        if (!r) {
+            return d;
+        }
+        return r.replace(/[^a-zA-Z0-9._-]/g, '');
+    }
+
+    /**
+     * NEXLAB sector bounding boxes [minLon, minLat, maxLon, maxLat] (College of DuPage).
+     * Used to pick nearest regional sector from airport coordinates.
+     */
+    var COD_SECTOR_BB = {
+        US: [-128, 20, -65, 57],
+        NA: [-165, 8.5, -48, 78],
+        NE: [-84.1, 38.7, -66, 49.3],
+        MA: [-90.5, 31.6, -69.5, 44],
+        SE: [-98.5, 24.5, -77.5, 36.92],
+        NGP: [-110.4, 41.7, -89.2, 54.1],
+        GL: [-95.5, 39.58, -74.5, 52.0],
+        NIL: [-93.98, 38.13, -83.9, 44.05],
+        MW: [-101, 34.55, -80, 47],
+        CGP: [-111.7, 34.5, -90.5, 47],
+        SGP: [-109, 25.5, -85, 39.7],
+        NW: [-126.8, 40.3, -105.5, 52.9],
+        GBSN: [-129.5, 31.9, -106.5, 45.5],
+        SW: [-123.1, 29.9, -101.7, 42.5],
+        DEN: [-106, 38.8, -101, 42.05],
+        OKC: [-102.5, 33.2, -94, 38.2],
+        CHI: [-93, 39.5, -86, 43.6],
+        DPG: [-114.8, 38.7, -108.8, 42.2]
+    };
+
+    var COD_SECTORS_BY_MODEL = {
+        HRRR: ['DEN', 'OKC', 'CHI', 'NIL', 'MW', 'CGP', 'SGP', 'SE', 'MA', 'NE', 'NGP', 'GL', 'NW', 'GBSN', 'SW', 'US'],
+        RAP: ['DEN', 'OKC', 'CHI', 'NIL', 'MW', 'CGP', 'SGP', 'SE', 'MA', 'NE', 'NGP', 'GL', 'NW', 'GBSN', 'SW', 'US', 'NA']
+    };
+
+    function codSectorCenter(bb) {
+        if (!bb || bb.length < 4) {
+            return null;
+        }
+        return { lat: (bb[1] + bb[3]) / 2, lon: (bb[0] + bb[2]) / 2 };
+    }
+
+    function codDist2(lat, lon, c) {
+        var dlat = lat - c.lat;
+        var dlon = lon - c.lon;
+        return dlat * dlat + dlon * dlon;
+    }
+
+    /** Nearest regional sector; prefers smaller domains over full US/NA when close. */
+    function codPickSectorForLatLon(lat, lon, model) {
+        var mod = model === 'RAP' ? 'RAP' : 'HRRR';
+        var list = COD_SECTORS_BY_MODEL[mod] || COD_SECTORS_BY_MODEL.HRRR;
+        var best = 'US';
+        var bestD = Infinity;
+        var bi;
+        for (bi = 0; bi < list.length; bi++) {
+            var id = list[bi];
+            var bb = COD_SECTOR_BB[id];
+            if (!bb) {
+                continue;
+            }
+            if (lon < bb[0] || lon > bb[2] || lat < bb[1] || lat > bb[3]) {
+                continue;
+            }
+            var cen = codSectorCenter(bb);
+            if (!cen) {
+                continue;
+            }
+            var d = codDist2(lat, lon, cen);
+            var penalty = id === 'US' || id === 'NA' ? 2500 : 0;
+            if (d + penalty < bestD) {
+                bestD = d + penalty;
+                best = id;
+            }
+        }
+        return best;
+    }
+
+    function codBuildParms(model, sector) {
+        return 'current-' + model + '-' + sector + '-prec-radar-1-0-100';
+    }
+
+    var COD_BASE = 'https://weather.cod.edu/forecast';
+    var codLoopTimer = null;
+    var codLoopGen = 0;
+
+    function stopCodModelLoop() {
+        if (codLoopTimer) {
+            clearInterval(codLoopTimer);
+            codLoopTimer = null;
+        }
+        codLoopGen++;
+        if (codLoopImgA) {
+            try {
+                codLoopImgA.removeAttribute('src');
+            } catch (e) {}
+        }
+        if (codLoopImgB) {
+            try {
+                codLoopImgB.removeAttribute('src');
+            } catch (e) {}
+        }
+    }
+
+    function codLoopParmsForStation(iata, cb) {
+        if (!codAutoSectorPref()) {
+            cb(codModelParmsManual(), 'manual');
+            return;
+        }
+        var icao = icaoFor(iata);
+        var model = codLoopModelPref();
+        if (!icao) {
+            cb(codBuildParms(model, 'US'), 'fallback');
+            return;
+        }
+        fetchJson('https://api.weather.gov/stations/' + encodeURIComponent(icao), function (st) {
+            if (!st || !st.geometry || !st.geometry.coordinates) {
+                cb(codBuildParms(model, 'US'), 'fallback');
+                return;
+            }
+            var coords = st.geometry.coordinates;
+            var lon = coords[0];
+            var lat = coords[1];
+            if (typeof lat !== 'number' || typeof lon !== 'number') {
+                cb(codBuildParms(model, 'US'), 'fallback');
+                return;
+            }
+            var sec = codPickSectorForLatLon(lat, lon, model);
+            cb(codBuildParms(model, sec), sec);
+        });
+    }
+
+    function preloadImagesSequential(urls, startIdx, count, cb) {
+        if (!urls || !urls.length || count <= 0) {
+            cb();
+            return;
+        }
+        var loaded = 0;
+        var target = Math.min(count, urls.length);
+        var ii;
+        for (ii = 0; ii < target; ii++) {
+            (function (u) {
+                var im = new Image();
+                im.onload = function () {
+                    loaded++;
+                    if (loaded >= target) {
+                        cb();
+                    }
+                };
+                im.onerror = function () {
+                    loaded++;
+                    if (loaded >= target) {
+                        cb();
+                    }
+                };
+                im.src = u;
+            })(urls[(startIdx + ii) % urls.length]);
+        }
+    }
+
+    function startCodModelLoopFromDetail() {
+        stopCodModelLoop();
+        if (!showCodModelLoopPanel() || !codLoopHostEl) {
+            if (codLoopHostEl) {
+                codLoopHostEl.style.display = 'none';
+            }
+            return;
+        }
+        if (!detailEl || !modal || modal.style.display !== 'flex' || !selectedIata) {
+            if (codLoopHostEl) {
+                codLoopHostEl.style.display = 'none';
+            }
+            return;
+        }
+        codLoopHostEl.style.display = 'block';
+        var myGen = ++codLoopGen;
+        if (!codLoopImgA || !codLoopImgB) {
+            return;
+        }
+        codLoopImgA.style.opacity = '1';
+        codLoopImgA.style.zIndex = '2';
+        codLoopImgB.style.opacity = '0';
+        codLoopImgB.style.zIndex = '1';
+        codLoopImgA.removeAttribute('src');
+        codLoopImgB.removeAttribute('src');
+        if (codLoopMetaEl) {
+            codLoopMetaEl.textContent = 'Loading COD loop…';
+        }
+        codLoopParmsForStation(selectedIata, function (parms, tag) {
+            if (myGen !== codLoopGen) {
+                return;
+            }
+            var apiUrl = COD_BASE + '/assets/php/scripts/get-files.php?parms=' + encodeURIComponent(parms);
+            fetchText(apiUrl, function (txt) {
+                if (myGen !== codLoopGen) {
+                    return;
+                }
+                if (!txt) {
+                    if (codLoopMetaEl) {
+                        codLoopMetaEl.textContent = 'COD: could not load frame list.';
+                    }
+                    return;
+                }
+                var j;
+                try {
+                    j = JSON.parse(txt);
+                } catch (e1) {
+                    if (codLoopMetaEl) {
+                        codLoopMetaEl.textContent = 'COD: invalid JSON.';
+                    }
+                    return;
+                }
+                if (!j || j.err !== 'false' || !j.files || !j.files.length) {
+                    if (codLoopMetaEl) {
+                        codLoopMetaEl.textContent = 'COD: no frames for ' + parms + '.';
+                    }
+                    return;
+                }
+                var files = j.files;
+                var m = j.parms;
+                var sub =
+                    Array.isArray(m) && m.length >= 3
+                        ? String(m[1]) + ' · ' + String(m[2]) + ' · simulated reflectivity'
+                        : 'COD NEXLAB';
+                if (codLoopMetaEl) {
+                    codLoopMetaEl.innerHTML =
+                        'Parms: <code style="color:#bdc3c7;">' +
+                        escapeHtml(parms) +
+                        '</code> · Region: <code style="color:#bdc3c7;">' +
+                        escapeHtml(String(tag)) +
+                        '</code> · ' +
+                        escapeHtml(sub) +
+                        ' · <a href="' +
+                        escapeHtml(COD_BASE + '/') +
+                        '" target="_blank" rel="noopener noreferrer" style="color:#5dade2;">NEXLAB</a>';
+                }
+                var preloadN = Math.min(8, files.length);
+                preloadImagesSequential(files, 0, preloadN, function () {
+                    if (myGen !== codLoopGen) {
+                        return;
+                    }
+                    var idx = 0;
+                    var showA = true;
+                    codLoopImgA.src = files[0];
+                    codLoopImgA.style.opacity = '1';
+                    codLoopImgA.style.zIndex = '2';
+                    codLoopImgB.style.opacity = '0';
+                    codLoopImgB.style.zIndex = '1';
+                    codLoopTimer = setInterval(function () {
+                        if (myGen !== codLoopGen) {
+                            return;
+                        }
+                        idx = (idx + 1) % files.length;
+                        var nextUrl = files[idx];
+                        var front = showA ? codLoopImgA : codLoopImgB;
+                        var back = showA ? codLoopImgB : codLoopImgA;
+                        back.onload = function () {
+                            if (myGen !== codLoopGen) {
+                                return;
+                            }
+                            back.style.opacity = '1';
+                            back.style.zIndex = '2';
+                            front.style.opacity = '0';
+                            front.style.zIndex = '1';
+                            showA = !showA;
+                        };
+                        back.src = nextUrl;
+                        var ahead = (idx + 1) % files.length;
+                        var pre = new Image();
+                        pre.src = files[ahead];
+                    }, 700);
+                });
+            });
+        });
+    }
+
+    function ensureDetailStructure() {
+        if (!detailEl) {
+            return;
+        }
+        if (detailContentEl && detailContentEl.parentNode !== detailEl) {
+            try {
+                detailEl.appendChild(detailContentEl);
+            } catch (e) {}
+        }
+    }
+
+    /** Detach COD host before overwriting detail HTML so it is not destroyed. */
+    function detachCodLoopHost() {
+        if (codLoopHostEl && codLoopHostEl.parentNode) {
+            try {
+                codLoopHostEl.parentNode.removeChild(codLoopHostEl);
+            } catch (e) {}
+        }
+    }
+
+    /** Insert COD block after hourly chart, before AFD (placeholder in HTML). */
+    function attachCodLoopHostAfterRender() {
+        if (!detailContentEl || !codLoopHostEl || !showCodModelLoopPanel()) {
+            return;
+        }
+        var slot = detailContentEl.querySelector('[data-dc-cod-slot="1"]');
+        if (slot && slot.parentNode) {
+            try {
+                slot.parentNode.replaceChild(codLoopHostEl, slot);
+            } catch (e) {
+                detailContentEl.appendChild(codLoopHostEl);
+            }
+        }
     }
 
     function pollMs() {
@@ -166,6 +549,13 @@
     var statusBarEl = null;
     var sortSelect = null;
     var listColorTimer = null;
+    /** Persistent COD loop UI (survives detailEl.innerHTML updates). */
+    /** Main detail HTML (METAR…AFD); COD loop is a sibling so innerHTML does not kill the animation. */
+    var detailContentEl = null;
+    var codLoopHostEl = null;
+    var codLoopMetaEl = null;
+    var codLoopImgA = null;
+    var codLoopImgB = null;
     var cacheByIcao = {};
     var pollTimer = null;
     var domObserver = null;
@@ -492,11 +882,12 @@
         );
     }
 
-    /** SVG combo chart: temperature (line) + PoP (bars). Open-Meteo hourly blend. */
+    /** SVG combo chart: temperature (line) + PoP (bars). Data from NOAA hourly or Open-Meteo. */
     function buildHrrrChartHtml(h) {
         if (!h || !h.times || !h.times.length) {
             return '';
         }
+        var chartSub = h.chartSubtitle || 'Hourly forecast';
         var maxPts = 24;
         var n = Math.min(h.times.length, maxPts);
         var W = 800;
@@ -687,7 +1078,9 @@
             ')  ▌ PoP</text>';
         return (
             '<div style="margin-bottom:16px;">' +
-            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">HRRR forecast <span style="font-weight:400;color:#95a5a6;font-size:11px;">(hourly chart, Open-Meteo GFS+HRRR)</span></div>' +
+            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">Hourly forecast <span style="font-weight:400;color:#95a5a6;font-size:11px;">(' +
+            escapeHtml(chartSub) +
+            ')</span></div>' +
             '<div style="max-width:100%;overflow:auto;background:#141418;padding:10px;border-radius:6px;">' +
             '<svg viewBox="0 0 ' +
             W +
@@ -870,8 +1263,8 @@
         });
     }
 
-    /** NOAA HRRR (CONUS) hourly via Open-Meteo GFS+HRRR blend. */
-    function fetchHrrrHourlyForecast(lat, lon, cb) {
+    /** Open-Meteo GFS blend (optional; not official NWS grid). */
+    function fetchHrrrHourlyOpenMeteo(lat, lon, cb) {
         var url =
             'https://api.open-meteo.com/v1/gfs?latitude=' +
             encodeURIComponent(lat) +
@@ -899,7 +1292,8 @@
                     wspd: h.wind_speed_10m || [],
                     wdir: h.wind_direction_10m || [],
                     unitTemp: (j.hourly_units && j.hourly_units.temperature_2m) || '°F',
-                    unitWind: (j.hourly_units && j.hourly_units.wind_speed_10m) || 'mph'
+                    unitWind: (j.hourly_units && j.hourly_units.wind_speed_10m) || 'mph',
+                    chartSubtitle: 'Open-Meteo GFS blend'
                 });
             } catch (e) {
                 cb(null);
@@ -907,13 +1301,91 @@
         });
     }
 
+    /** NOAA api.weather.gov grid hourly forecast at lat/lon (official NWS product). */
+    function fetchNwsGridHourlyForecast(lat, lon, cb) {
+        fetchJson(
+            'https://api.weather.gov/points/' + encodeURIComponent(lat) + ',' + encodeURIComponent(lon),
+            function (ptFeat) {
+                if (!ptFeat || !ptFeat.properties) {
+                    cb(null);
+                    return;
+                }
+                var hourlyUrl = ptFeat.properties.forecastHourly;
+                if (!hourlyUrl || typeof hourlyUrl !== 'string') {
+                    cb(null);
+                    return;
+                }
+                fetchJson(hourlyUrl, function (hourlyFeat) {
+                    if (!hourlyFeat || !hourlyFeat.properties || !hourlyFeat.properties.periods) {
+                        cb(null);
+                        return;
+                    }
+                    var periods = hourlyFeat.properties.periods;
+                    var times = [];
+                    var tempF = [];
+                    var pop = [];
+                    var pi;
+                    for (pi = 0; pi < periods.length; pi++) {
+                        var p = periods[pi];
+                        if (!p) {
+                            continue;
+                        }
+                        if (p.startTime) {
+                            times.push(p.startTime);
+                        }
+                        var t = p.temperature;
+                        var tu = String(p.temperatureUnit || 'F').toUpperCase();
+                        if (tu === 'C' && typeof t === 'number' && Number.isFinite(t)) {
+                            t = (t * 9) / 5 + 32;
+                        }
+                        tempF.push(typeof t === 'number' && Number.isFinite(t) ? t : null);
+                        var popv = p.probabilityOfPrecipitation && p.probabilityOfPrecipitation.value;
+                        pop.push(
+                            typeof popv === 'number' && Number.isFinite(popv)
+                                ? Math.max(0, Math.min(100, popv))
+                                : 0
+                        );
+                    }
+                    if (!times.length) {
+                        cb(null);
+                        return;
+                    }
+                    cb({
+                        times: times,
+                        tempF: tempF,
+                        pop: pop,
+                        wcode: [],
+                        wspd: [],
+                        wdir: [],
+                        unitTemp: '°F',
+                        unitWind: 'mph',
+                        chartSubtitle: 'NOAA grid hourly · weather.gov'
+                    });
+                });
+            }
+        );
+    }
+
+    function fetchHourlyForecastChart(lat, lon, cb) {
+        if (hrrrHourlySource() === 'openmeteo') {
+            fetchHrrrHourlyOpenMeteo(lat, lon, cb);
+        } else {
+            fetchNwsGridHourlyForecast(lat, lon, cb);
+        }
+    }
+
+    /** Pass `undefined` for datis or hrrr to leave that field unchanged (partial refresh). */
     function mergeDetailExtras(icao, iata, datis, hrrr) {
         var cur = cacheByIcao[icao];
         if (!cur || cur.icao !== icao) {
             return;
         }
-        cur.datisEntries = datis;
-        cur.hrrrHourly = hrrr;
+        if (datis !== undefined) {
+            cur.datisEntries = datis;
+        }
+        if (hrrr !== undefined) {
+            cur.hrrrHourly = hrrr;
+        }
         cacheByIcao[icao] = cur;
         if (modal && modal.style.display === 'flex' && selectedIata === iata) {
             renderDetail(selectedIata);
@@ -933,6 +1405,9 @@
     }
 
     function refreshDatisOnly() {
+        if (!showDatisPanel()) {
+            return;
+        }
         if (!selectedIata) {
             return;
         }
@@ -954,23 +1429,38 @@
         if (!icao || !iata) {
             return;
         }
+        if (!showDatisPanel() && !showHrrrPanel()) {
+            return;
+        }
         fetchJson('https://api.weather.gov/stations/' + encodeURIComponent(icao), function (st) {
-            fetchDatisForIcao(icao, function (datis) {
-                if (!st || !st.geometry || !st.geometry.coordinates) {
-                    mergeDetailExtras(icao, iata, datis, null);
-                    return;
-                }
+            var lat = null;
+            var lon = null;
+            if (st && st.geometry && st.geometry.coordinates) {
                 var coords = st.geometry.coordinates;
-                var lon = coords[0];
-                var lat = coords[1];
-                if (typeof lat !== 'number' || typeof lon !== 'number') {
-                    mergeDetailExtras(icao, iata, datis, null);
+                lon = coords[0];
+                lat = coords[1];
+            }
+            function maybeHrrrAfterDatis(datis) {
+                var dArg = showDatisPanel() ? datis : undefined;
+                if (!showHrrrPanel()) {
+                    mergeDetailExtras(icao, iata, dArg, undefined);
                     return;
                 }
-                fetchHrrrHourlyForecast(lat, lon, function (hrrr) {
-                    mergeDetailExtras(icao, iata, datis, hrrr);
+                if (typeof lat !== 'number' || typeof lon !== 'number') {
+                    mergeDetailExtras(icao, iata, dArg, null);
+                    return;
+                }
+                fetchHourlyForecastChart(lat, lon, function (hrrr) {
+                    mergeDetailExtras(icao, iata, dArg, hrrr);
                 });
-            });
+            }
+            if (showDatisPanel()) {
+                fetchDatisForIcao(icao, function (datis) {
+                    maybeHrrrAfterDatis(datis);
+                });
+            } else {
+                maybeHrrrAfterDatis(null);
+            }
         });
     }
 
@@ -1009,6 +1499,12 @@
             cb(null);
             return;
         }
+        var wantRadar = showRadarPanel();
+        var wantAfd = showAfdPanel();
+        if (!wantRadar && !wantAfd) {
+            cb({ radarGifUrl: '', afdText: '', afdMeta: null });
+            return;
+        }
         fetchJson('https://api.weather.gov/stations/' + encodeURIComponent(icao), function (st) {
             if (!st || !st.geometry || !st.geometry.coordinates) {
                 cb(null);
@@ -1032,11 +1528,15 @@
                     var cwa = p.cwa || '';
                     var radar = p.radarStation || '';
                     var radarGifUrl = '';
-                    if (radar && /^K[A-Z0-9]{3}$/i.test(radar)) {
+                    if (wantRadar && radar && /^K[A-Z0-9]{3}$/i.test(radar)) {
                         radarGifUrl =
                             'https://radar.weather.gov/ridge/standard/' +
                             radar.toUpperCase() +
                             '_loop.gif';
+                    }
+                    if (!wantAfd) {
+                        cb({ radarGifUrl: radarGifUrl, afdText: '', afdMeta: cwa ? { cwa: cwa } : null });
+                        return;
                     }
                     if (!cwa) {
                         cb({ radarGifUrl: radarGifUrl, afdText: '', afdMeta: null });
@@ -1047,11 +1547,18 @@
                         function (list) {
                             var graph = (list && (list['@graph'] || list.graph)) || [];
                             var first = graph[0];
-                            if (!first || !first.id) {
+                            if (!first) {
                                 cb({ radarGifUrl: radarGifUrl, afdText: '', afdMeta: { cwa: cwa } });
                                 return;
                             }
-                            var productUrl = first.id.indexOf('http') === 0 ? first.id : 'https://api.weather.gov' + first.id;
+                            var productUrl = first['@id'] || first.id;
+                            if (!productUrl || typeof productUrl !== 'string') {
+                                cb({ radarGifUrl: radarGifUrl, afdText: '', afdMeta: { cwa: cwa } });
+                                return;
+                            }
+                            if (productUrl.indexOf('http') !== 0) {
+                                productUrl = 'https://api.weather.gov/products/' + encodeURIComponent(String(productUrl));
+                            }
                             fetchJson(productUrl, function (prod) {
                                 var text = (prod && prod.productText) || '';
                                 var meta = {
@@ -1110,8 +1617,12 @@
         if (!html || typeof html !== 'string') {
             return null;
         }
-        if (/We're sorry|currently down|site is currently down/i.test(html)) {
-            return null;
+        if (
+            /access denied|forbidden|\b403\b|blocked|rate limit|too many requests|We're sorry|currently down|site is currently down/i.test(
+                html
+            )
+        ) {
+            return { rows: [], updatedUtc: '', empty: true, blocked: true };
         }
         var timeUtc = '';
         var mTime = html.match(/<th[^>]*>\s*(\d{1,2}:\d{2}:\d{2}z)\s*<\/th>/i);
@@ -1185,6 +1696,11 @@
     function fetchWeatherForIata(iata, cb, opts) {
         opts = opts || {};
         var deferEnrichment = opts.deferEnrichment === true;
+        var fetchRvr = shouldFetchFaaRvr({
+            fetchRvrNow: opts.fetchRvrNow,
+            forceFetchRvr: opts.forceFetchRvr,
+            iataForFetch: iata
+        });
 
         var icao = icaoFor(iata);
         if (!icao) {
@@ -1195,6 +1711,7 @@
                 metarLines: [],
                 taf: '',
                 rvrFaa: null,
+                rvrNotFetched: false,
                 datisEntries: null,
                 hrrrHourly: null,
                 radarGifUrl: '',
@@ -1213,7 +1730,7 @@
 
         var tafDone = false;
         var awDone = false;
-        var rvrDone = false;
+        var rvrDone = !fetchRvr;
         var rvrParsed = null;
         var noaaMetarStarted = false;
         var taf = 'N/A';
@@ -1224,7 +1741,7 @@
             var radarGifUrl = '';
             var afdText = '';
             var afdMeta = null;
-            if (enr) {
+            if (needNwsEnrichmentFetch() && enr) {
                 radarGifUrl = enr.radarGifUrl || '';
                 afdText = enr.afdText || '';
                 afdMeta = enr.afdMeta || null;
@@ -1236,6 +1753,7 @@
                 metarLines: metarLines.slice(),
                 taf: taf,
                 rvrFaa: rvrParsed,
+                rvrNotFetched: !fetchRvr,
                 datisEntries: null,
                 hrrrHourly: null,
                 radarGifUrl: radarGifUrl,
@@ -1251,30 +1769,39 @@
                 var recFast = buildRecFromEnr(null);
                 cacheByIcao[icao] = recFast;
                 cb(recFast);
-                fetchNwsEnrichmentCached(icao, false, function (enr) {
-                    var cur = cacheByIcao[icao];
-                    if (!cur || cur.icao !== icao) {
-                        return;
-                    }
-                    if (enr) {
-                        cur.radarGifUrl = enr.radarGifUrl || '';
-                        cur.afdText = enr.afdText || '';
-                        cur.afdMeta = enr.afdMeta || null;
-                    }
-                    cacheByIcao[icao] = cur;
-                    if (modal && modal.style.display === 'flex' && selectedIata === iata) {
-                        renderDetail(selectedIata);
-                    }
-                });
+                if (needNwsEnrichmentFetch()) {
+                    fetchNwsEnrichmentCached(icao, false, function (enr) {
+                        var cur = cacheByIcao[icao];
+                        if (!cur || cur.icao !== icao) {
+                            return;
+                        }
+                        if (enr) {
+                            cur.radarGifUrl = enr.radarGifUrl || '';
+                            cur.afdText = enr.afdText || '';
+                            cur.afdMeta = enr.afdMeta || null;
+                        }
+                        cacheByIcao[icao] = cur;
+                        if (modal && modal.style.display === 'flex' && selectedIata === iata) {
+                            renderDetail(selectedIata);
+                        }
+                    });
+                }
                 patchDetailExtras(icao, iata);
                 return;
             }
-            fetchNwsEnrichmentCached(icao, false, function (enr) {
-                var rec = buildRecFromEnr(enr);
-                cacheByIcao[icao] = rec;
-                cb(rec);
+            if (needNwsEnrichmentFetch()) {
+                fetchNwsEnrichmentCached(icao, false, function (enr) {
+                    var rec = buildRecFromEnr(enr);
+                    cacheByIcao[icao] = rec;
+                    cb(rec);
+                    patchDetailExtras(icao, iata);
+                });
+            } else {
+                var recNoNws = buildRecFromEnr(null);
+                cacheByIcao[icao] = recNoNws;
+                cb(recNoNws);
                 patchDetailExtras(icao, iata);
-            });
+            }
         }
 
         function tryComplete() {
@@ -1297,12 +1824,13 @@
             });
         }
 
-        var faaRvrURL = faaRvrUrlForIata(iata, false);
-        fetchText(faaRvrURL, function (html) {
-            rvrParsed = parseFaaRvrHtml(html);
-            rvrDone = true;
-            tryComplete();
-        });
+        if (fetchRvr) {
+            fetchText(faaRvrUrlForIata(iata, false), function (html) {
+                rvrParsed = parseFaaRvrHtml(html);
+                rvrDone = true;
+                tryComplete();
+            });
+        }
 
         fetchText(tafURL, function (tt) {
             taf = parseTafBody(tt);
@@ -1319,11 +1847,12 @@
         });
     }
 
-    function fetchAllStations(list, done, onProgress) {
+    function fetchAllStations(list, done, onProgress, fetchOpts) {
         if (!list || !list.length) {
             done([]);
             return;
         }
+        fetchOpts = fetchOpts || {};
         var concurrency = numPref('metarWatchConcurrentStations', 10, 1, 20);
         var results = new Array(list.length);
         var next = 0;
@@ -1357,9 +1886,13 @@
                             onProgress(iata, null, completed, total);
                         } catch (e) {}
                     }
-                    fetchWeatherForIata(iata, function (rec) {
-                        finishOne(rec, index);
-                    });
+                    fetchWeatherForIata(
+                        iata,
+                        function (rec) {
+                            finishOne(rec, index);
+                        },
+                        fetchOpts
+                    );
                 })(next);
                 next++;
             }
@@ -1481,7 +2014,8 @@
                     if (icaoFor(stationList[idx]) === ic) {
                         var iataK = stationList[idx];
                         if (!pendingChangeTime[iataK]) {
-                            pendingChangeTime[iataK] = nowTs;
+                            /* +si so newest/oldest sort differs when many go stale in one poll (same millisecond). */
+                            pendingChangeTime[iataK] = nowTs + si;
                         }
                         break;
                     }
@@ -1515,7 +2049,21 @@
             return;
         }
         var snap = snapshotFromResults(results);
-        viewedSnapshot = snap;
+        /** Merge with existing viewed state so background refresh does not wipe "not yet viewed" baselines. */
+        var merged = {};
+        var k;
+        for (k in viewedSnapshot) {
+            if (Object.prototype.hasOwnProperty.call(viewedSnapshot, k)) {
+                merged[k] = viewedSnapshot[k];
+            }
+        }
+        var sk;
+        for (sk in snap) {
+            if (Object.prototype.hasOwnProperty.call(snap, sk)) {
+                merged[sk] = snap[sk];
+            }
+        }
+        viewedSnapshot = merged;
         saveViewedSnapshot(viewedSnapshot);
         notifyShownForCurrent = {};
         alertsPrimed = true;
@@ -1540,8 +2088,37 @@
         refreshThisBtn.textContent = 'Refresh ' + stationListLabel(selectedIata);
     }
 
+    function ensureFaaRvrLoaded(iata) {
+        if (!boolPref('metarWatchShowRvr', true)) {
+            return;
+        }
+        var icao = icaoFor(iata);
+        if (!icao) {
+            return;
+        }
+        var cur = cacheByIcao[icao];
+        if (!cur || !cur.rvrNotFetched) {
+            return;
+        }
+        fetchText(faaRvrUrlForIata(iata, false), function (html) {
+            var cur2 = cacheByIcao[icao];
+            if (!cur2 || selectedIata !== iata) {
+                return;
+            }
+            cur2.rvrFaa = parseFaaRvrHtml(html);
+            cur2.rvrNotFetched = false;
+            cacheByIcao[icao] = cur2;
+            if (modal && modal.style.display === 'flex' && selectedIata === iata) {
+                renderDetail(selectedIata);
+            }
+        });
+    }
+
     function refreshRvrOnly() {
         if (!selectedIata) {
+            return;
+        }
+        if (!boolPref('metarWatchShowRvr', true)) {
             return;
         }
         var icao = icaoFor(selectedIata);
@@ -1556,6 +2133,7 @@
                 return;
             }
             cur.rvrFaa = parsed;
+            cur.rvrNotFetched = false;
             cacheByIcao[icao] = cur;
             if (selectedIata) {
                 renderDetail(selectedIata);
@@ -1620,21 +2198,25 @@
         }
         setStatusBar('Loading ' + stationListLabel(selectedIata) + '…');
         fetchNwsEnrichmentCached(icaoFor(selectedIata), true, function () {});
-        fetchWeatherForIata(selectedIata, function () {
-            if (refreshThisBtn) {
-                refreshThisBtn.disabled = false;
-            }
-            setStatusBar(stationListLabel(selectedIata) + ' · updated ' + new Date().toLocaleTimeString());
-            if (selectedIata) {
-                markStationViewed(selectedIata);
-            }
-            renderStationList();
-            if (selectedIata) {
-                renderDetail(selectedIata);
-            }
-            updateRefreshThisLabel();
-            updateAlertState();
-        });
+        fetchWeatherForIata(
+            selectedIata,
+            function () {
+                if (refreshThisBtn) {
+                    refreshThisBtn.disabled = false;
+                }
+                setStatusBar(stationListLabel(selectedIata) + ' · updated ' + new Date().toLocaleTimeString());
+                if (selectedIata) {
+                    markStationViewed(selectedIata);
+                }
+                renderStationList();
+                if (selectedIata) {
+                    renderDetail(selectedIata);
+                }
+                updateRefreshThisLabel();
+                updateAlertState();
+            },
+            { fetchRvrNow: true }
+        );
     }
 
     function refreshAllStationsManual() {
@@ -1663,7 +2245,8 @@
                 } else {
                     setStatusBar('Loading ' + stationListLabel(iata) + '…');
                 }
-            }
+            },
+            { forceFetchRvr: true }
         );
     }
 
@@ -1748,6 +2331,7 @@
                     markStationViewed(iata);
                     renderStationList();
                     renderDetail(iata);
+                    ensureFaaRvrLoaded(iata);
                 });
                 row.appendChild(label);
                 row.appendChild(x);
@@ -1766,7 +2350,7 @@
                 break;
             }
         }
-        if (hasP && sortMode === 'newest' && listEl) {
+        if (hasP && (sortMode === 'newest' || sortMode === 'oldest') && listEl) {
             try {
                 listEl.scrollTop = 0;
             } catch (e) {}
@@ -1774,19 +2358,39 @@
     }
 
     function renderDetail(iata) {
+        ensureDetailStructure();
+        if (!detailContentEl) {
+            return;
+        }
         if (!iata) {
-            detailEl.innerHTML = '<div style="color:#95a5a6;font-family:system-ui,sans-serif;">Select a station.</div>';
+            stopCodModelLoop();
+            detachCodLoopHost();
+            if (codLoopHostEl) {
+                codLoopHostEl.style.display = 'none';
+            }
+            detailContentEl.innerHTML =
+                '<div style="color:#95a5a6;font-family:system-ui,sans-serif;">Select a station.</div>';
             return;
         }
         var r = cacheByIcao[icaoFor(iata)];
         if (!r) {
-            detailEl.innerHTML = '<div style="color:#95a5a6;font-family:system-ui,sans-serif;">Loading…</div>';
-            fetchWeatherForIata(iata, function () {
-                if (selectedIata === iata) {
-                    markStationViewed(iata);
-                    renderDetail(iata);
-                }
-            });
+            stopCodModelLoop();
+            detachCodLoopHost();
+            if (codLoopHostEl) {
+                codLoopHostEl.style.display = 'none';
+            }
+            detailContentEl.innerHTML = '<div style="color:#95a5a6;font-family:system-ui,sans-serif;">Loading…</div>';
+            fetchWeatherForIata(
+                iata,
+                function () {
+                    if (selectedIata === iata) {
+                        markStationViewed(iata);
+                        renderDetail(iata);
+                        ensureFaaRvrLoaded(iata);
+                    }
+                },
+                { fetchRvrNow: true }
+            );
             return;
         }
         var unseen = metarTafUnseenVersusViewed(iata, r);
@@ -1819,10 +2423,29 @@
             mBlocks = '<div style="color:#95a5a6;">N/A</div>';
         }
         var t = escapeHtml(r.taf).replace(/\n/g, '<br>');
+        var showRvrPref = boolPref('metarWatchShowRvr', true);
         var rvr = r.rvrFaa;
         var rvrTable = rvr && rvr.rows && rvr.rows.length ? buildFaaRvrTableHtml(rvr, iata) : '';
+        var rvrColInner = '';
+        if (showRvrPref) {
+            if (rvrTable) {
+                rvrColInner = rvrTable;
+            } else if (r.rvrNotFetched) {
+                rvrColInner =
+                    '<div style="color:#95a5a6;font-size:11px;font-family:system-ui,sans-serif;">Loading RVR…</div>';
+            } else if (rvr && rvr.blocked) {
+                rvrColInner =
+                    '<div style="color:#e74c3c;font-size:11px;line-height:1.45;font-family:system-ui,sans-serif;">FAA RVR site blocked or unavailable. Try again later, turn off <strong>Fetch RVR during background poll</strong>, or disable the RVR panel.</div>';
+            } else if (rvr && rvr.empty) {
+                rvrColInner =
+                    '<div style="color:#95a5a6;font-size:11px;font-family:system-ui,sans-serif;">No RVR table for this airport.</div>';
+            } else {
+                rvrColInner =
+                    '<div style="color:#95a5a6;font-size:11px;font-family:system-ui,sans-serif;">No RVR data.</div>';
+            }
+        }
         var tafRvrRow = '';
-        if (rvrTable) {
+        if (showRvrPref && rvrColInner) {
             tafRvrRow =
                 '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;margin-bottom:16px;">' +
                 '<div style="flex:2 1 320px;min-width:0;">' +
@@ -1840,7 +2463,7 @@
                 '<button type="button" data-dc-rvr-refresh="1" style="padding:4px 10px;font-size:11px;border-radius:4px;border:1px solid #444;background:#2a2a32;color:#ecf0f1;cursor:pointer;">Refresh RVR</button>' +
                 '</div>' +
                 '<div style="overflow:auto;max-height:min(48vh,520px);background:#141418;padding:10px;border-radius:6px;">' +
-                rvrTable +
+                rvrColInner +
                 '</div></div></div>';
         } else {
             tafRvrRow =
@@ -1853,9 +2476,9 @@
                 t +
                 '</div>';
         }
-        var datisBlock = buildDatisBlockHtml(r.datisEntries);
+        var datisBlock = showDatisPanel() ? buildDatisBlockHtml(r.datisEntries) : '';
         var radarBlock = '';
-        if (r.radarGifUrl) {
+        if (showRadarPanel() && r.radarGifUrl) {
             radarBlock =
                 '<div style="margin-bottom:16px;">' +
                 '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">Radar <span style="font-weight:400;color:#95a5a6;font-size:11px;">(NWS site nearest the airport)</span></div>' +
@@ -1866,25 +2489,36 @@
                 '</div>' +
                 '</div>';
         }
-        var hrrrBlock = buildHrrrChartHtml(r.hrrrHourly);
+        var hrrrBlock = showHrrrPanel() ? buildHrrrChartHtml(r.hrrrHourly) : '';
+        var codSlot =
+            showCodModelLoopPanel() ? '<div data-dc-cod-slot="1" style="display:none;"></div>' : '';
         var afdBlock = '';
-        if (r.afdText && String(r.afdText).trim()) {
-            var afdEsc = escapeHtml(r.afdText);
-            var metaStr = afdMetaLine(r.afdMeta);
-            afdBlock =
-                '<div style="margin-bottom:16px;">' +
-                '<div style="font-weight:600;margin-bottom:6px;color:#3498db;">Area Forecast Discussion</div>' +
-                (metaStr
-                    ? '<div style="font-size:11px;color:#95a5a6;margin-bottom:8px;font-family:system-ui,sans-serif;">' +
-                      escapeHtml(metaStr) +
-                      '</div>'
-                    : '') +
-                '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;color:#bdc3c7;white-space:pre-wrap;word-break:break-word;max-height:min(52vh,720px);overflow:auto;background:#141418;padding:10px;border-radius:6px;">' +
-                afdEsc +
-                '</div>' +
-                '</div>';
+        if (showAfdPanel()) {
+            if (r.afdText && String(r.afdText).trim()) {
+                var afdEsc = escapeHtml(r.afdText);
+                var metaStr = afdMetaLine(r.afdMeta);
+                afdBlock =
+                    '<details style="margin-bottom:16px;">' +
+                    '<summary style="cursor:pointer;font-weight:600;color:#3498db;font-family:system-ui,sans-serif;list-style-position:outside;padding:4px 0;">Area Forecast Discussion <span style="font-weight:400;color:#95a5a6;font-size:11px;">(click to expand)</span></summary>' +
+                    (metaStr
+                        ? '<div style="font-size:11px;color:#95a5a6;margin:8px 0 8px 0;font-family:system-ui,sans-serif;">' +
+                          escapeHtml(metaStr) +
+                          '</div>'
+                        : '') +
+                    '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;color:#bdc3c7;white-space:pre-wrap;word-break:break-word;max-height:min(52vh,720px);overflow:auto;background:#141418;padding:10px;border-radius:6px;">' +
+                    afdEsc +
+                    '</div>' +
+                    '</details>';
+            } else {
+                afdBlock =
+                    '<details style="margin-bottom:16px;">' +
+                    '<summary style="cursor:pointer;font-weight:600;color:#3498db;font-family:system-ui,sans-serif;list-style-position:outside;padding:4px 0;">Area Forecast Discussion</summary>' +
+                    '<div style="font-size:11px;color:#95a5a6;font-family:system-ui,sans-serif;line-height:1.45;margin-top:8px;">No AFD text loaded yet, or weather.gov returned empty. Try <strong>Refresh</strong> for this airport; if it persists, the NWS product list may be unavailable.</div>' +
+                    '</details>';
+            }
         }
-        detailEl.innerHTML =
+        detachCodLoopHost();
+        detailContentEl.innerHTML =
             '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;color:#ecf0f1;min-height:120px;">' +
             '<div style="' +
             metarTitleStyle +
@@ -1898,8 +2532,18 @@
             datisBlock +
             radarBlock +
             hrrrBlock +
+            codSlot +
             afdBlock +
             '</div>';
+        attachCodLoopHostAfterRender();
+        if (showCodModelLoopPanel()) {
+            startCodModelLoopFromDetail();
+        } else {
+            stopCodModelLoop();
+            if (codLoopHostEl) {
+                codLoopHostEl.style.display = 'none';
+            }
+        }
     }
 
     function openModal() {
@@ -1919,8 +2563,9 @@
                 renderStationList();
                 if (selectedIata) {
                     renderDetail(selectedIata);
-                    markStationViewed(selectedIata);
+                    ensureFaaRvrLoaded(selectedIata);
                 }
+                updateAlertState();
                 setStatusBar('Ready · ' + new Date().toLocaleTimeString());
             },
             function (iata, rec, done, total) {
@@ -1937,6 +2582,10 @@
         modal.style.display = 'none';
         backdrop.style.display = 'none';
         stopListColorTimer();
+        stopCodModelLoop();
+        if (codLoopHostEl) {
+            codLoopHostEl.style.display = 'none';
+        }
     }
 
     function findGmtClockElement() {
@@ -2089,7 +2738,7 @@
         modal.style.left = '50%';
         modal.style.top = '50%';
         modal.style.transform = 'translate(-50%,-50%)';
-        modal.style.width = 'min(960px, calc((100vw - 20px) * 0.6))';
+        modal.style.width = 'min(1152px, calc((100vw - 20px) * 0.72))';
         modal.style.height = 'calc((100vh - 24px) * 0.7)';
         modal.style.maxHeight = 'calc((100vh - 24px) * 0.7)';
         modal.style.background = '#1a1a1e';
@@ -2295,7 +2944,6 @@
             fetchWeatherForIata(
                 code,
                 function () {
-                    markStationViewed(code);
                     renderStationList();
                     if (selectedIata === code) {
                         renderDetail(code);
@@ -2330,6 +2978,9 @@
         detailEl.style.padding = '16px';
         detailEl.style.background = '#1a1a1e';
         detailEl.style.color = '#ecf0f1';
+        detailContentEl = document.createElement('div');
+        detailContentEl.setAttribute('data-dc-detail-content', '1');
+        detailEl.appendChild(detailContentEl);
         detailEl.addEventListener('click', function (e) {
             var t = e.target;
             if (!t || !t.getAttribute) {
@@ -2344,6 +2995,53 @@
                 refreshDatisOnly();
             }
         });
+
+        codLoopHostEl = document.createElement('div');
+        codLoopHostEl.setAttribute('data-dc-cod-loop-host', '1');
+        codLoopHostEl.style.display = 'none';
+        codLoopHostEl.style.marginBottom = '16px';
+        var codTitle = document.createElement('div');
+        codTitle.style.fontWeight = '600';
+        codTitle.style.marginBottom = '8px';
+        codTitle.style.color = '#3498db';
+        codTitle.style.fontFamily = 'system-ui, sans-serif';
+        codTitle.innerHTML =
+            'Model loop <span style="font-weight:400;color:#95a5a6;font-size:11px;">(College of DuPage NEXLAB)</span>';
+        var codWrap = document.createElement('div');
+        codWrap.setAttribute('data-dc-cod-loop-wrap', '1');
+        codWrap.style.display = 'grid';
+        codWrap.style.width = '100%';
+        codWrap.style.background = '#111';
+        codWrap.style.borderRadius = '6px';
+        codWrap.style.overflow = 'hidden';
+        codLoopImgA = document.createElement('img');
+        codLoopImgA.alt = 'COD model';
+        codLoopImgA.style.gridArea = '1 / 1';
+        codLoopImgA.style.width = '100%';
+        codLoopImgA.style.height = 'auto';
+        codLoopImgA.style.display = 'block';
+        codLoopImgA.style.transition = 'opacity 0.2s ease-out';
+        codLoopImgA.style.alignSelf = 'start';
+        codLoopImgB = document.createElement('img');
+        codLoopImgB.alt = '';
+        codLoopImgB.style.gridArea = '1 / 1';
+        codLoopImgB.style.width = '100%';
+        codLoopImgB.style.height = 'auto';
+        codLoopImgB.style.display = 'block';
+        codLoopImgB.style.transition = 'opacity 0.2s ease-out';
+        codLoopImgB.style.alignSelf = 'start';
+        codWrap.appendChild(codLoopImgA);
+        codWrap.appendChild(codLoopImgB);
+        codLoopMetaEl = document.createElement('div');
+        codLoopMetaEl.style.fontSize = '10px';
+        codLoopMetaEl.style.color = '#7f8c8d';
+        codLoopMetaEl.style.marginTop = '8px';
+        codLoopMetaEl.style.fontFamily = 'system-ui, sans-serif';
+        codLoopMetaEl.style.lineHeight = '1.45';
+        codLoopHostEl.appendChild(codTitle);
+        codLoopHostEl.appendChild(codWrap);
+        codLoopHostEl.appendChild(codLoopMetaEl);
+        detailEl.appendChild(codLoopHostEl);
 
         body.appendChild(left);
         body.appendChild(detailEl);
@@ -2425,6 +3123,7 @@
                 btn.remove();
             }
         } catch (e) {}
+        stopCodModelLoop();
         if (onDocKey) {
             document.removeEventListener('keydown', onDocKey);
             onDocKey = null;
@@ -2437,6 +3136,11 @@
         refreshAllBtn = null;
         statusBarEl = null;
         sortSelect = null;
+        detailContentEl = null;
+        codLoopHostEl = null;
+        codLoopMetaEl = null;
+        codLoopImgA = null;
+        codLoopImgB = null;
         window.__myScriptCleanup = undefined;
     };
 })();
