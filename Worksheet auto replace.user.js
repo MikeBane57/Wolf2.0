@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Worksheet auto replace
 // @namespace    Wolf 2.0
-// @version      1.1.1
-// @description  Worksheet: watch Tails/Lines/Flights (number before or after label per line), click Replace on change; optional interval Replace.
+// @version      1.2.0
+// @description  Worksheet: watch Tails/Lines/Flights from #smart-widget statistics (.value cells), fallback to text parse; Replace on change; optional interval.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
 // @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto replace","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto replace","label":"Interval Replace (seconds)","description":"Default seconds for “Replace every…” when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
@@ -188,13 +188,77 @@
         return { tails: tails, lines: linesCount, flights: flights };
     }
 
+    function parseIntFromValueEl(el) {
+        if (!el) {
+            return NaN;
+        }
+        var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        var m = t.match(/(\d+)/);
+        return m ? parseInt(m[1], 10) : NaN;
+    }
+
+    /**
+     * Worksheet summary: #smart-widget → .ui.small.inverted.statistics (Semantic UI) → three columns,
+     * each `> div` has `.value` (Tails, Lines, Flights in order). Matches DevTools paths user provided.
+     */
+    function scanCountsFromStatisticsWidget() {
+        var sw = document.getElementById('smart-widget');
+        if (!sw) {
+            return null;
+        }
+        var stats =
+            sw.querySelector('.ui.small.inverted.statistics') ||
+            sw.querySelector('.ui.inverted.statistics') ||
+            sw.querySelector('.ui.statistics');
+        if (!stats) {
+            return null;
+        }
+        var valueEls = [];
+        var ch = stats.children;
+        var i;
+        for (i = 0; i < ch.length; i++) {
+            var row = ch[i];
+            if (!row || !row.querySelector) {
+                continue;
+            }
+            var ve = row.querySelector('.value');
+            if (ve) {
+                valueEls.push(ve);
+            }
+        }
+        if (valueEls.length < 3) {
+            var all = stats.querySelectorAll('.value');
+            if (all.length >= 3) {
+                valueEls = [all[0], all[1], all[2]];
+            }
+        }
+        if (valueEls.length < 3) {
+            return null;
+        }
+        var tails = parseIntFromValueEl(valueEls[0]);
+        var linesCount = parseIntFromValueEl(valueEls[1]);
+        var flights = parseIntFromValueEl(valueEls[2]);
+        if (!Number.isFinite(tails) || !Number.isFinite(linesCount) || !Number.isFinite(flights)) {
+            return null;
+        }
+        return { tails: tails, lines: linesCount, flights: flights, source: 'widget' };
+    }
+
     function scanCounts() {
+        var fromWidget = scanCountsFromStatisticsWidget();
+        if (fromWidget) {
+            return fromWidget;
+        }
         var root =
             document.querySelector('[role="main"]') ||
             document.querySelector('main') ||
             document.body;
         var text = (root && root.innerText) || '';
-        return parseCountsFromText(text);
+        var parsed = parseCountsFromText(text);
+        if (parsed) {
+            parsed.source = 'text';
+        }
+        return parsed;
     }
 
     function fingerprint(c) {
@@ -209,7 +273,14 @@
         if (!c) {
             return '';
         }
-        return 'Tails ' + c.tails + ' · Lines ' + c.lines + ' · Flights ' + c.flights;
+        var base = 'Tails ' + c.tails + ' · Lines ' + c.lines + ' · Flights ' + c.flights;
+        if (c.source === 'widget') {
+            return base + ' (worksheet stats)';
+        }
+        if (c.source === 'text') {
+            return base + ' (text scan)';
+        }
+        return base;
     }
 
     function findReplaceControl() {
