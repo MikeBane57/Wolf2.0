@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.3
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR chart, AFD, alerts; METAR/TAF title highlights
+// @version      2.0.4
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR chart, AFD; panel prefs; METAR/TAF title highlights
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -12,7 +12,7 @@
 // @connect      rvr.data.faa.gov
 // @connect      atis.info
 // @connect      api.open-meteo.com
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"}}
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show HRRR chart","description":"Hourly temperature/PoP chart (Open-Meteo).","default":true},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -55,6 +55,50 @@
             return false;
         }
         return def;
+    }
+
+    /**
+     * FAA RVR: optional. Background poll skips RVR unless "Fetch RVR during background poll".
+     * With modal open, only the selected row hits rvr.data.faa.gov (avoids N requests per open).
+     * forceFetchRvr: refresh-all loads RVR for every station.
+     */
+    function shouldFetchFaaRvr(opts) {
+        opts = opts || {};
+        if (!boolPref('metarWatchShowRvr', true)) {
+            return false;
+        }
+        if (opts.forceFetchRvr === true || opts.fetchRvrNow === true) {
+            return true;
+        }
+        if (boolPref('metarWatchFetchRvrInPoll', false)) {
+            return true;
+        }
+        try {
+            if (modal && modal.style.display === 'flex' && opts.iataForFetch && selectedIata) {
+                return opts.iataForFetch.toUpperCase() === selectedIata.toUpperCase();
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function showRadarPanel() {
+        return boolPref('metarWatchShowRadar', true);
+    }
+
+    function showAfdPanel() {
+        return boolPref('metarWatchShowAfd', true);
+    }
+
+    function needNwsEnrichmentFetch() {
+        return showRadarPanel() || showAfdPanel();
+    }
+
+    function showDatisPanel() {
+        return boolPref('metarWatchShowDatis', true);
+    }
+
+    function showHrrrPanel() {
+        return boolPref('metarWatchShowHrrr', true);
     }
 
     function pollMs() {
@@ -907,13 +951,18 @@
         });
     }
 
+    /** Pass `undefined` for datis or hrrr to leave that field unchanged (partial refresh). */
     function mergeDetailExtras(icao, iata, datis, hrrr) {
         var cur = cacheByIcao[icao];
         if (!cur || cur.icao !== icao) {
             return;
         }
-        cur.datisEntries = datis;
-        cur.hrrrHourly = hrrr;
+        if (datis !== undefined) {
+            cur.datisEntries = datis;
+        }
+        if (hrrr !== undefined) {
+            cur.hrrrHourly = hrrr;
+        }
         cacheByIcao[icao] = cur;
         if (modal && modal.style.display === 'flex' && selectedIata === iata) {
             renderDetail(selectedIata);
@@ -933,6 +982,9 @@
     }
 
     function refreshDatisOnly() {
+        if (!showDatisPanel()) {
+            return;
+        }
         if (!selectedIata) {
             return;
         }
@@ -954,23 +1006,38 @@
         if (!icao || !iata) {
             return;
         }
+        if (!showDatisPanel() && !showHrrrPanel()) {
+            return;
+        }
         fetchJson('https://api.weather.gov/stations/' + encodeURIComponent(icao), function (st) {
-            fetchDatisForIcao(icao, function (datis) {
-                if (!st || !st.geometry || !st.geometry.coordinates) {
-                    mergeDetailExtras(icao, iata, datis, null);
+            var lat = null;
+            var lon = null;
+            if (st && st.geometry && st.geometry.coordinates) {
+                var coords = st.geometry.coordinates;
+                lon = coords[0];
+                lat = coords[1];
+            }
+            function maybeHrrrAfterDatis(datis) {
+                var dArg = showDatisPanel() ? datis : undefined;
+                if (!showHrrrPanel()) {
+                    mergeDetailExtras(icao, iata, dArg, undefined);
                     return;
                 }
-                var coords = st.geometry.coordinates;
-                var lon = coords[0];
-                var lat = coords[1];
                 if (typeof lat !== 'number' || typeof lon !== 'number') {
-                    mergeDetailExtras(icao, iata, datis, null);
+                    mergeDetailExtras(icao, iata, dArg, null);
                     return;
                 }
                 fetchHrrrHourlyForecast(lat, lon, function (hrrr) {
-                    mergeDetailExtras(icao, iata, datis, hrrr);
+                    mergeDetailExtras(icao, iata, dArg, hrrr);
                 });
-            });
+            }
+            if (showDatisPanel()) {
+                fetchDatisForIcao(icao, function (datis) {
+                    maybeHrrrAfterDatis(datis);
+                });
+            } else {
+                maybeHrrrAfterDatis(null);
+            }
         });
     }
 
@@ -1009,6 +1076,12 @@
             cb(null);
             return;
         }
+        var wantRadar = showRadarPanel();
+        var wantAfd = showAfdPanel();
+        if (!wantRadar && !wantAfd) {
+            cb({ radarGifUrl: '', afdText: '', afdMeta: null });
+            return;
+        }
         fetchJson('https://api.weather.gov/stations/' + encodeURIComponent(icao), function (st) {
             if (!st || !st.geometry || !st.geometry.coordinates) {
                 cb(null);
@@ -1032,11 +1105,15 @@
                     var cwa = p.cwa || '';
                     var radar = p.radarStation || '';
                     var radarGifUrl = '';
-                    if (radar && /^K[A-Z0-9]{3}$/i.test(radar)) {
+                    if (wantRadar && radar && /^K[A-Z0-9]{3}$/i.test(radar)) {
                         radarGifUrl =
                             'https://radar.weather.gov/ridge/standard/' +
                             radar.toUpperCase() +
                             '_loop.gif';
+                    }
+                    if (!wantAfd) {
+                        cb({ radarGifUrl: radarGifUrl, afdText: '', afdMeta: cwa ? { cwa: cwa } : null });
+                        return;
                     }
                     if (!cwa) {
                         cb({ radarGifUrl: radarGifUrl, afdText: '', afdMeta: null });
@@ -1110,8 +1187,12 @@
         if (!html || typeof html !== 'string') {
             return null;
         }
-        if (/We're sorry|currently down|site is currently down/i.test(html)) {
-            return null;
+        if (
+            /access denied|forbidden|\b403\b|blocked|rate limit|too many requests|We're sorry|currently down|site is currently down/i.test(
+                html
+            )
+        ) {
+            return { rows: [], updatedUtc: '', empty: true, blocked: true };
         }
         var timeUtc = '';
         var mTime = html.match(/<th[^>]*>\s*(\d{1,2}:\d{2}:\d{2}z)\s*<\/th>/i);
@@ -1185,6 +1266,11 @@
     function fetchWeatherForIata(iata, cb, opts) {
         opts = opts || {};
         var deferEnrichment = opts.deferEnrichment === true;
+        var fetchRvr = shouldFetchFaaRvr({
+            fetchRvrNow: opts.fetchRvrNow,
+            forceFetchRvr: opts.forceFetchRvr,
+            iataForFetch: iata
+        });
 
         var icao = icaoFor(iata);
         if (!icao) {
@@ -1195,6 +1281,7 @@
                 metarLines: [],
                 taf: '',
                 rvrFaa: null,
+                rvrNotFetched: false,
                 datisEntries: null,
                 hrrrHourly: null,
                 radarGifUrl: '',
@@ -1213,7 +1300,7 @@
 
         var tafDone = false;
         var awDone = false;
-        var rvrDone = false;
+        var rvrDone = !fetchRvr;
         var rvrParsed = null;
         var noaaMetarStarted = false;
         var taf = 'N/A';
@@ -1224,7 +1311,7 @@
             var radarGifUrl = '';
             var afdText = '';
             var afdMeta = null;
-            if (enr) {
+            if (needNwsEnrichmentFetch() && enr) {
                 radarGifUrl = enr.radarGifUrl || '';
                 afdText = enr.afdText || '';
                 afdMeta = enr.afdMeta || null;
@@ -1236,6 +1323,7 @@
                 metarLines: metarLines.slice(),
                 taf: taf,
                 rvrFaa: rvrParsed,
+                rvrNotFetched: !fetchRvr,
                 datisEntries: null,
                 hrrrHourly: null,
                 radarGifUrl: radarGifUrl,
@@ -1251,30 +1339,39 @@
                 var recFast = buildRecFromEnr(null);
                 cacheByIcao[icao] = recFast;
                 cb(recFast);
-                fetchNwsEnrichmentCached(icao, false, function (enr) {
-                    var cur = cacheByIcao[icao];
-                    if (!cur || cur.icao !== icao) {
-                        return;
-                    }
-                    if (enr) {
-                        cur.radarGifUrl = enr.radarGifUrl || '';
-                        cur.afdText = enr.afdText || '';
-                        cur.afdMeta = enr.afdMeta || null;
-                    }
-                    cacheByIcao[icao] = cur;
-                    if (modal && modal.style.display === 'flex' && selectedIata === iata) {
-                        renderDetail(selectedIata);
-                    }
-                });
+                if (needNwsEnrichmentFetch()) {
+                    fetchNwsEnrichmentCached(icao, false, function (enr) {
+                        var cur = cacheByIcao[icao];
+                        if (!cur || cur.icao !== icao) {
+                            return;
+                        }
+                        if (enr) {
+                            cur.radarGifUrl = enr.radarGifUrl || '';
+                            cur.afdText = enr.afdText || '';
+                            cur.afdMeta = enr.afdMeta || null;
+                        }
+                        cacheByIcao[icao] = cur;
+                        if (modal && modal.style.display === 'flex' && selectedIata === iata) {
+                            renderDetail(selectedIata);
+                        }
+                    });
+                }
                 patchDetailExtras(icao, iata);
                 return;
             }
-            fetchNwsEnrichmentCached(icao, false, function (enr) {
-                var rec = buildRecFromEnr(enr);
-                cacheByIcao[icao] = rec;
-                cb(rec);
+            if (needNwsEnrichmentFetch()) {
+                fetchNwsEnrichmentCached(icao, false, function (enr) {
+                    var rec = buildRecFromEnr(enr);
+                    cacheByIcao[icao] = rec;
+                    cb(rec);
+                    patchDetailExtras(icao, iata);
+                });
+            } else {
+                var recNoNws = buildRecFromEnr(null);
+                cacheByIcao[icao] = recNoNws;
+                cb(recNoNws);
                 patchDetailExtras(icao, iata);
-            });
+            }
         }
 
         function tryComplete() {
@@ -1297,12 +1394,13 @@
             });
         }
 
-        var faaRvrURL = faaRvrUrlForIata(iata, false);
-        fetchText(faaRvrURL, function (html) {
-            rvrParsed = parseFaaRvrHtml(html);
-            rvrDone = true;
-            tryComplete();
-        });
+        if (fetchRvr) {
+            fetchText(faaRvrUrlForIata(iata, false), function (html) {
+                rvrParsed = parseFaaRvrHtml(html);
+                rvrDone = true;
+                tryComplete();
+            });
+        }
 
         fetchText(tafURL, function (tt) {
             taf = parseTafBody(tt);
@@ -1319,11 +1417,12 @@
         });
     }
 
-    function fetchAllStations(list, done, onProgress) {
+    function fetchAllStations(list, done, onProgress, fetchOpts) {
         if (!list || !list.length) {
             done([]);
             return;
         }
+        fetchOpts = fetchOpts || {};
         var concurrency = numPref('metarWatchConcurrentStations', 10, 1, 20);
         var results = new Array(list.length);
         var next = 0;
@@ -1357,9 +1456,13 @@
                             onProgress(iata, null, completed, total);
                         } catch (e) {}
                     }
-                    fetchWeatherForIata(iata, function (rec) {
-                        finishOne(rec, index);
-                    });
+                    fetchWeatherForIata(
+                        iata,
+                        function (rec) {
+                            finishOne(rec, index);
+                        },
+                        fetchOpts
+                    );
                 })(next);
                 next++;
             }
@@ -1540,8 +1643,37 @@
         refreshThisBtn.textContent = 'Refresh ' + stationListLabel(selectedIata);
     }
 
+    function ensureFaaRvrLoaded(iata) {
+        if (!boolPref('metarWatchShowRvr', true)) {
+            return;
+        }
+        var icao = icaoFor(iata);
+        if (!icao) {
+            return;
+        }
+        var cur = cacheByIcao[icao];
+        if (!cur || !cur.rvrNotFetched) {
+            return;
+        }
+        fetchText(faaRvrUrlForIata(iata, false), function (html) {
+            var cur2 = cacheByIcao[icao];
+            if (!cur2 || selectedIata !== iata) {
+                return;
+            }
+            cur2.rvrFaa = parseFaaRvrHtml(html);
+            cur2.rvrNotFetched = false;
+            cacheByIcao[icao] = cur2;
+            if (modal && modal.style.display === 'flex' && selectedIata === iata) {
+                renderDetail(selectedIata);
+            }
+        });
+    }
+
     function refreshRvrOnly() {
         if (!selectedIata) {
+            return;
+        }
+        if (!boolPref('metarWatchShowRvr', true)) {
             return;
         }
         var icao = icaoFor(selectedIata);
@@ -1556,6 +1688,7 @@
                 return;
             }
             cur.rvrFaa = parsed;
+            cur.rvrNotFetched = false;
             cacheByIcao[icao] = cur;
             if (selectedIata) {
                 renderDetail(selectedIata);
@@ -1620,21 +1753,25 @@
         }
         setStatusBar('Loading ' + stationListLabel(selectedIata) + '…');
         fetchNwsEnrichmentCached(icaoFor(selectedIata), true, function () {});
-        fetchWeatherForIata(selectedIata, function () {
-            if (refreshThisBtn) {
-                refreshThisBtn.disabled = false;
-            }
-            setStatusBar(stationListLabel(selectedIata) + ' · updated ' + new Date().toLocaleTimeString());
-            if (selectedIata) {
-                markStationViewed(selectedIata);
-            }
-            renderStationList();
-            if (selectedIata) {
-                renderDetail(selectedIata);
-            }
-            updateRefreshThisLabel();
-            updateAlertState();
-        });
+        fetchWeatherForIata(
+            selectedIata,
+            function () {
+                if (refreshThisBtn) {
+                    refreshThisBtn.disabled = false;
+                }
+                setStatusBar(stationListLabel(selectedIata) + ' · updated ' + new Date().toLocaleTimeString());
+                if (selectedIata) {
+                    markStationViewed(selectedIata);
+                }
+                renderStationList();
+                if (selectedIata) {
+                    renderDetail(selectedIata);
+                }
+                updateRefreshThisLabel();
+                updateAlertState();
+            },
+            { fetchRvrNow: true }
+        );
     }
 
     function refreshAllStationsManual() {
@@ -1663,7 +1800,8 @@
                 } else {
                     setStatusBar('Loading ' + stationListLabel(iata) + '…');
                 }
-            }
+            },
+            { forceFetchRvr: true }
         );
     }
 
@@ -1748,6 +1886,7 @@
                     markStationViewed(iata);
                     renderStationList();
                     renderDetail(iata);
+                    ensureFaaRvrLoaded(iata);
                 });
                 row.appendChild(label);
                 row.appendChild(x);
@@ -1781,12 +1920,17 @@
         var r = cacheByIcao[icaoFor(iata)];
         if (!r) {
             detailEl.innerHTML = '<div style="color:#95a5a6;font-family:system-ui,sans-serif;">Loading…</div>';
-            fetchWeatherForIata(iata, function () {
-                if (selectedIata === iata) {
-                    markStationViewed(iata);
-                    renderDetail(iata);
-                }
-            });
+            fetchWeatherForIata(
+                iata,
+                function () {
+                    if (selectedIata === iata) {
+                        markStationViewed(iata);
+                        renderDetail(iata);
+                        ensureFaaRvrLoaded(iata);
+                    }
+                },
+                { fetchRvrNow: true }
+            );
             return;
         }
         var unseen = metarTafUnseenVersusViewed(iata, r);
@@ -1819,10 +1963,29 @@
             mBlocks = '<div style="color:#95a5a6;">N/A</div>';
         }
         var t = escapeHtml(r.taf).replace(/\n/g, '<br>');
+        var showRvrPref = boolPref('metarWatchShowRvr', true);
         var rvr = r.rvrFaa;
         var rvrTable = rvr && rvr.rows && rvr.rows.length ? buildFaaRvrTableHtml(rvr, iata) : '';
+        var rvrColInner = '';
+        if (showRvrPref) {
+            if (rvrTable) {
+                rvrColInner = rvrTable;
+            } else if (r.rvrNotFetched) {
+                rvrColInner =
+                    '<div style="color:#95a5a6;font-size:11px;font-family:system-ui,sans-serif;">Loading RVR…</div>';
+            } else if (rvr && rvr.blocked) {
+                rvrColInner =
+                    '<div style="color:#e74c3c;font-size:11px;line-height:1.45;font-family:system-ui,sans-serif;">FAA RVR site blocked or unavailable. Try again later, turn off <strong>Fetch RVR during background poll</strong>, or disable the RVR panel.</div>';
+            } else if (rvr && rvr.empty) {
+                rvrColInner =
+                    '<div style="color:#95a5a6;font-size:11px;font-family:system-ui,sans-serif;">No RVR table for this airport.</div>';
+            } else {
+                rvrColInner =
+                    '<div style="color:#95a5a6;font-size:11px;font-family:system-ui,sans-serif;">No RVR data.</div>';
+            }
+        }
         var tafRvrRow = '';
-        if (rvrTable) {
+        if (showRvrPref && rvrColInner) {
             tafRvrRow =
                 '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;margin-bottom:16px;">' +
                 '<div style="flex:2 1 320px;min-width:0;">' +
@@ -1840,7 +2003,7 @@
                 '<button type="button" data-dc-rvr-refresh="1" style="padding:4px 10px;font-size:11px;border-radius:4px;border:1px solid #444;background:#2a2a32;color:#ecf0f1;cursor:pointer;">Refresh RVR</button>' +
                 '</div>' +
                 '<div style="overflow:auto;max-height:min(48vh,520px);background:#141418;padding:10px;border-radius:6px;">' +
-                rvrTable +
+                rvrColInner +
                 '</div></div></div>';
         } else {
             tafRvrRow =
@@ -1853,9 +2016,9 @@
                 t +
                 '</div>';
         }
-        var datisBlock = buildDatisBlockHtml(r.datisEntries);
+        var datisBlock = showDatisPanel() ? buildDatisBlockHtml(r.datisEntries) : '';
         var radarBlock = '';
-        if (r.radarGifUrl) {
+        if (showRadarPanel() && r.radarGifUrl) {
             radarBlock =
                 '<div style="margin-bottom:16px;">' +
                 '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">Radar <span style="font-weight:400;color:#95a5a6;font-size:11px;">(NWS site nearest the airport)</span></div>' +
@@ -1866,9 +2029,9 @@
                 '</div>' +
                 '</div>';
         }
-        var hrrrBlock = buildHrrrChartHtml(r.hrrrHourly);
+        var hrrrBlock = showHrrrPanel() ? buildHrrrChartHtml(r.hrrrHourly) : '';
         var afdBlock = '';
-        if (r.afdText && String(r.afdText).trim()) {
+        if (showAfdPanel() && r.afdText && String(r.afdText).trim()) {
             var afdEsc = escapeHtml(r.afdText);
             var metaStr = afdMetaLine(r.afdMeta);
             afdBlock =
@@ -1920,6 +2083,7 @@
                 if (selectedIata) {
                     renderDetail(selectedIata);
                     markStationViewed(selectedIata);
+                    ensureFaaRvrLoaded(selectedIata);
                 }
                 setStatusBar('Ready · ' + new Date().toLocaleTimeString());
             },
