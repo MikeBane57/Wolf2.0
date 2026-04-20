@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.24
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache), cross-tab poll (BC + storage) + alert/view sync, collapsible AFD
+// @version      2.0.25
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache), cross-tab poll (BC + storage) + alert/view sync, NEW highlight until you leave station, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -1580,6 +1580,15 @@
     var viewedSnapshot = loadViewedSnapshot();
     var detailSeenSnapshot = loadDetailSeenSnapshot();
     var notifyDedupeMap = loadNotifyDedupeMap();
+    /** Station (IATA) whose METAR/TAF NEW highlight is shown; mark detail-seen when user picks another row or closes modal. */
+    var detailSeenPendingIata = null;
+
+    function flushDetailSeenPendingIfSwitchingTo(newIata) {
+        if (detailSeenPendingIata && detailSeenPendingIata !== newIata) {
+            markStationViewed(detailSeenPendingIata);
+            detailSeenPendingIata = null;
+        }
+    }
 
     function reloadViewedSnapshotsFromStorage() {
         viewedSnapshot = loadViewedSnapshot();
@@ -1589,6 +1598,9 @@
     function applyViewedSyncFromOtherTab(icao) {
         reloadViewedSnapshotsFromStorage();
         notifyDedupeMap = loadNotifyDedupeMap();
+        if (icao && detailSeenPendingIata && icaoFor(detailSeenPendingIata) === icao) {
+            detailSeenPendingIata = null;
+        }
         if (icao) {
             var idx;
             for (idx = 0; idx < stationList.length; idx++) {
@@ -3388,7 +3400,7 @@
                 setStatusBar(stationListLabel(selectedIata) + ' · updated ' + new Date().toLocaleTimeString());
                 renderStationList();
                 if (selectedIata) {
-                    renderDetail(selectedIata, { markViewedAfter: true });
+                    renderDetail(selectedIata, { skipCodLoop: true });
                 }
                 updateRefreshThisLabel();
                 updateAlertState();
@@ -3505,6 +3517,7 @@
                     runPoll();
                 });
                 row.addEventListener('click', function () {
+                    flushDetailSeenPendingIfSwitchingTo(iata);
                     selectedIata = iata;
                     renderStationList();
                     renderDetail(iata, { markViewedAfter: true });
@@ -3564,7 +3577,7 @@
                 iata,
                 function () {
                     if (selectedIata === iata) {
-                        renderDetail(iata, { markViewedAfter: true });
+                        renderDetail(iata, { skipCodLoop: true });
                         ensureFaaRvrLoaded(iata);
                     }
                 },
@@ -3730,7 +3743,7 @@
             }
         }
         if (markViewedAfter && iata && selectedIata === iata) {
-            markStationViewed(iata);
+            detailSeenPendingIata = iata;
         }
     }
 
@@ -3767,6 +3780,10 @@
     }
 
     function closeModal() {
+        if (detailSeenPendingIata) {
+            markStationViewed(detailSeenPendingIata);
+            detailSeenPendingIata = null;
+        }
         modal.style.display = 'none';
         backdrop.style.display = 'none';
         stopListColorTimer();
