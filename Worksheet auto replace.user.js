@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto replace
 // @namespace    Wolf 2.0
-// @version      1.0.1
+// @version      1.0.2
 // @description  Worksheet: optional watch on Tails / Lines / Flights counts; when any change, click Replace automatically. Toggle sits under the toolbar buttons.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -101,6 +101,14 @@
         return c.tails + '|' + c.lines + '|' + c.flights;
     }
 
+    /** Human-readable counts for the status line (confirms which metrics are watched). */
+    function formatCountsLabel(c) {
+        if (!c) {
+            return '';
+        }
+        return 'Tails ' + c.tails + ' · Lines ' + c.lines + ' · Flights ' + c.flights;
+    }
+
     function findReplaceControl() {
         var i;
         var list = document.querySelectorAll('button,[role="button"],a[href]');
@@ -149,7 +157,7 @@
                 );
             } catch (e2) {}
         }
-        setStatus('Clicked Replace · ' + (reason || ''));
+        setStatus('Clicked Replace · was ' + (reason || ''));
         return true;
     }
 
@@ -169,16 +177,17 @@
             setStatus('Watching… (waiting for Tails/Lines/Flights text)');
             return;
         }
+        var label = formatCountsLabel(c);
         if (!lastSig) {
             lastSig = sig;
-            setStatus('Watching · ' + sig.replace(/\|/g, ' / '));
+            setStatus('Watching · ' + label);
             return;
         }
         if (sig !== lastSig) {
             lastSig = sig;
-            clickReplace(sig);
+            clickReplace(label);
         } else {
-            setStatus('Watching · ' + sig.replace(/\|/g, ' / '));
+            setStatus('Watching · ' + label);
         }
     }
 
