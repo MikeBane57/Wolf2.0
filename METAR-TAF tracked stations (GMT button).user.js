@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.25
+// @version      2.0.26
 // @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache), cross-tab poll (BC + storage) + alert/view sync, NEW highlight until you leave station, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -3838,7 +3838,38 @@
         });
     }
 
+    var WX_BTN_ATTR = 'data-dc-metar-watch-btn';
+
+    /**
+     * Hot-reload / duplicate injection can leave multiple WX nodes; keep one and refresh refs.
+     */
+    function dedupeWxButtonNodes() {
+        var nodes = document.querySelectorAll('[' + WX_BTN_ATTR + '="1"]');
+        if (!nodes.length) {
+            btn = null;
+            badge = null;
+            return;
+        }
+        var keep = btn && btn.isConnected ? btn : nodes[0];
+        var i;
+        for (i = 0; i < nodes.length; i++) {
+            if (nodes[i] !== keep) {
+                try {
+                    nodes[i].remove();
+                } catch (e) {}
+            }
+        }
+        btn = keep;
+        try {
+            badge = btn.querySelector('span');
+        } catch (e2) {
+            badge = null;
+        }
+    }
+
     function mountButtonNearClock() {
+        dedupeWxButtonNodes();
+
         var anchor = findGmtClockElement();
         var host = anchor && anchor.parentElement ? anchor.parentElement : document.body;
         if (!btn) {
@@ -3862,7 +3893,7 @@
             btn.style.justifyContent = 'center';
             btn.style.background = '#2c3e50';
             btn.style.color = '#ecf0f1';
-            btn.setAttribute('data-dc-metar-watch-btn', '1');
+            btn.setAttribute(WX_BTN_ATTR, '1');
             badge = document.createElement('span');
             badge.textContent = '!';
             badge.style.display = 'none';
@@ -3879,6 +3910,9 @@
             badge.style.lineHeight = '16px';
             badge.style.textAlign = 'center';
             btn.appendChild(badge);
+        }
+        if (!btn.getAttribute('data-dc-wx-open-bound')) {
+            btn.setAttribute('data-dc-wx-open-bound', '1');
             btn.addEventListener('click', function (e) {
                 e.preventDefault();
                 e.stopPropagation();
