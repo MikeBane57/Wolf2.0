@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto replace
 // @namespace    Wolf 2.0
-// @version      1.0.0
+// @version      1.0.1
 // @description  Worksheet: optional watch on Tails / Lines / Flights counts; when any change, click Replace automatically. Toggle sits under the toolbar buttons.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -18,7 +18,9 @@
     var LS_KEY = 'dc_worksheet_auto_replace_on';
 
     var pollTimer = null;
+    var relocateRetryTimer = null;
     var mo = null;
+    var relocateRaf = 0;
     var lastSig = '';
     var hostEl = null;
     var statusEl = null;
@@ -241,6 +243,70 @@
         return btn.parentElement || document.body;
     }
 
+    function clearFloatingFallbackStyles(host) {
+        if (!host) {
+            return;
+        }
+        if (host.getAttribute('data-dc-war-fallback') === '1') {
+            host.style.position = '';
+            host.style.right = '';
+            host.style.bottom = '';
+            host.style.zIndex = '';
+            host.style.maxWidth = '';
+            host.removeAttribute('data-dc-war-fallback');
+        }
+    }
+
+    /**
+     * Move host under the toolbar after Replace appears (fixes fixed bottom-right stuck after refresh).
+     */
+    function relocateHost() {
+        var host = document.getElementById(HOST_ID);
+        if (!host) {
+            return;
+        }
+        var anchor = findToolbarAnchor();
+        if (!anchor || !anchor.parentNode) {
+            return;
+        }
+        var parent = anchor.parentNode;
+        clearFloatingFallbackStyles(host);
+        try {
+            if (anchor.nextSibling !== host) {
+                parent.insertBefore(host, anchor.nextSibling);
+            }
+        } catch (e) {}
+    }
+
+    function scheduleRelocateHost() {
+        if (relocateRaf) {
+            cancelAnimationFrame(relocateRaf);
+        }
+        relocateRaf = requestAnimationFrame(function () {
+            relocateRaf = 0;
+            relocateHost();
+        });
+    }
+
+    function startRelocateRetries() {
+        if (relocateRetryTimer) {
+            clearInterval(relocateRetryTimer);
+            relocateRetryTimer = null;
+        }
+        var n = 0;
+        var max = 60;
+        relocateRetryTimer = setInterval(function () {
+            n++;
+            relocateHost();
+            var h = document.getElementById(HOST_ID);
+            var stillFloating = h && h.getAttribute('data-dc-war-fallback') === '1';
+            if (!stillFloating || n >= max) {
+                clearInterval(relocateRetryTimer);
+                relocateRetryTimer = null;
+            }
+        }, 250);
+    }
+
     function mountHost() {
         var existing = document.getElementById(HOST_ID);
         var anchor = findToolbarAnchor();
@@ -248,15 +314,7 @@
             hostEl = existing;
             statusEl = hostEl.querySelector('.dc-war-status');
             toggleInput = hostEl.querySelector('input[type="checkbox"]');
-            if (anchor && hostEl.parentNode !== anchor.parentNode) {
-                try {
-                    if (anchor.nextSibling) {
-                        anchor.parentNode.insertBefore(hostEl, anchor.nextSibling);
-                    } else {
-                        anchor.parentNode.appendChild(hostEl);
-                    }
-                } catch (e) {}
-            }
+            relocateHost();
             return;
         }
         ensureStyle();
@@ -273,6 +331,7 @@
                 anchor.parentNode.appendChild(wrap);
             }
         } else {
+            wrap.setAttribute('data-dc-war-fallback', '1');
             wrap.style.position = 'fixed';
             wrap.style.right = '12px';
             wrap.style.bottom = '12px';
@@ -299,6 +358,7 @@
         } else {
             setStatus('Off');
         }
+        startRelocateRetries();
     }
 
     function tryMount() {
@@ -310,6 +370,8 @@
         mo = new MutationObserver(function () {
             if (!document.getElementById(HOST_ID)) {
                 tryMount();
+            } else {
+                scheduleRelocateHost();
             }
         });
         mo.observe(document.documentElement, { childList: true, subtree: true });
@@ -323,6 +385,14 @@
 
     window.__myScriptCleanup = function () {
         stopPoll();
+        if (relocateRetryTimer) {
+            clearInterval(relocateRetryTimer);
+            relocateRetryTimer = null;
+        }
+        if (relocateRaf) {
+            cancelAnimationFrame(relocateRaf);
+            relocateRaf = 0;
+        }
         if (mo) {
             mo.disconnect();
             mo = null;
