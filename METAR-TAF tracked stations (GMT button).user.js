@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.14
+// @version      2.0.15
 // @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), optional COD loop, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -13,7 +13,7 @@
 // @connect      atis.info
 // @connect      api.open-meteo.com
 // @connect      weather.cod.edu
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"}}
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -115,6 +115,12 @@
         return boolPref('metarWatchShowCodModelLoop', true);
     }
 
+    /** `on_station`: load when you select an airport (not on 15s highlight refresh). `manual`: Load button only. */
+    function codLoopLoadTrigger() {
+        var v = String(getPref('metarWatchCodLoopLoadTrigger', 'on_station') || 'on_station').toLowerCase();
+        return v === 'manual' ? 'manual' : 'on_station';
+    }
+
     function codAutoSectorPref() {
         return boolPref('metarWatchCodAutoSector', true);
     }
@@ -177,12 +183,17 @@
         return dlat * dlat + dlon * dlon;
     }
 
-    /** Nearest regional sector; prefers smaller domains over full US/NA when close. */
+    /**
+     * Closest NEXLAB sector to (lat,lon) by distance to sector center.
+     * Bounding boxes are approximate; previously airports in gaps (e.g. ATL vs SE/MW) fell through to CONUS.
+     */
     function codPickSectorForLatLon(lat, lon, model) {
         var mod = model === 'RAP' ? 'RAP' : 'HRRR';
         var list = COD_SECTORS_BY_MODEL[mod] || COD_SECTORS_BY_MODEL.HRRR;
-        var best = 'US';
-        var bestD = Infinity;
+        var bestRegional = 'US';
+        var bestDRegional = Infinity;
+        var bestConus = 'US';
+        var bestDConus = Infinity;
         var bi;
         for (bi = 0; bi < list.length; bi++) {
             var id = list[bi];
@@ -190,21 +201,24 @@
             if (!bb) {
                 continue;
             }
-            if (lon < bb[0] || lon > bb[2] || lat < bb[1] || lat > bb[3]) {
-                continue;
-            }
             var cen = codSectorCenter(bb);
             if (!cen) {
                 continue;
             }
             var d = codDist2(lat, lon, cen);
-            var penalty = id === 'US' || id === 'NA' ? 2500 : 0;
-            if (d + penalty < bestD) {
-                bestD = d + penalty;
-                best = id;
+            if (id === 'US' || id === 'NA') {
+                if (d < bestDConus) {
+                    bestDConus = d;
+                    bestConus = id;
+                }
+                continue;
+            }
+            if (d < bestDRegional) {
+                bestDRegional = d;
+                bestRegional = id;
             }
         }
-        return best;
+        return bestDRegional < Infinity ? bestRegional : bestConus;
     }
 
     function codBuildParms(model, sector) {
@@ -221,16 +235,31 @@
             codLoopTimer = null;
         }
         codLoopGen++;
+        lastCodLoopIata = null;
+        if (codLoopWrapEl) {
+            codLoopWrapEl.style.visibility = 'hidden';
+            codLoopWrapEl.style.minHeight = '';
+        }
         if (codLoopImgA) {
             try {
                 codLoopImgA.removeAttribute('src');
             } catch (e) {}
+            codLoopImgA.style.opacity = '0';
         }
         if (codLoopImgB) {
             try {
                 codLoopImgB.removeAttribute('src');
             } catch (e) {}
+            codLoopImgB.style.opacity = '0';
         }
+    }
+
+    function setCodLoadButtonState(loading) {
+        if (!codLoadBtn) {
+            return;
+        }
+        codLoadBtn.disabled = loading === true;
+        codLoadBtn.textContent = loading ? 'Loading…' : 'Load model loop';
     }
 
     function codLoopParmsForStation(iata, cb) {
@@ -261,32 +290,143 @@
         });
     }
 
-    function preloadImagesSequential(urls, startIdx, count, cb) {
-        if (!urls || !urls.length || count <= 0) {
-            cb();
+    /**
+     * Fetches frame list + loads first frame before showing the viewer (no parallel background image storm).
+     */
+    function runCodModelLoopFetch(myGen) {
+        if (myGen !== codLoopGen || !selectedIata) {
             return;
         }
-        var loaded = 0;
-        var target = Math.min(count, urls.length);
-        var ii;
-        for (ii = 0; ii < target; ii++) {
-            (function (u) {
-                var im = new Image();
-                im.onload = function () {
-                    loaded++;
-                    if (loaded >= target) {
-                        cb();
-                    }
-                };
-                im.onerror = function () {
-                    loaded++;
-                    if (loaded >= target) {
-                        cb();
-                    }
-                };
-                im.src = u;
-            })(urls[(startIdx + ii) % urls.length]);
+        if (!codLoopImgA || !codLoopImgB || !codLoopWrapEl) {
+            return;
         }
+        codLoopWrapEl.style.visibility = 'hidden';
+        codLoopWrapEl.style.minHeight = '200px';
+        codLoopImgA.removeAttribute('src');
+        codLoopImgB.removeAttribute('src');
+        codLoopImgA.style.opacity = '0';
+        codLoopImgB.style.opacity = '0';
+        if (codLoopMetaEl) {
+            codLoopMetaEl.textContent = 'Resolving region and loading frame list…';
+        }
+        setCodLoadButtonState(true);
+        codLoopParmsForStation(selectedIata, function (parms, tag) {
+            if (myGen !== codLoopGen) {
+                return;
+            }
+            var apiUrl = COD_BASE + '/assets/php/scripts/get-files.php?parms=' + encodeURIComponent(parms);
+            fetchText(apiUrl, function (txt) {
+                if (myGen !== codLoopGen) {
+                    return;
+                }
+                if (!txt) {
+                    if (codLoopMetaEl) {
+                        codLoopMetaEl.textContent = 'COD: could not load frame list.';
+                    }
+                    setCodLoadButtonState(false);
+                    return;
+                }
+                var j;
+                try {
+                    j = JSON.parse(txt);
+                } catch (e1) {
+                    if (codLoopMetaEl) {
+                        codLoopMetaEl.textContent = 'COD: invalid JSON.';
+                    }
+                    setCodLoadButtonState(false);
+                    return;
+                }
+                if (!j || j.err !== 'false' || !j.files || !j.files.length) {
+                    if (codLoopMetaEl) {
+                        codLoopMetaEl.textContent = 'COD: no frames for ' + parms + '.';
+                    }
+                    setCodLoadButtonState(false);
+                    return;
+                }
+                var files = j.files;
+                var m = j.parms;
+                var sub =
+                    Array.isArray(m) && m.length >= 3
+                        ? String(m[1]) + ' · ' + String(m[2]) + ' · simulated reflectivity'
+                        : 'COD NEXLAB';
+                if (codLoopMetaEl) {
+                    codLoopMetaEl.innerHTML =
+                        'Parms: <code style="color:#bdc3c7;">' +
+                        escapeHtml(parms) +
+                        '</code> · Region: <code style="color:#bdc3c7;">' +
+                        escapeHtml(String(tag)) +
+                        '</code> · ' +
+                        escapeHtml(sub) +
+                        ' · <a href="' +
+                        escapeHtml(COD_BASE + '/') +
+                        '" target="_blank" rel="noopener noreferrer" style="color:#5dade2;">NEXLAB</a>';
+                }
+                if (codLoopMetaEl) {
+                    codLoopMetaEl.textContent = 'Loading first frame…';
+                }
+                var first = new Image();
+                first.onload = function () {
+                    if (myGen !== codLoopGen) {
+                        return;
+                    }
+                    codLoopImgA.src = files[0];
+                    codLoopImgA.style.opacity = '1';
+                    codLoopImgA.style.zIndex = '2';
+                    codLoopImgB.style.opacity = '0';
+                    codLoopImgB.style.zIndex = '1';
+                    codLoopWrapEl.style.visibility = 'visible';
+                    codLoopWrapEl.style.minHeight = '';
+                    setCodLoadButtonState(false);
+                    if (codLoadBtn) {
+                        codLoadBtn.style.display = 'none';
+                    }
+                    if (codLoopMetaEl) {
+                        codLoopMetaEl.innerHTML =
+                            'Parms: <code style="color:#bdc3c7;">' +
+                            escapeHtml(parms) +
+                            '</code> · Region: <code style="color:#bdc3c7;">' +
+                            escapeHtml(String(tag)) +
+                            '</code> · ' +
+                            escapeHtml(sub) +
+                            ' · <a href="' +
+                            escapeHtml(COD_BASE + '/') +
+                            '" target="_blank" rel="noopener noreferrer" style="color:#5dade2;">NEXLAB</a>';
+                    }
+                    var idx = 0;
+                    var showA = true;
+                    codLoopTimer = setInterval(function () {
+                        if (myGen !== codLoopGen) {
+                            return;
+                        }
+                        idx = (idx + 1) % files.length;
+                        var nextUrl = files[idx];
+                        var front = showA ? codLoopImgA : codLoopImgB;
+                        var back = showA ? codLoopImgB : codLoopImgA;
+                        back.onload = function () {
+                            if (myGen !== codLoopGen) {
+                                return;
+                            }
+                            back.style.opacity = '1';
+                            back.style.zIndex = '2';
+                            front.style.opacity = '0';
+                            front.style.zIndex = '1';
+                            showA = !showA;
+                        };
+                        back.src = nextUrl;
+                    }, 700);
+                };
+                first.onerror = function () {
+                    if (myGen !== codLoopGen) {
+                        return;
+                    }
+                    if (codLoopMetaEl) {
+                        codLoopMetaEl.textContent = 'COD: first frame failed to load.';
+                    }
+                    setCodLoadButtonState(false);
+                };
+                first.src = files[0];
+            });
+        });
     }
 
     function startCodModelLoopFromDetail() {
@@ -308,101 +448,28 @@
         if (!codLoopImgA || !codLoopImgB) {
             return;
         }
-        codLoopImgA.style.opacity = '1';
-        codLoopImgA.style.zIndex = '2';
-        codLoopImgB.style.opacity = '0';
-        codLoopImgB.style.zIndex = '1';
-        codLoopImgA.removeAttribute('src');
-        codLoopImgB.removeAttribute('src');
-        if (codLoopMetaEl) {
-            codLoopMetaEl.textContent = 'Loading COD loop…';
-        }
-        codLoopParmsForStation(selectedIata, function (parms, tag) {
-            if (myGen !== codLoopGen) {
-                return;
+        lastCodLoopIata = selectedIata;
+        if (codLoopLoadTrigger() === 'manual') {
+            if (codLoopWrapEl) {
+                codLoopWrapEl.style.visibility = 'hidden';
+                codLoopWrapEl.style.minHeight = '';
             }
-            var apiUrl = COD_BASE + '/assets/php/scripts/get-files.php?parms=' + encodeURIComponent(parms);
-            fetchText(apiUrl, function (txt) {
-                if (myGen !== codLoopGen) {
-                    return;
-                }
-                if (!txt) {
-                    if (codLoopMetaEl) {
-                        codLoopMetaEl.textContent = 'COD: could not load frame list.';
-                    }
-                    return;
-                }
-                var j;
-                try {
-                    j = JSON.parse(txt);
-                } catch (e1) {
-                    if (codLoopMetaEl) {
-                        codLoopMetaEl.textContent = 'COD: invalid JSON.';
-                    }
-                    return;
-                }
-                if (!j || j.err !== 'false' || !j.files || !j.files.length) {
-                    if (codLoopMetaEl) {
-                        codLoopMetaEl.textContent = 'COD: no frames for ' + parms + '.';
-                    }
-                    return;
-                }
-                var files = j.files;
-                var m = j.parms;
-                var sub =
-                    Array.isArray(m) && m.length >= 3
-                        ? String(m[1]) + ' · ' + String(m[2]) + ' · simulated reflectivity'
-                        : 'COD NEXLAB';
-                if (codLoopMetaEl) {
-                    codLoopMetaEl.innerHTML =
-                        'Parms: <code style="color:#bdc3c7;">' +
-                        escapeHtml(parms) +
-                        '</code> · Region: <code style="color:#bdc3c7;">' +
-                        escapeHtml(String(tag)) +
-                        '</code> · ' +
-                        escapeHtml(sub) +
-                        ' · <a href="' +
-                        escapeHtml(COD_BASE + '/') +
-                        '" target="_blank" rel="noopener noreferrer" style="color:#5dade2;">NEXLAB</a>';
-                }
-                var preloadN = Math.min(8, files.length);
-                preloadImagesSequential(files, 0, preloadN, function () {
-                    if (myGen !== codLoopGen) {
-                        return;
-                    }
-                    var idx = 0;
-                    var showA = true;
-                    codLoopImgA.src = files[0];
-                    codLoopImgA.style.opacity = '1';
-                    codLoopImgA.style.zIndex = '2';
-                    codLoopImgB.style.opacity = '0';
-                    codLoopImgB.style.zIndex = '1';
-                    codLoopTimer = setInterval(function () {
-                        if (myGen !== codLoopGen) {
-                            return;
-                        }
-                        idx = (idx + 1) % files.length;
-                        var nextUrl = files[idx];
-                        var front = showA ? codLoopImgA : codLoopImgB;
-                        var back = showA ? codLoopImgB : codLoopImgA;
-                        back.onload = function () {
-                            if (myGen !== codLoopGen) {
-                                return;
-                            }
-                            back.style.opacity = '1';
-                            back.style.zIndex = '2';
-                            front.style.opacity = '0';
-                            front.style.zIndex = '1';
-                            showA = !showA;
-                        };
-                        back.src = nextUrl;
-                        var ahead = (idx + 1) % files.length;
-                        var pre = new Image();
-                        pre.src = files[ahead];
-                    }, 700);
-                });
-            });
-        });
+            codLoopImgA.removeAttribute('src');
+            codLoopImgB.removeAttribute('src');
+            if (codLoadBtn) {
+                codLoadBtn.style.display = 'inline-block';
+            }
+            if (codLoopMetaEl) {
+                codLoopMetaEl.textContent =
+                    'Model loop is not loaded until you tap Load — avoids downloading frames in the background.';
+            }
+            setCodLoadButtonState(false);
+            return;
+        }
+        if (codLoadBtn) {
+            codLoadBtn.style.display = 'none';
+        }
+        runCodModelLoopFetch(myGen);
     }
 
     function ensureDetailStructure() {
@@ -553,9 +620,13 @@
     /** Main detail HTML (METAR…AFD); COD loop is a sibling so innerHTML does not kill the animation. */
     var detailContentEl = null;
     var codLoopHostEl = null;
+    var codLoopWrapEl = null;
     var codLoopMetaEl = null;
     var codLoopImgA = null;
     var codLoopImgB = null;
+    var codLoadBtn = null;
+    /** Last station we started the COD loop for (avoid restart on timer-only detail refresh). */
+    var lastCodLoopIata = null;
     var cacheByIcao = {};
     var pollTimer = null;
     var domObserver = null;
@@ -731,7 +802,7 @@
             if (modal && modal.style.display === 'flex') {
                 renderStationList();
                 if (selectedIata) {
-                    renderDetail(selectedIata);
+                    renderDetail(selectedIata, { skipCodLoop: true });
                 }
             }
         }, 15000);
@@ -2357,7 +2428,9 @@
         }
     }
 
-    function renderDetail(iata) {
+    function renderDetail(iata, opts) {
+        opts = opts || {};
+        var skipCodLoop = opts.skipCodLoop === true;
         ensureDetailStructure();
         if (!detailContentEl) {
             return;
@@ -2537,7 +2610,13 @@
             '</div>';
         attachCodLoopHostAfterRender();
         if (showCodModelLoopPanel()) {
-            startCodModelLoopFromDetail();
+            var shouldStartCod = true;
+            if (skipCodLoop && selectedIata && lastCodLoopIata === selectedIata) {
+                shouldStartCod = false;
+            }
+            if (shouldStartCod) {
+                startCodModelLoopFromDetail();
+            }
         } else {
             stopCodModelLoop();
             if (codLoopHostEl) {
@@ -2997,6 +3076,14 @@
                 e.preventDefault();
                 refreshDatisOnly();
             }
+            if (t.getAttribute('data-dc-cod-load') === '1') {
+                e.preventDefault();
+                if (codLoopLoadTrigger() === 'manual' && showCodModelLoopPanel() && selectedIata) {
+                    stopCodModelLoop();
+                    lastCodLoopIata = selectedIata;
+                    runCodModelLoopFetch(codLoopGen);
+                }
+            }
         });
 
         codLoopHostEl = document.createElement('div');
@@ -3008,15 +3095,38 @@
         codTitle.style.marginBottom = '8px';
         codTitle.style.color = '#3498db';
         codTitle.style.fontFamily = 'system-ui, sans-serif';
-        codTitle.innerHTML =
+        codTitle.style.display = 'flex';
+        codTitle.style.alignItems = 'center';
+        codTitle.style.justifyContent = 'space-between';
+        codTitle.style.gap = '10px';
+        codTitle.style.flexWrap = 'wrap';
+        var codTitleLbl = document.createElement('span');
+        codTitleLbl.innerHTML =
             'Model loop <span style="font-weight:400;color:#95a5a6;font-size:11px;">(College of DuPage NEXLAB)</span>';
+        codLoadBtn = document.createElement('button');
+        codLoadBtn.type = 'button';
+        codLoadBtn.setAttribute('data-dc-cod-load', '1');
+        codLoadBtn.textContent = 'Load model loop';
+        codLoadBtn.style.display = 'none';
+        codLoadBtn.style.padding = '4px 10px';
+        codLoadBtn.style.fontSize = '11px';
+        codLoadBtn.style.borderRadius = '4px';
+        codLoadBtn.style.border = '1px solid #444';
+        codLoadBtn.style.background = '#2a2a32';
+        codLoadBtn.style.color = '#ecf0f1';
+        codLoadBtn.style.cursor = 'pointer';
+        codLoadBtn.style.flexShrink = '0';
+        codTitle.appendChild(codTitleLbl);
+        codTitle.appendChild(codLoadBtn);
         var codWrap = document.createElement('div');
         codWrap.setAttribute('data-dc-cod-loop-wrap', '1');
+        codLoopWrapEl = codWrap;
         codWrap.style.display = 'grid';
         codWrap.style.width = '100%';
         codWrap.style.background = '#111';
         codWrap.style.borderRadius = '6px';
         codWrap.style.overflow = 'hidden';
+        codWrap.style.visibility = 'hidden';
         codLoopImgA = document.createElement('img');
         codLoopImgA.alt = 'COD model';
         codLoopImgA.style.gridArea = '1 / 1';
@@ -3141,9 +3251,11 @@
         sortSelect = null;
         detailContentEl = null;
         codLoopHostEl = null;
+        codLoopWrapEl = null;
         codLoopMetaEl = null;
         codLoopImgA = null;
         codLoopImgB = null;
+        codLoadBtn = null;
         window.__myScriptCleanup = undefined;
     };
 })();
