@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.27
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache), cross-tab poll (BC + storage) + alert/view sync, optional conditional notify rules (global + per IATA), NEW highlight until you leave station, collapsible AFD
+// @version      2.0.28
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache), cross-tab poll (BC + storage) + alert/view sync, optional notify rules, WX yellow/red + badge, modal row/title alert styling, NEW until you leave station, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -2027,22 +2027,86 @@
         return 'stale';
     }
 
-    /** Inline styles for METAR/TAF section title row when text differs from last-viewed snapshot. */
-    function detailTitleHighlightStyle(iata, sectionUnseen) {
+    /** List row colors: rules-matching stale uses yellow/red by age; non-matching stale is subtle grey. */
+    function listRowAlertStyle(iata) {
+        if (!isStationStaleVersusViewed(iata)) {
+            return { kind: 'none' };
+        }
+        var icao = icaoFor(iata);
+        var rec = icao && cacheByIcao[icao];
+        if (rec && notifyRulesPassForStation(iata, rec)) {
+            var age = pendingChangeAgeClass(iata);
+            if (age === 'fresh') {
+                return { kind: 'rules_fresh' };
+            }
+            if (age === 'stale') {
+                return { kind: 'rules_stale' };
+            }
+            return { kind: 'rules_fresh' };
+        }
+        return { kind: 'subtle' };
+    }
+
+    function ruleMatchesSection(rule, section, metar, taf) {
+        if (!rule || typeof rule !== 'object') {
+            return false;
+        }
+        if (section === 'metar') {
+            return !!(rule.metar && typeof rule.metar === 'object');
+        }
+        if (section === 'taf') {
+            return !!(rule.taf && typeof rule.taf === 'object');
+        }
+        return false;
+    }
+
+    function notifyRulesPassForSection(iata, rec, section) {
+        if (notifyRulesMode() === 'off') {
+            return true;
+        }
+        var rules = mergeNotifyRulesForIata(iata);
+        if (!rules.length) {
+            return false;
+        }
+        var metar = rec && rec.metar ? String(rec.metar) : '';
+        var taf = rec && rec.taf ? String(rec.taf) : '';
+        var i;
+        for (i = 0; i < rules.length; i++) {
+            if (!ruleMatchesSection(rules[i], section, metar, taf)) {
+                continue;
+            }
+            if (ruleMatchesOne(rules[i], metar, taf)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Modal section title: rules match that section → yellow (&lt;5m) / red (&gt;5m); else subtle until viewed. */
+    function detailTitleHighlightStyle(iata, sectionUnseen, sectionKey) {
         if (!sectionUnseen) {
             return '';
         }
-        var age = pendingChangeAgeClass(iata);
+        var icao = icaoFor(iata);
+        var r = icao && cacheByIcao[icao];
+        var rulesOk = r && sectionKey ? notifyRulesPassForSection(iata, r, sectionKey) : false;
         var pad = 'padding:6px 10px;margin-bottom:6px;border-radius:4px;box-sizing:border-box;';
-        if (age === 'stale') {
+        if (rulesOk) {
+            var age = pendingChangeAgeClass(iata);
+            if (age === 'stale') {
+                return (
+                    pad +
+                    'background:rgba(231,76,60,0.28);border-left:4px solid #e74c3c;color:#ecf0f1 !important;'
+                );
+            }
             return (
                 pad +
-                'background:rgba(231,76,60,0.28);border-left:4px solid #e74c3c;color:#ecf0f1 !important;'
+                'background:rgba(241,196,15,0.28);border-left:4px solid #f1c40f;color:#ecf0f1 !important;'
             );
         }
         return (
             pad +
-            'background:rgba(241,196,15,0.28);border-left:4px solid #f1c40f;color:#ecf0f1 !important;'
+            'background:rgba(127,140,141,0.12);border-left:3px solid #7f8c8d;color:#bdc3c7 !important;'
         );
     }
 
@@ -3372,10 +3436,39 @@
             }
         }
         if (stale.length) {
-            btn.style.background = '#c0392b';
-            btn.style.color = '#fff';
-            btn.setAttribute('data-dc-metar-alert', '1');
-            badge.style.display = 'inline-block';
+            var mode = notifyRulesMode();
+            var hasRuleMatch = false;
+            var hasRuleMatchOld = false;
+            var si2;
+            for (si2 = 0; si2 < stale.length; si2++) {
+                var icx = stale[si2];
+                var ix = iataFromIcao(icx);
+                var rx = cacheByIcao[icx];
+                var pass = ix && rx && notifyRulesPassForStation(ix, rx);
+                if (mode === 'off') {
+                    pass = true;
+                }
+                if (pass) {
+                    hasRuleMatch = true;
+                    if (ix && pendingChangeAgeClass(ix) === 'stale') {
+                        hasRuleMatchOld = true;
+                    }
+                }
+            }
+            btn.style.color = '#f1c40f';
+            if (hasRuleMatchOld) {
+                btn.style.background = '#c0392b';
+                btn.style.color = '#fff';
+                btn.setAttribute('data-dc-metar-alert', '1');
+            } else {
+                btn.style.background = '#2c3e50';
+                btn.removeAttribute('data-dc-metar-alert');
+            }
+            if (hasRuleMatch) {
+                badge.style.display = 'inline-block';
+            } else {
+                badge.style.display = 'none';
+            }
             maybeNotify(stale);
         } else {
             btn.style.background = '#2c3e50';
@@ -3661,13 +3754,16 @@
                     row.style.background = 'rgba(52,152,219,0.25)';
                     row.style.border = '';
                 } else {
-                    var ageCls = pendingChangeAgeClass(iata);
-                    if (ageCls === 'fresh') {
+                    var ls = listRowAlertStyle(iata);
+                    if (ls.kind === 'rules_fresh') {
                         row.style.background = 'rgba(241,196,15,0.35)';
                         row.style.border = '1px solid rgba(241,196,15,0.55)';
-                    } else if (ageCls === 'stale') {
+                    } else if (ls.kind === 'rules_stale') {
                         row.style.background = 'rgba(192,57,43,0.4)';
                         row.style.border = '1px solid rgba(231,76,60,0.55)';
+                    } else if (ls.kind === 'subtle') {
+                        row.style.background = 'rgba(127,140,141,0.15)';
+                        row.style.border = '1px solid rgba(127,140,141,0.35)';
                     } else {
                         row.style.background = '';
                         row.style.border = '';
@@ -3682,13 +3778,16 @@
                 label.style.overflow = 'hidden';
                 label.style.textOverflow = 'ellipsis';
                 label.style.whiteSpace = 'nowrap';
-                var ageCls2 = pendingChangeAgeClass(iata);
-                if (ageCls2 === 'fresh') {
+                var ls2 = listRowAlertStyle(iata);
+                if (ls2.kind === 'rules_fresh') {
                     label.style.color = '#2c2c2c';
                     label.style.fontWeight = '600';
-                } else if (ageCls2 === 'stale') {
+                } else if (ls2.kind === 'rules_stale') {
                     label.style.color = '#fadbd8';
                     label.style.fontWeight = '600';
+                } else if (ls2.kind === 'subtle') {
+                    label.style.color = '#aeb6b8';
+                    label.style.fontWeight = '500';
                 } else {
                     label.style.color = '';
                     label.style.fontWeight = '';
@@ -3790,9 +3889,9 @@
         }
         var unseen = metarTafUnseenVersusViewed(iata, r);
         var metarTitleStyle =
-            'font-weight:600;margin-bottom:6px;color:#3498db;' + detailTitleHighlightStyle(iata, unseen.metar);
+            'font-weight:600;margin-bottom:6px;color:#3498db;' + detailTitleHighlightStyle(iata, unseen.metar, 'metar');
         var tafTitleStyle =
-            'font-weight:600;margin-bottom:8px;color:#3498db;' + detailTitleHighlightStyle(iata, unseen.taf);
+            'font-weight:600;margin-bottom:8px;color:#3498db;' + detailTitleHighlightStyle(iata, unseen.taf, 'taf');
         var metarDisplay = [];
         if (r.metarLines && r.metarLines.length) {
             var mi;
