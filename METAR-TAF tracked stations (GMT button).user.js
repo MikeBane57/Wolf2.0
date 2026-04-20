@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.5
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR chart, optional TT HRRR loop, AFD; panel prefs
+// @version      2.0.6
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, HRRR chart, optional COD model loop, AFD; panel prefs
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -12,8 +12,8 @@
 // @connect      rvr.data.faa.gov
 // @connect      atis.info
 // @connect      api.open-meteo.com
-// @connect      www.tropicaltidbits.com
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show HRRR chart","description":"Hourly temperature/PoP chart (Open-Meteo).","default":true},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowTtHrrrLoop":{"type":"boolean","group":"METAR watch · panels","label":"Tropical Tidbits HRRR loop","description":"Animated Radar (Rain/Frozen) frames from tropicaltidbits.com (third-party; not an iframe — loads PNGs). Respect site Terms of Use.","default":false},"metarWatchTtHrrrRegion":{"type":"string","group":"METAR watch · panels","label":"TT HRRR map region","description":"Tropical Tidbits region code for the loop, e.g. seus, scus, ncus, neus, nwus, swus, mwus, us (full CONUS).","default":"seus"}}
+// @connect      weather.cod.edu
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show HRRR chart","description":"Hourly temperature/PoP chart (Open-Meteo).","default":true},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default is RAP simulated reflectivity, full CONUS.","default":false},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms","description":"Dash-separated parms for COD get-files.php. Default = RAP CONUS reflectivity. HRRR example (mesoscale sector): current-HRRR-MW-prec-radar-1-0-100","default":"current-RAP-US-prec-radar-1-0-100"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -102,254 +102,105 @@
         return boolPref('metarWatchShowHrrr', true);
     }
 
-    function showTtHrrrLoopPanel() {
-        return boolPref('metarWatchShowTtHrrrLoop', false);
+    function showCodModelLoopPanel() {
+        return boolPref('metarWatchShowCodModelLoop', false);
     }
 
-    function ttHrrrRegionPref() {
-        var r = String(getPref('metarWatchTtHrrrRegion', 'seus') || 'seus')
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9_-]/g, '');
-        return r || 'seus';
+    /** COD NEXLAB get-files.php parms (see College of DuPage forecast models page). */
+    function codModelParmsPref() {
+        var d = 'current-RAP-US-prec-radar-1-0-100';
+        var r = String(getPref('metarWatchCodModelParms', d) || d).trim();
+        if (!r) {
+            return d;
+        }
+        return r.replace(/[^a-zA-Z0-9._-]/g, '');
     }
 
-    var TT_HRRR_PKG = 'ref_frzn';
-    var TT_BASE = 'https://www.tropicaltidbits.com';
-    var ttLoopTimer = null;
-    var ttLoopRevokeUrls = [];
-    var ttLoopGen = 0;
+    var COD_BASE = 'https://weather.cod.edu/forecast';
+    var codLoopTimer = null;
+    var codLoopGen = 0;
 
-    function ttRefererHeaders() {
-        return {
-            Referer: TT_BASE + '/',
-            Origin: TT_BASE,
-            Accept: 'image/png,image/*;q=0.8,*/*;q=0.5'
-        };
-    }
-
-    function parseTtRuntimeFromHtml(html) {
-        if (!html || typeof html !== 'string') {
-            return null;
+    function stopCodModelLoop() {
+        if (codLoopTimer) {
+            clearInterval(codLoopTimer);
+            codLoopTimer = null;
         }
-        var m = html.match(/img\.src\s*=\s*["']([^"']*hrrr\/(\d{10,12})\/hrrr_[^"']+\.png)["']/i);
-        if (m && m[2]) {
-            return { runtime: m[2], samplePath: m[1] };
-        }
-        m = html.match(/\/analysis\/models\/hrrr\/(\d{10,12})\/hrrr_[a-z0-9_]+_[a-z0-9]+_\d+\.png/i);
-        if (m && m[1]) {
-            return { runtime: m[1], samplePath: null };
-        }
-        m = html.match(/model=hrrr[^"']*runtime=(\d{10,12})/i);
-        if (m && m[1]) {
-            return { runtime: m[1], samplePath: null };
-        }
-        return null;
-    }
-
-    function fetchTtPngBlob(url, cb) {
-        var headers = ttRefererHeaders();
-        function fromArrayBuffer(ab) {
-            if (!ab || !ab.byteLength) {
-                cb(null);
-                return;
-            }
-            try {
-                cb(new Blob([ab], { type: 'image/png' }));
-            } catch (e) {
-                cb(null);
-            }
-        }
-        if (typeof GM_xmlhttpRequest === 'function') {
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url: url,
-                headers: headers,
-                responseType: 'arraybuffer',
-                onload: function (resp) {
-                    if (!xhrStatusOk(resp)) {
-                        cb(null);
-                        return;
-                    }
-                    var ab = resp.response;
-                    if (ab && typeof ArrayBuffer !== 'undefined' && ab instanceof ArrayBuffer) {
-                        fromArrayBuffer(ab);
-                        return;
-                    }
-                    cb(null);
-                },
-                onerror: function () {
-                    cb(null);
-                },
-                ontimeout: function () {
-                    cb(null);
-                }
-            });
-            return;
-        }
-        fetch(url, { credentials: 'omit', mode: 'cors', headers: headers })
-            .then(function (res) {
-                return res.ok ? res.blob() : null;
-            })
-            .then(function (b) {
-                cb(b && b.size ? b : null);
-            })
-            .catch(function () {
-                cb(null);
-            });
-    }
-
-    function stopTtHrrrLoop() {
-        if (ttLoopTimer) {
-            clearInterval(ttLoopTimer);
-            ttLoopTimer = null;
-        }
-        ttLoopGen++;
-        var u;
-        for (u = 0; u < ttLoopRevokeUrls.length; u++) {
-            try {
-                URL.revokeObjectURL(ttLoopRevokeUrls[u]);
-            } catch (e) {}
-        }
-        ttLoopRevokeUrls = [];
-        var img = document.querySelector('[data-dc-tt-hrrr-img="1"]');
+        codLoopGen++;
+        var img = document.querySelector('[data-dc-cod-model-img="1"]');
         if (img) {
             try {
                 img.removeAttribute('src');
-            } catch (e2) {}
+            } catch (e) {}
         }
     }
 
-    function startTtHrrrLoopFromDetail() {
-        stopTtHrrrLoop();
-        if (!showTtHrrrLoopPanel()) {
+    function startCodModelLoopFromDetail() {
+        stopCodModelLoop();
+        if (!showCodModelLoopPanel()) {
             return;
         }
         if (!detailEl || !modal || modal.style.display !== 'flex') {
             return;
         }
-        var imgEl = document.querySelector('[data-dc-tt-hrrr-img="1"]');
+        var imgEl = document.querySelector('[data-dc-cod-model-img="1"]');
         if (!imgEl) {
             return;
         }
-        var myGen = ++ttLoopGen;
-        var region = ttHrrrRegionPref();
-        var pageUrl =
-            TT_BASE +
-            '/analysis/models/?model=hrrr&region=' +
-            encodeURIComponent(region) +
-            '&pkg=' +
-            encodeURIComponent(TT_HRRR_PKG);
-        fetchText(
-            pageUrl,
-            function (html) {
-                if (myGen !== ttLoopGen) {
-                    return;
-                }
-                if (!html || html.length < 100) {
-                    imgEl.alt = 'Could not load Tropical Tidbits page (blocked or empty).';
-                    return;
-                }
-                var parsed = parseTtRuntimeFromHtml(html);
-                if (!parsed || !parsed.runtime) {
-                    imgEl.alt = 'Could not read Tropical Tidbits model run from page.';
-                    return;
-                }
-                var rt = parsed.runtime;
-                var frameUrls = [];
-                var fh;
-                for (fh = 1; fh <= 18; fh++) {
-                    frameUrls.push(
-                        TT_BASE +
-                            '/analysis/models/hrrr/' +
-                            rt +
-                            '/hrrr_' +
-                            TT_HRRR_PKG +
-                            '_' +
-                            region +
-                            '_' +
-                            fh +
-                            '.png'
-                    );
-                }
-                var blobs = new Array(frameUrls.length);
-                var pending = frameUrls.length;
-                var fi;
-                function tryStart() {
-                    if (myGen !== ttLoopGen) {
-                        return;
-                    }
-                    if (pending > 0) {
-                        return;
-                    }
-                    var urls = [];
-                    var good = [];
-                    var gi;
-                    for (gi = 0; gi < blobs.length; gi++) {
-                        if (blobs[gi]) {
-                            try {
-                                var ou = URL.createObjectURL(blobs[gi]);
-                                urls.push(ou);
-                                good.push(ou);
-                            } catch (e) {}
-                        }
-                    }
-                    ttLoopRevokeUrls = good;
-                    if (!good.length) {
-                        imgEl.alt = 'Tropical Tidbits images failed to load (hotlink/CORS).';
-                        return;
-                    }
-                    var idx = 0;
-                    imgEl.src = good[0];
-                    imgEl.alt = 'HRRR Radar (Rain/Frozen) ' + region.toUpperCase() + ' · TT';
-                    ttLoopTimer = setInterval(function () {
-                        if (myGen !== ttLoopGen || !imgEl.parentNode) {
-                            return;
-                        }
-                        idx = (idx + 1) % good.length;
-                        imgEl.src = good[idx];
-                    }, 450);
-                }
-                for (fi = 0; fi < frameUrls.length; fi++) {
-                    (function (ix) {
-                        fetchTtPngBlob(frameUrls[ix], function (blob) {
-                            if (myGen !== ttLoopGen) {
-                                return;
-                            }
-                            blobs[ix] = blob;
-                            pending--;
-                            tryStart();
-                        });
-                    })(fi);
-                }
-            },
-            {
-                headers: (function () {
-                    var h = ttRefererHeaders();
-                    h.Accept = 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8';
-                    return h;
-                })()
+        var myGen = ++codLoopGen;
+        var parms = codModelParmsPref();
+        var apiUrl = COD_BASE + '/assets/php/scripts/get-files.php?parms=' + encodeURIComponent(parms);
+        fetchText(apiUrl, function (txt) {
+            if (myGen !== codLoopGen) {
+                return;
             }
-        );
+            if (!txt) {
+                imgEl.alt = 'Could not load College of DuPage model list.';
+                return;
+            }
+            var j;
+            try {
+                j = JSON.parse(txt);
+            } catch (e) {
+                imgEl.alt = 'Invalid response from COD model API.';
+                return;
+            }
+            if (!j || j.err !== 'false' || !j.files || !j.files.length) {
+                imgEl.alt = 'No COD model frames for this product (try different parms).';
+                return;
+            }
+            var files = j.files;
+            var idx = 0;
+            imgEl.src = files[0];
+            var m = j.parms;
+            var sub =
+                Array.isArray(m) && m.length >= 3
+                    ? String(m[1]) + ' · ' + String(m[2]) + ' · simulated reflectivity'
+                    : 'COD NEXLAB';
+            imgEl.alt = sub;
+            codLoopTimer = setInterval(function () {
+                if (myGen !== codLoopGen || !imgEl.parentNode) {
+                    return;
+                }
+                idx = (idx + 1) % files.length;
+                imgEl.src = files[idx];
+            }, 500);
+        });
     }
 
-    function buildTtHrrrLoopPlaceholderHtml() {
-        var region = ttHrrrRegionPref();
-        var pageUrl =
-            TT_BASE +
-            '/analysis/models/?model=hrrr&region=' +
-            encodeURIComponent(region) +
-            '&pkg=' +
-            encodeURIComponent(TT_HRRR_PKG);
+    function buildCodModelLoopPlaceholderHtml() {
+        var parms = codModelParmsPref();
+        var viewerUrl = COD_BASE + '/';
         return (
             '<div style="margin-bottom:16px;">' +
-            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">HRRR model · Radar (Rain/Frozen) <span style="font-weight:400;color:#95a5a6;font-size:11px;">(Tropical Tidbits)</span></div>' +
+            '<div style="font-weight:600;margin-bottom:8px;color:#3498db;">Model loop <span style="font-weight:400;color:#95a5a6;font-size:11px;">(College of DuPage NEXLAB)</span></div>' +
             '<div style="max-width:100%;overflow:auto;background:#111;border-radius:6px;padding:8px;">' +
-            '<img data-dc-tt-hrrr-img="1" alt="Loading TT HRRR loop…" style="max-width:100%;height:auto;display:block;min-height:120px;background:#0d0d0f;" />' +
+            '<img data-dc-cod-model-img="1" alt="Loading COD model loop…" style="max-width:100%;height:auto;display:block;min-height:120px;background:#0d0d0f;" />' +
             '</div>' +
-            '<div style="font-size:10px;color:#7f8c8d;margin-top:8px;font-family:system-ui,sans-serif;line-height:1.45;">Third-party imagery — not endorsed. Full map and GIF tools: <a href="' +
-            escapeHtml(pageUrl) +
-            '" target="_blank" rel="noopener noreferrer" style="color:#5dade2;">tropicaltidbits.com</a>. Site may block requests without a proper Referer; uses extension XHR.</div>' +
+            '<div style="font-size:10px;color:#7f8c8d;margin-top:8px;font-family:system-ui,sans-serif;line-height:1.45;">Parms: <code style="color:#bdc3c7;">' +
+            escapeHtml(parms) +
+            '</code> · Full viewer: <a href="' +
+            escapeHtml(viewerUrl) +
+            '" target="_blank" rel="noopener noreferrer" style="color:#5dade2;">weather.cod.edu/forecast</a> · Default is RAP CONUS (HRRR full-US is not exposed as a sector in COD; use HRRR+MW or similar in prefs).</div>' +
             '</div>'
         );
     }
@@ -1377,11 +1228,18 @@
                         function (list) {
                             var graph = (list && (list['@graph'] || list.graph)) || [];
                             var first = graph[0];
-                            if (!first || !first.id) {
+                            if (!first) {
                                 cb({ radarGifUrl: radarGifUrl, afdText: '', afdMeta: { cwa: cwa } });
                                 return;
                             }
-                            var productUrl = first.id.indexOf('http') === 0 ? first.id : 'https://api.weather.gov' + first.id;
+                            var productUrl = first['@id'] || first.id;
+                            if (!productUrl || typeof productUrl !== 'string') {
+                                cb({ radarGifUrl: radarGifUrl, afdText: '', afdMeta: { cwa: cwa } });
+                                return;
+                            }
+                            if (productUrl.indexOf('http') !== 0) {
+                                productUrl = 'https://api.weather.gov/products/' + encodeURIComponent(String(productUrl));
+                            }
                             fetchJson(productUrl, function (prod) {
                                 var text = (prod && prod.productText) || '';
                                 var meta = {
@@ -2283,23 +2141,31 @@
                 '</div>';
         }
         var hrrrBlock = showHrrrPanel() ? buildHrrrChartHtml(r.hrrrHourly) : '';
-        var ttHrrrBlock = showTtHrrrLoopPanel() ? buildTtHrrrLoopPlaceholderHtml() : '';
+        var codModelBlock = showCodModelLoopPanel() ? buildCodModelLoopPlaceholderHtml() : '';
         var afdBlock = '';
-        if (showAfdPanel() && r.afdText && String(r.afdText).trim()) {
-            var afdEsc = escapeHtml(r.afdText);
-            var metaStr = afdMetaLine(r.afdMeta);
-            afdBlock =
-                '<div style="margin-bottom:16px;">' +
-                '<div style="font-weight:600;margin-bottom:6px;color:#3498db;">Area Forecast Discussion</div>' +
-                (metaStr
-                    ? '<div style="font-size:11px;color:#95a5a6;margin-bottom:8px;font-family:system-ui,sans-serif;">' +
-                      escapeHtml(metaStr) +
-                      '</div>'
-                    : '') +
-                '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;color:#bdc3c7;white-space:pre-wrap;word-break:break-word;max-height:min(52vh,720px);overflow:auto;background:#141418;padding:10px;border-radius:6px;">' +
-                afdEsc +
-                '</div>' +
-                '</div>';
+        if (showAfdPanel()) {
+            if (r.afdText && String(r.afdText).trim()) {
+                var afdEsc = escapeHtml(r.afdText);
+                var metaStr = afdMetaLine(r.afdMeta);
+                afdBlock =
+                    '<div style="margin-bottom:16px;">' +
+                    '<div style="font-weight:600;margin-bottom:6px;color:#3498db;">Area Forecast Discussion</div>' +
+                    (metaStr
+                        ? '<div style="font-size:11px;color:#95a5a6;margin-bottom:8px;font-family:system-ui,sans-serif;">' +
+                          escapeHtml(metaStr) +
+                          '</div>'
+                        : '') +
+                    '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;color:#bdc3c7;white-space:pre-wrap;word-break:break-word;max-height:min(52vh,720px);overflow:auto;background:#141418;padding:10px;border-radius:6px;">' +
+                    afdEsc +
+                    '</div>' +
+                    '</div>';
+            } else {
+                afdBlock =
+                    '<div style="margin-bottom:16px;">' +
+                    '<div style="font-weight:600;margin-bottom:6px;color:#3498db;">Area Forecast Discussion</div>' +
+                    '<div style="font-size:11px;color:#95a5a6;font-family:system-ui,sans-serif;line-height:1.45;">No AFD text loaded yet, or weather.gov returned empty. Try <strong>Refresh</strong> for this airport; if it persists, the NWS product list may be unavailable.</div>' +
+                    '</div>';
+            }
         }
         detailEl.innerHTML =
             '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;color:#ecf0f1;min-height:120px;">' +
@@ -2315,13 +2181,13 @@
             datisBlock +
             radarBlock +
             hrrrBlock +
-            ttHrrrBlock +
+            codModelBlock +
             afdBlock +
             '</div>';
-        if (ttHrrrBlock) {
-            startTtHrrrLoopFromDetail();
+        if (codModelBlock) {
+            startCodModelLoopFromDetail();
         } else {
-            stopTtHrrrLoop();
+            stopCodModelLoop();
         }
     }
 
@@ -2361,7 +2227,7 @@
         modal.style.display = 'none';
         backdrop.style.display = 'none';
         stopListColorTimer();
-        stopTtHrrrLoop();
+        stopCodModelLoop();
     }
 
     function findGmtClockElement() {
@@ -2850,7 +2716,7 @@
                 btn.remove();
             }
         } catch (e) {}
-        stopTtHrrrLoop();
+        stopCodModelLoop();
         if (onDocKey) {
             document.removeEventListener('keydown', onDocKey);
             onDocKey = null;
