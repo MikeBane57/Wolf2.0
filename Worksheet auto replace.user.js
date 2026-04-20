@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Worksheet auto replace
 // @namespace    Wolf 2.0
-// @version      1.1.0
-// @description  Worksheet: watch Tails/Lines/Flights counts (line-scoped parse), click Replace on change; optional interval Replace. Toggle under toolbar.
+// @version      1.1.1
+// @description  Worksheet: watch Tails/Lines/Flights (number before or after label per line), click Replace on change; optional interval Replace.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
 // @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto replace","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto replace","label":"Interval Replace (seconds)","description":"Default seconds for “Replace every…” when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
@@ -104,15 +104,53 @@
     }
 
     /**
-     * First number after the keyword on the same line (avoids picking unrelated digits from the rest of the page).
+     * Number paired with a label on one line — supports `Tails 289`, `289 Tails`, `Tails: 289`, etc.
      */
-    function firstIntAfterKeyword(line, wordRe) {
-        var m = line.match(wordRe);
-        return m ? parseInt(m[1], 10) : NaN;
+    function intBesideLabel(line, labelPattern) {
+        var s = line.replace(/\s+/g, ' ').trim();
+        if (!s) {
+            return NaN;
+        }
+        var m = s.match(new RegExp(labelPattern + '[^0-9]{0,32}(\\d+)', 'i'));
+        if (m) {
+            return parseInt(m[1], 10);
+        }
+        m = s.match(new RegExp('(\\d+)[^0-9]{0,32}' + labelPattern + '(?:\\b|$)', 'i'));
+        if (m) {
+            return parseInt(m[1], 10);
+        }
+        return NaN;
+    }
+
+    function extractTailsFromLine(line) {
+        if (/\bair\s*lines?\b/i.test(line)) {
+            return NaN;
+        }
+        var v = intBesideLabel(line, '\\btails?\\b');
+        if (Number.isFinite(v)) {
+            return v;
+        }
+        return intBesideLabel(line, '\\btail\\b');
+    }
+
+    function extractLinesFromLine(line) {
+        var v = intBesideLabel(line, '\\blines\\b');
+        if (Number.isFinite(v)) {
+            return v;
+        }
+        return intBesideLabel(line, '\\bline\\b');
+    }
+
+    function extractFlightsFromLine(line) {
+        var v = intBesideLabel(line, '\\bflights?\\b');
+        if (Number.isFinite(v)) {
+            return v;
+        }
+        return NaN;
     }
 
     /**
-     * Pull Tails / Lines / Flights integers from visible text — scan **line by line** so values match the UI labels.
+     * Pull Tails / Lines / Flights from visible text — line by line; number may appear before or after the label.
      */
     function parseCountsFromText(text) {
         if (!text || typeof text !== 'string') {
@@ -124,27 +162,21 @@
         var flights = NaN;
         var li;
         for (li = 0; li < rawLines.length; li++) {
-            var line = rawLines[li].replace(/\s+/g, ' ').trim();
-            if (!line) {
-                continue;
-            }
-            if (Number.isFinite(tails) && Number.isFinite(linesCount) && Number.isFinite(flights)) {
-                break;
-            }
-            if (!Number.isFinite(tails) && /\btails\b/i.test(line) && !/\bairlines?\b/i.test(line)) {
-                var tt = firstIntAfterKeyword(line, /\btails\b[^0-9]{0,48}(\d+)/i);
+            var line = rawLines[li];
+            if (!Number.isFinite(tails)) {
+                var tt = extractTailsFromLine(line);
                 if (Number.isFinite(tt)) {
                     tails = tt;
                 }
             }
-            if (!Number.isFinite(linesCount) && /\blines\b/i.test(line)) {
-                var ll = firstIntAfterKeyword(line, /\blines\b[^0-9]{0,48}(\d+)/i);
+            if (!Number.isFinite(linesCount)) {
+                var ll = extractLinesFromLine(line);
                 if (Number.isFinite(ll)) {
                     linesCount = ll;
                 }
             }
-            if (!Number.isFinite(flights) && /\bflights?\b/i.test(line)) {
-                var ff = firstIntAfterKeyword(line, /\bflights?\b[^0-9]{0,48}(\d+)/i);
+            if (!Number.isFinite(flights)) {
+                var ff = extractFlightsFromLine(line);
                 if (Number.isFinite(ff)) {
                     flights = ff;
                 }
