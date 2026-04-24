@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.28
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache), cross-tab poll (BC + storage) + alert/view sync, optional notify rules, WX yellow/red + badge, modal row/title alert styling, NEW until you leave station, collapsible AFD
+// @version      2.0.29
+// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache + HTTP fallback), cross-tab poll (BC + storage) + alert/view sync, optional notify rules (form or JSON), WX yellow/red + badge, modal row/title alert styling, NEW until you leave station, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -13,7 +13,7 @@
 // @connect      atis.info
 // @connect      api.open-meteo.com
 // @connect      weather.cod.edu
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchNotifyRulesMode":{"type":"select","group":"METAR watch · notify rules","label":"Notify only when rules match","description":"Off: notify on any METAR/TAF change. Global: JSON rules apply to every station. Per IATA: global rules plus optional per-airport JSON overrides.","default":"off","options":[{"value":"off","label":"Off (any change)"},{"value":"global","label":"Global rules only"},{"value":"per_iata","label":"Global + per-IATA overrides"}]},"metarWatchNotifyRulesGlobal":{"type":"string","group":"METAR watch · notify rules","label":"Global rules (JSON)","description":"Array of rules, OR empty. Example: [{\"metar\":{\"ceilingFtMax\":1000}},{\"taf\":{\"visibilitySmMax\":0.5}}]. Ceiling from BKN/OVC/VV (ft AGL); TAF vis in statute miles. If mode is not Off and this is empty, no notifications fire.","default":""},"metarWatchNotifyRulesPerIata":{"type":"string","group":"METAR watch · notify rules","label":"Per-IATA rules (JSON)","description":"Optional. Example: {\"ATL\":[{\"metar\":{\"ceilingFtMax\":500}}],\"DEN\":[{\"taf\":{\"visibilitySmMax\":1}}]}. Used when mode is Global + per-IATA.","default":""},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1},"metarWatchCodPrefetchSectors":{"type":"boolean","group":"METAR watch · panels","label":"COD: prefetch tracked sectors","description":"After each METAR poll, background-download COD frames once per NEXLAB sector covering your station list (same cache for all airports in that sector). Turn off to save bandwidth.","default":true},"metarWatchSharedPoll":{"type":"boolean","group":"METAR watch","label":"Share poll across tabs","description":"One browser tab leads background METAR/TAF polls and broadcasts results to other Ops Suite tabs; reduces duplicate API traffic. Best with the same station list in each tab.","default":true}}
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchNotifyRulesMode":{"type":"select","group":"METAR watch · notify rules","label":"Notify only when rules match","description":"Off: notify on any METAR/TAF change. Global: JSON rules apply to every station. Per IATA: global rules plus optional per-airport JSON overrides.","default":"off","options":[{"value":"off","label":"Off (any change)"},{"value":"global","label":"Global rules only"},{"value":"per_iata","label":"Global + per-IATA overrides"}]},"metarWatchNotifyRulesGlobal":{"type":"string","group":"METAR watch · notify rules","label":"Global rules (JSON, optional)","description":"Use the modal 'Alert rules' form instead. If you save the form, it overrides this string. Array of rules, OR empty. Example: [{\"metar\":{\"ceilingFtMax\":1000}},{\"taf\":{\"visibilitySmMax\":0.5}}].","default":""},"metarWatchNotifyRulesPerIata":{"type":"string","group":"METAR watch · notify rules","label":"Per-IATA rules (JSON, optional)","description":"Form overrides when saved. Example: {\"ATL\":[{\"metar\":{\"ceilingFtMax\":500}}]}.","default":""},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1},"metarWatchCodPrefetchSectors":{"type":"boolean","group":"METAR watch · panels","label":"COD: prefetch tracked sectors","description":"After each METAR poll, background-download COD frames once per NEXLAB sector covering your station list (same cache for all airports in that sector). Turn off to save bandwidth.","default":true},"metarWatchSharedPoll":{"type":"boolean","group":"METAR watch","label":"Share poll across tabs","description":"One browser tab leads background METAR/TAF polls and broadcasts results to other Ops Suite tabs; reduces duplicate API traffic. Best with the same station list in each tab.","default":true}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -35,6 +35,8 @@
     var LS_NOTIFY_DEDUPE = 'dc-metar-watch-notify-dedupe-v1';
     /** When BroadcastChannel is unavailable, leader writes poll payload here so other tabs can apply via storage event. */
     var LS_POLL_RESULTS = 'dc-metar-watch-poll-results-v1';
+    /** In-modal “Alert rules” form overrides DonkeyCODE JSON string prefs when set. */
+    var LS_NOTIFY_RULES_UI = 'dc-metar-watch-notify-rules-ui-v1';
     var lastAppliedPollResultsTs = 0;
     var SHARED_METAR_TAF_TTL_MS = 8 * 60 * 1000;
     var metarTafSharedChannel = null;
@@ -501,7 +503,104 @@
         }
     }
 
+    /**
+     * Optional in-modal rules (localStorage). When present, overrides DonkeyCODE JSON string prefs
+     * so users can edit conditions without hand-writing JSON.
+     */
+    function readNotifyRulesUi() {
+        try {
+            var raw = localStorage.getItem(LS_NOTIFY_RULES_UI);
+            if (!raw) {
+                return null;
+            }
+            var o = JSON.parse(raw);
+            if (!o || typeof o !== 'object') {
+                return null;
+            }
+            var mode = String(o.mode || 'off').toLowerCase();
+            if (mode !== 'off' && mode !== 'global' && mode !== 'per_iata') {
+                mode = 'off';
+            }
+            var g = o.global;
+            var globalArr = Array.isArray(g) ? g : [];
+            var per = o.perIata;
+            var perMap = per && typeof per === 'object' ? per : {};
+            return { mode: mode, global: globalArr, perIata: perMap };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function writeNotifyRulesUi(obj) {
+        try {
+            localStorage.setItem(LS_NOTIFY_RULES_UI, JSON.stringify(obj));
+        } catch (e) {}
+    }
+
+    function clearNotifyRulesUi() {
+        try {
+            localStorage.removeItem(LS_NOTIFY_RULES_UI);
+        } catch (e) {}
+    }
+
+    function ruleToRowValues(rule) {
+        var o = { mC: '', mV: '', tC: '', tV: '' };
+        if (!rule || typeof rule !== 'object') {
+            return o;
+        }
+        if (rule.metar && typeof rule.metar === 'object') {
+            if (rule.metar.ceilingFtMax != null && Number.isFinite(Number(rule.metar.ceilingFtMax))) {
+                o.mC = String(rule.metar.ceilingFtMax);
+            }
+            if (rule.metar.visibilitySmMax != null && Number.isFinite(Number(rule.metar.visibilitySmMax))) {
+                o.mV = String(rule.metar.visibilitySmMax);
+            }
+        }
+        if (rule.taf && typeof rule.taf === 'object') {
+            if (rule.taf.ceilingFtMax != null && Number.isFinite(Number(rule.taf.ceilingFtMax))) {
+                o.tC = String(rule.taf.ceilingFtMax);
+            }
+            if (rule.taf.visibilitySmMax != null && Number.isFinite(Number(rule.taf.visibilitySmMax))) {
+                o.tV = String(rule.taf.visibilitySmMax);
+            }
+        }
+        return o;
+    }
+
+    function rowValuesToRule(mC, mV, tC, tV) {
+        var rule = {};
+        var m = {};
+        var mc = String(mC == null ? '' : mC).trim();
+        var mv = String(mV == null ? '' : mV).trim();
+        var tc = String(tC == null ? '' : tC).trim();
+        var tv = String(tV == null ? '' : tV).trim();
+        if (mc.length && Number.isFinite(Number(mc))) {
+            m.ceilingFtMax = Number(mc);
+        }
+        if (mv.length && Number.isFinite(Number(mv))) {
+            m.visibilitySmMax = Number(mv);
+        }
+        if (Object.keys(m).length) {
+            rule.metar = m;
+        }
+        var t = {};
+        if (tc.length && Number.isFinite(Number(tc))) {
+            t.ceilingFtMax = Number(tc);
+        }
+        if (tv.length && Number.isFinite(Number(tv))) {
+            t.visibilitySmMax = Number(tv);
+        }
+        if (Object.keys(t).length) {
+            rule.taf = t;
+        }
+        return Object.keys(rule).length ? rule : null;
+    }
+
     function notifyRulesMode() {
+        var ui = readNotifyRulesUi();
+        if (ui && ui.mode) {
+            return ui.mode === 'global' || ui.mode === 'per_iata' ? ui.mode : 'off';
+        }
         var v = String(getPref('metarWatchNotifyRulesMode', 'off') || 'off').toLowerCase();
         if (v === 'global' || v === 'per_iata') {
             return v;
@@ -511,26 +610,47 @@
 
     function mergeNotifyRulesForIata(iata) {
         var mode = notifyRulesMode();
+        var ui = readNotifyRulesUi();
+        if (ui) {
+            var globalArr = Array.isArray(ui.global) ? ui.global : [];
+            if (mode === 'global') {
+                return globalArr;
+            }
+            if (mode === 'per_iata') {
+                var map = ui.perIata && typeof ui.perIata === 'object' ? ui.perIata : {};
+                var u = String(iata || '').toUpperCase();
+                var extra = map[u];
+                var out = globalArr.slice();
+                if (extra && Array.isArray(extra)) {
+                    var ei;
+                    for (ei = 0; ei < extra.length; ei++) {
+                        out.push(extra[ei]);
+                    }
+                }
+                return out;
+            }
+            return [];
+        }
         if (typeof donkeycodeGetPref !== 'function') {
             return [];
         }
         var rawG = donkeycodeGetPref('metarWatchNotifyRulesGlobal');
-        var globalArr = parseNotifyRulesArray(rawG !== undefined && rawG !== null ? String(rawG) : '');
+        var gArr = parseNotifyRulesArray(rawG !== undefined && rawG !== null ? String(rawG) : '');
         if (mode === 'global') {
-            return globalArr;
+            return gArr;
         }
         if (mode === 'per_iata') {
-            var map = parseNotifyRulesPerIataMap(donkeycodeGetPref('metarWatchNotifyRulesPerIata'));
-            var u = String(iata || '').toUpperCase();
-            var extra = map[u];
-            var out = globalArr.slice();
-            if (extra && Array.isArray(extra)) {
-                var ei;
-                for (ei = 0; ei < extra.length; ei++) {
-                    out.push(extra[ei]);
+            var map2 = parseNotifyRulesPerIataMap(donkeycodeGetPref('metarWatchNotifyRulesPerIata'));
+            var u2 = String(iata || '').toUpperCase();
+            var ex2 = map2[u2];
+            var out2 = gArr.slice();
+            if (ex2 && Array.isArray(ex2)) {
+                var j;
+                for (j = 0; j < ex2.length; j++) {
+                    out2.push(ex2[j]);
                 }
             }
-            return out;
+            return out2;
         }
         return [];
     }
@@ -913,6 +1033,37 @@
         return n + '|' + first + '|' + last;
     }
 
+    /** Reject HTML error pages mislabeled as image/png. */
+    function codBufferLooksLikePng(buf) {
+        if (!buf || typeof buf.byteLength !== 'number' || buf.byteLength < 24) {
+            return false;
+        }
+        try {
+            var u8 = new Uint8Array(buf);
+            return u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4e && u8[3] === 0x47;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * If blob caching fails (HTML bodies, tool quirks), use COD HTTPS URLs in the loop (no local blob).
+     * Same cache object shape: blobUrls holds display URLs (https or blob).
+     */
+    function codSetCacheDirectHttp(parms, fileUrls) {
+        if (!fileUrls || !fileUrls.length) {
+            return;
+        }
+        var runKey = codRunFingerprint(fileUrls);
+        codRevokeCacheEntry(parms);
+        codCacheByParms[parms] = {
+            runKey: runKey,
+            fileUrls: fileUrls.slice(),
+            blobUrls: fileUrls.slice(),
+            useHttpUrls: true
+        };
+    }
+
     function codRevokeCacheEntry(parms) {
         var ent = codCacheByParms[parms];
         if (!ent || !ent.blobUrls) {
@@ -936,14 +1087,34 @@
         }
     }
 
-    function codFetchImageBlobUrl(httpUrl, cb) {
+    function codFetchImageBlobUrlAttempt(httpUrl, attempt, cb) {
         if (typeof GM_xmlhttpRequest === 'function') {
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: httpUrl,
                 responseType: 'arraybuffer',
                 onload: function (resp) {
+                    if (!xhrStatusOk(resp)) {
+                        if (attempt < 2) {
+                            setTimeout(function () {
+                                codFetchImageBlobUrlAttempt(httpUrl, attempt + 1, cb);
+                            }, 400 * (attempt + 1));
+                        } else {
+                            cb(null);
+                        }
+                        return;
+                    }
                     var buf = resp.response;
+                    if (buf && typeof ArrayBuffer !== 'undefined' && buf instanceof ArrayBuffer && !codBufferLooksLikePng(buf)) {
+                        if (attempt < 2) {
+                            setTimeout(function () {
+                                codFetchImageBlobUrlAttempt(httpUrl, attempt + 1, cb);
+                            }, 400 * (attempt + 1));
+                        } else {
+                            cb(null);
+                        }
+                        return;
+                    }
                     if (!buf) {
                         cb(null);
                         return;
@@ -956,10 +1127,22 @@
                     }
                 },
                 onerror: function () {
-                    cb(null);
+                    if (attempt < 2) {
+                        setTimeout(function () {
+                            codFetchImageBlobUrlAttempt(httpUrl, attempt + 1, cb);
+                        }, 400 * (attempt + 1));
+                    } else {
+                        cb(null);
+                    }
                 },
                 ontimeout: function () {
-                    cb(null);
+                    if (attempt < 2) {
+                        setTimeout(function () {
+                            codFetchImageBlobUrlAttempt(httpUrl, attempt + 1, cb);
+                        }, 400 * (attempt + 1));
+                    } else {
+                        cb(null);
+                    }
                 }
             });
             return;
@@ -967,17 +1150,36 @@
         if (typeof fetch === 'function') {
             fetch(httpUrl, { credentials: 'omit', cache: 'no-store', mode: 'cors' })
                 .then(function (r) {
-                    return r.blob();
+                    if (!r.ok) {
+                        throw new Error('bad');
+                    }
+                    return r.arrayBuffer();
+                })
+                .then(function (ab) {
+                    if (!codBufferLooksLikePng(ab)) {
+                        throw new Error('notpng');
+                    }
+                    return new Blob([ab], { type: 'image/png' });
                 })
                 .then(function (blob) {
                     cb(URL.createObjectURL(blob));
                 })
                 .catch(function () {
-                    cb(null);
+                    if (attempt < 2) {
+                        setTimeout(function () {
+                            codFetchImageBlobUrlAttempt(httpUrl, attempt + 1, cb);
+                        }, 400 * (attempt + 1));
+                    } else {
+                        cb(null);
+                    }
                 });
             return;
         }
         cb(null);
+    }
+
+    function codFetchImageBlobUrl(httpUrl, cb) {
+        codFetchImageBlobUrlAttempt(httpUrl, 0, cb);
     }
 
     /**
@@ -998,29 +1200,40 @@
         codRevokeCacheEntry(parms);
         var blobUrls = [];
         var idx = 0;
+        var failCount = 0;
+        function finishOrFallback() {
+            if (failCount > 0) {
+                codRevokeCacheEntry(parms);
+                var bi;
+                for (bi = 0; bi < blobUrls.length; bi++) {
+                    try {
+                        if (blobUrls[bi] && String(blobUrls[bi]).indexOf('blob:') === 0) {
+                            URL.revokeObjectURL(blobUrls[bi]);
+                        }
+                    } catch (e2) {}
+                }
+                codSetCacheDirectHttp(parms, fileUrls);
+                cb(true);
+                return;
+            }
+            codCacheByParms[parms] = {
+                runKey: runKey,
+                fileUrls: fileUrls.slice(),
+                blobUrls: blobUrls
+            };
+            cb(true);
+        }
         function next() {
             if (idx >= fileUrls.length) {
-                codCacheByParms[parms] = {
-                    runKey: runKey,
-                    fileUrls: fileUrls.slice(),
-                    blobUrls: blobUrls
-                };
-                cb(true);
+                finishOrFallback();
                 return;
             }
             codFetchImageBlobUrl(fileUrls[idx], function (u) {
                 if (!u) {
-                    codRevokeCacheEntry(parms);
-                    var bi;
-                    for (bi = 0; bi < blobUrls.length; bi++) {
-                        try {
-                            URL.revokeObjectURL(blobUrls[bi]);
-                        } catch (e2) {}
-                    }
-                    cb(false);
-                    return;
+                    failCount++;
+                } else {
+                    blobUrls.push(u);
                 }
-                blobUrls.push(u);
                 idx++;
                 next();
             });
@@ -1416,7 +1629,11 @@
                 var newKey = codRunFingerprint(files);
                 var cached = codCacheByParms[parms];
                 if (cached && cached.runKey === newKey && cached.blobUrls && cached.blobUrls.length === files.length) {
-                    codStartLoopFromUrls(cached.blobUrls, myGen, parms, tag, sub, 'ready (cached)');
+                    var noteC = 'ready (cached)';
+                    if (cached.useHttpUrls) {
+                        noteC = 'ready (cached, direct image URLs)';
+                    }
+                    codStartLoopFromUrls(cached.blobUrls, myGen, parms, tag, sub, noteC);
                     codScheduleCachePoll(parms);
                     return;
                 }
@@ -1902,6 +2119,13 @@
     var codLoopImgA = null;
     var codLoopImgB = null;
     var codLoadBtn = null;
+    var alertRulesBackdrop = null;
+    var alertRulesModal = null;
+    var alertRulesModeSelect = null;
+    var alertRulesGlobalBlock = null;
+    var alertRulesGlobalHost = null;
+    var alertRulesPerSectionWrap = null;
+    var alertRulesPerHost = null;
     /** Last station we started the COD loop for (avoid restart on timer-only detail refresh). */
     var lastCodLoopIata = null;
     var cacheByIcao = {};
@@ -4082,6 +4306,7 @@
     }
 
     function closeModal() {
+        closeAlertRulesDialog();
         if (detailSeenPendingIata) {
             markStationViewed(detailSeenPendingIata);
             detailSeenPendingIata = null;
@@ -4262,6 +4487,433 @@
         }
     }
 
+    function elNumInput(ph) {
+        var i = document.createElement('input');
+        i.type = 'number';
+        i.step = 'any';
+        i.min = '0';
+        i.placeholder = ph;
+        i.style.width = '100%';
+        i.style.boxSizing = 'border-box';
+        i.style.padding = '4px 6px';
+        i.style.fontSize = '11px';
+        i.style.borderRadius = '4px';
+        i.style.border = '1px solid #555';
+        i.style.background = '#2a2a32';
+        i.style.color = '#ecf0f1';
+        return i;
+    }
+
+    function buildRuleRowEl(rule) {
+        var v = ruleToRowValues(rule || null);
+        var row = document.createElement('div');
+        row.setAttribute('data-dc-arule-row', '1');
+        row.style.display = 'grid';
+        row.style.gridTemplateColumns = '1fr 1fr 1fr 1fr';
+        row.style.gap = '6px';
+        row.style.alignItems = 'end';
+        row.style.marginBottom = '6px';
+        var mC = elNumInput('METAR ceil max');
+        mC.value = v.mC;
+        var mV = elNumInput('METAR vis max (sm)');
+        mV.value = v.mV;
+        var tC = elNumInput('TAF ceil max');
+        tC.value = v.tC;
+        var tV = elNumInput('TAF vis max (sm)');
+        tV.value = v.tV;
+        row._inputs = { mC: mC, mV: mV, tC: tC, tV: tV };
+        row.appendChild(mC);
+        row.appendChild(mV);
+        row.appendChild(tC);
+        row.appendChild(tV);
+        return row;
+    }
+
+    function collectRuleRowsFromHost(host) {
+        var out = [];
+        if (!host) {
+            return out;
+        }
+        var nodes = host.querySelectorAll('[data-dc-arule-row="1"]');
+        var i;
+        for (i = 0; i < nodes.length; i++) {
+            var n = nodes[i];
+            var inp = n._inputs;
+            if (!inp) {
+                continue;
+            }
+            var r = rowValuesToRule(inp.mC.value, inp.mV.value, inp.tC.value, inp.tV.value);
+            if (r) {
+                out.push(r);
+            }
+        }
+        return out;
+    }
+
+    function syncAlertModeUi() {
+        if (!alertRulesModeSelect) {
+            return;
+        }
+        var m = String(alertRulesModeSelect.value || 'off');
+        if (alertRulesGlobalBlock) {
+            alertRulesGlobalBlock.style.display = m === 'off' ? 'none' : 'block';
+        }
+        if (alertRulesPerSectionWrap) {
+            alertRulesPerSectionWrap.style.display = m === 'per_iata' ? 'block' : 'none';
+        }
+    }
+
+    function readAlertFormIntoStorage() {
+        if (!alertRulesModeSelect) {
+            return;
+        }
+        var mode = String(alertRulesModeSelect.value || 'off');
+        var g = mode === 'off' ? [] : collectRuleRowsFromHost(alertRulesGlobalHost);
+        var perIata = {};
+        if (mode === 'per_iata' && alertRulesPerHost) {
+            var bl = alertRulesPerHost.querySelectorAll('[data-dc-arule-airport]');
+            var b;
+            for (b = 0; b < bl.length; b++) {
+                var bEl = bl[b];
+                var codeInp = bEl._iata;
+                if (!codeInp) {
+                    continue;
+                }
+                var c = String(codeInp.value || '')
+                    .trim()
+                    .toUpperCase();
+                c = c.replace(/[^A-Z0-9]/g, '');
+                if (c.length < 2 || c.length > 4) {
+                    continue;
+                }
+                if (c.length === 4) {
+                    c = c.slice(0, 3);
+                }
+                if (!/^[A-Z]{3}$/.test(c)) {
+                    continue;
+                }
+                if (!bEl._ruleHost) {
+                    continue;
+                }
+                var arr = collectRuleRowsFromHost(bEl._ruleHost);
+                if (arr.length) {
+                    perIata[c] = arr;
+                }
+            }
+        }
+        writeNotifyRulesUi({ mode: mode, global: g, perIata: perIata });
+    }
+
+    function addGlobalRuleRow() {
+        if (!alertRulesGlobalHost) {
+            return;
+        }
+        alertRulesGlobalHost.appendChild(buildRuleRowEl(null));
+    }
+
+    function addPerAirportBlock(airportCode, rulesArr) {
+        if (!alertRulesPerHost) {
+            return;
+        }
+        var wrap = document.createElement('div');
+        wrap.setAttribute('data-dc-arule-airport', '1');
+        wrap.style.border = '1px solid #444';
+        wrap.style.borderRadius = '6px';
+        wrap.style.padding = '8px';
+        wrap.style.marginBottom = '8px';
+        wrap.style.background = '#1e1e24';
+        var top = document.createElement('div');
+        top.style.display = 'flex';
+        top.style.alignItems = 'center';
+        top.style.gap = '8px';
+        top.style.marginBottom = '6px';
+        var lab = document.createElement('span');
+        lab.textContent = 'IATA';
+        lab.style.fontSize = '11px';
+        lab.style.color = '#95a5a6';
+        var iata = document.createElement('input');
+        iata.type = 'text';
+        iata.maxLength = 4;
+        iata.placeholder = 'e.g. DEN';
+        iata.value = airportCode || '';
+        iata.style.width = '72px';
+        iata.style.boxSizing = 'border-box';
+        iata.style.padding = '4px 6px';
+        iata.style.fontSize = '12px';
+        iata.style.borderRadius = '4px';
+        iata.style.border = '1px solid #555';
+        iata.style.background = '#2a2a32';
+        iata.style.color = '#ecf0f1';
+        var addLine = document.createElement('button');
+        addLine.type = 'button';
+        addLine.textContent = 'Add rule line';
+        addLine.style.fontSize = '10px';
+        addLine.style.padding = '3px 8px';
+        addLine.style.cursor = 'pointer';
+        addLine.style.border = '1px solid #555';
+        addLine.style.background = '#333';
+        addLine.style.color = '#ccc';
+        addLine.style.borderRadius = '4px';
+        var rm = document.createElement('button');
+        rm.type = 'button';
+        rm.textContent = 'Remove airport';
+        rm.style.fontSize = '10px';
+        rm.style.marginLeft = 'auto';
+        rm.style.padding = '3px 8px';
+        rm.style.cursor = 'pointer';
+        rm.style.border = '1px solid #633';
+        rm.style.background = '#2a1f1f';
+        rm.style.color = '#eaa';
+        rm.style.borderRadius = '4px';
+        var rh = document.createElement('div');
+        rh.setAttribute('data-dc-per-rules', '1');
+        wrap._ruleHost = rh;
+        wrap._iata = iata;
+        var rlist = rulesArr && rulesArr.length ? rulesArr : [null];
+        var r;
+        for (r = 0; r < rlist.length; r++) {
+            rh.appendChild(buildRuleRowEl(rlist[r]));
+        }
+        addLine.addEventListener('click', function () {
+            rh.appendChild(buildRuleRowEl(null));
+        });
+        rm.addEventListener('click', function () {
+            try {
+                wrap.remove();
+            } catch (e) {}
+        });
+        top.appendChild(lab);
+        top.appendChild(iata);
+        top.appendChild(addLine);
+        top.appendChild(rm);
+        wrap.appendChild(top);
+        wrap.appendChild(rh);
+        alertRulesPerHost.appendChild(wrap);
+    }
+
+    function addPerBlockEmpty() {
+        addPerAirportBlock('', [null]);
+    }
+
+    function populateAlertRulesForm() {
+        if (!alertRulesGlobalHost || !alertRulesPerHost || !alertRulesModeSelect) {
+            return;
+        }
+        alertRulesGlobalHost.innerHTML = '';
+        alertRulesPerHost.innerHTML = '';
+        var stored = readNotifyRulesUi();
+        if (stored) {
+            alertRulesModeSelect.value = stored.mode || 'off';
+            var g = stored.global && Array.isArray(stored.global) ? stored.global : [];
+            if (!g.length) {
+                g = [null];
+            }
+            var gi;
+            for (gi = 0; gi < g.length; gi++) {
+                alertRulesGlobalHost.appendChild(buildRuleRowEl(g[gi]));
+            }
+            var p = stored.perIata && typeof stored.perIata === 'object' ? stored.perIata : {};
+            var k;
+            for (k in p) {
+                if (Object.prototype.hasOwnProperty.call(p, k) && p[k] && Array.isArray(p[k])) {
+                    addPerAirportBlock(k, p[k]);
+                }
+            }
+        } else {
+            var mExt =
+                typeof donkeycodeGetPref === 'function' ? String(donkeycodeGetPref('metarWatchNotifyRulesMode') || 'off') : 'off';
+            alertRulesModeSelect.value = mExt.toLowerCase();
+            if (typeof donkeycodeGetPref === 'function') {
+                var gArr = parseNotifyRulesArray(String(donkeycodeGetPref('metarWatchNotifyRulesGlobal') != null ? donkeycodeGetPref('metarWatchNotifyRulesGlobal') : ''));
+                if (!gArr.length) {
+                    gArr = [null];
+                }
+                var gk;
+                for (gk = 0; gk < gArr.length; gk++) {
+                    alertRulesGlobalHost.appendChild(buildRuleRowEl(gArr[gk]));
+                }
+                if (String(alertRulesModeSelect.value || '').toLowerCase() === 'per_iata') {
+                    var pmap = parseNotifyRulesPerIataMap(donkeycodeGetPref('metarWatchNotifyRulesPerIata'));
+                    var pk;
+                    for (pk in pmap) {
+                        if (Object.prototype.hasOwnProperty.call(pmap, pk) && pmap[pk] && Array.isArray(pmap[pk])) {
+                            addPerAirportBlock(pk, pmap[pk]);
+                        }
+                    }
+                }
+            } else {
+                alertRulesGlobalHost.appendChild(buildRuleRowEl(null));
+            }
+        }
+        syncAlertModeUi();
+    }
+
+    function buildAlertRulesDialog() {
+        alertRulesBackdrop = document.createElement('div');
+        alertRulesBackdrop.style.cssText =
+            'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:10000020;';
+        alertRulesBackdrop.addEventListener('click', function () {
+            closeAlertRulesDialog();
+        });
+        alertRulesModal = document.createElement('div');
+        alertRulesModal.style.cssText =
+            'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:min(80vh,640px);overflow:hidden;display:none;flex-direction:column;z-index:10000021;background:#25252c;border-radius:10px;box-shadow:0 12px 48px rgba(0,0,0,0.6);font-family:system-ui,sans-serif;color:#ecf0f1;';
+        alertRulesModal.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+        var hdr = document.createElement('div');
+        hdr.style.cssText =
+            'padding:12px 16px;background:#1e1e24;border-bottom:1px solid #333;font-weight:600;font-size:15px;';
+        hdr.textContent = 'Notification alert conditions';
+        var sub = document.createElement('div');
+        sub.style.cssText = 'font-size:11px;font-weight:400;color:#95a5a6;margin-top:4px;line-height:1.4;';
+        sub.textContent =
+            'Each row = one OR rule. Leave a field blank to ignore it. IATA 3-letter codes. Saved in this browser; DonkeyCODE JSON prefs apply only if you have not saved here.';
+
+        var sc = document.createElement('div');
+        sc.style.cssText = 'padding:12px 16px;overflow:auto;flex:1;min-height:0;';
+        var modeRow = document.createElement('div');
+        modeRow.style.marginBottom = '12px';
+        var modeLab = document.createElement('label');
+        modeLab.textContent = 'Mode';
+        modeLab.style.cssText = 'font-size:12px;display:block;margin-bottom:4px;color:#bdc3c7;';
+        alertRulesModeSelect = document.createElement('select');
+        alertRulesModeSelect.style.cssText = 'width:100%;max-width:360px;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+        var mo = [
+            ['off', 'Off — alert on any METAR/TAF change'],
+            ['global', 'Global — only when a rule matches (all stations)'],
+            ['per_iata', 'Per IATA — global rules plus per-airport rules']
+        ];
+        var mi;
+        for (mi = 0; mi < mo.length; mi++) {
+            var o = document.createElement('option');
+            o.value = mo[mi][0];
+            o.textContent = mo[mi][1];
+            alertRulesModeSelect.appendChild(o);
+        }
+        alertRulesModeSelect.addEventListener('change', syncAlertModeUi);
+        modeRow.appendChild(modeLab);
+        modeRow.appendChild(alertRulesModeSelect);
+        sc.appendChild(modeRow);
+
+        alertRulesGlobalBlock = document.createElement('div');
+        var gLab = document.createElement('div');
+        gLab.textContent = 'Global rules (OR across rows)';
+        gLab.style.cssText = 'font-size:12px;font-weight:600;margin-bottom:6px;color:#3498db;';
+        gLab.setAttribute('data-dc-glab', '1');
+        alertRulesGlobalHost = document.createElement('div');
+        var addG = document.createElement('button');
+        addG.type = 'button';
+        addG.textContent = 'Add global rule line';
+        addG.style.cssText = 'font-size:11px;padding:4px 10px;margin-bottom:8px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+        addG.addEventListener('click', addGlobalRuleRow);
+        var gColH = document.createElement('div');
+        gColH.style.cssText =
+            'display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;font-size:9px;color:#7f8c8d;margin-bottom:2px;';
+        var h1 = document.createElement('span');
+        h1.textContent = 'METAR ceiling max (ft AGL)';
+        var h2 = document.createElement('span');
+        h2.textContent = 'METAR visibility max (sm)';
+        var h3 = document.createElement('span');
+        h3.textContent = 'TAF ceiling max (ft)';
+        var h4 = document.createElement('span');
+        h4.textContent = 'TAF visibility max (sm)';
+        gColH.appendChild(h1);
+        gColH.appendChild(h2);
+        gColH.appendChild(h3);
+        gColH.appendChild(h4);
+        alertRulesGlobalBlock.appendChild(gLab);
+        alertRulesGlobalBlock.appendChild(gColH);
+        alertRulesGlobalBlock.appendChild(alertRulesGlobalHost);
+        alertRulesGlobalBlock.appendChild(addG);
+        sc.appendChild(alertRulesGlobalBlock);
+
+        var pWrap = document.createElement('div');
+        pWrap.style.cssText = 'display:none;';
+        alertRulesPerSectionWrap = pWrap;
+        pWrap.setAttribute('data-dc-per-wrap', '1');
+        var pTitle = document.createElement('div');
+        pTitle.textContent = 'Per-airport extra rules (OR with global for that IATA)';
+        pTitle.style.cssText = 'font-size:12px;font-weight:600;margin:12px 0 6px;color:#9b59b6;';
+        var addP = document.createElement('button');
+        addP.type = 'button';
+        addP.textContent = 'Add airport block';
+        addP.style.cssText = 'font-size:11px;padding:4px 10px;margin-bottom:8px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+        addP.addEventListener('click', addPerBlockEmpty);
+        alertRulesPerHost = document.createElement('div');
+        pWrap.appendChild(pTitle);
+        pWrap.appendChild(alertRulesPerHost);
+        pWrap.appendChild(addP);
+        sc.appendChild(pWrap);
+
+        var foot = document.createElement('div');
+        foot.style.cssText =
+            'display:flex;gap:8px;justify-content:flex-end;padding:10px 16px;border-top:1px solid #333;background:#1e1e24;';
+        var saveB = document.createElement('button');
+        saveB.type = 'button';
+        saveB.textContent = 'Save';
+        saveB.style.cssText = 'padding:8px 16px;font-size:12px;cursor:pointer;border-radius:4px;border:none;background:#2980b9;color:#fff;';
+        var cancelB = document.createElement('button');
+        cancelB.type = 'button';
+        cancelB.textContent = 'Cancel';
+        cancelB.style.cssText = 'padding:8px 16px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+        var useExtB = document.createElement('button');
+        useExtB.type = 'button';
+        useExtB.textContent = 'Use DonkeyCODE JSON instead';
+        useExtB.title = 'Clear in-browser rules and use extension JSON string preferences';
+        useExtB.style.cssText = 'padding:8px 10px;font-size:11px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a1a1a;color:#eaa;';
+        saveB.addEventListener('click', function () {
+            readAlertFormIntoStorage();
+            updateAlertState();
+            closeAlertRulesDialog();
+        });
+        cancelB.addEventListener('click', closeAlertRulesDialog);
+        useExtB.addEventListener('click', function () {
+            if (window.confirm('Clear in-browser alert rules and use DonkeyCODE JSON field preferences?')) {
+                clearNotifyRulesUi();
+                updateAlertState();
+                closeAlertRulesDialog();
+            }
+        });
+        foot.appendChild(useExtB);
+        foot.appendChild(cancelB);
+        foot.appendChild(saveB);
+        var hdrBlock = document.createElement('div');
+        hdrBlock.appendChild(hdr);
+        hdrBlock.appendChild(sub);
+        alertRulesModal.appendChild(hdrBlock);
+        alertRulesModal.appendChild(sc);
+        alertRulesModal.appendChild(foot);
+        document.body.appendChild(alertRulesBackdrop);
+        document.body.appendChild(alertRulesModal);
+    }
+
+    function openAlertRulesDialog() {
+        if (!alertRulesModal) {
+            buildAlertRulesDialog();
+        }
+        populateAlertRulesForm();
+        syncAlertModeUi();
+        if (alertRulesModeSelect && alertRulesModeSelect.value === 'per_iata' && alertRulesPerHost && !alertRulesPerHost.children.length) {
+            addPerBlockEmpty();
+        }
+        if (alertRulesBackdrop) {
+            alertRulesBackdrop.style.display = 'block';
+        }
+        if (alertRulesModal) {
+            alertRulesModal.style.display = 'flex';
+        }
+    }
+
+    function closeAlertRulesDialog() {
+        if (alertRulesBackdrop) {
+            alertRulesBackdrop.style.display = 'none';
+        }
+        if (alertRulesModal) {
+            alertRulesModal.style.display = 'none';
+        }
+    }
+
     function buildModal() {
         backdrop = document.createElement('div');
         backdrop.style.display = 'none';
@@ -4355,9 +5007,26 @@
         closeB.addEventListener('click', function () {
             closeModal();
         });
+        var rulesBtn = document.createElement('button');
+        rulesBtn.type = 'button';
+        rulesBtn.textContent = 'Alert rules';
+        rulesBtn.title = 'Set conditions for badge/notify (form — no JSON)';
+        rulesBtn.style.marginRight = '8px';
+        rulesBtn.style.padding = '6px 10px';
+        rulesBtn.style.fontSize = '12px';
+        rulesBtn.style.borderRadius = '4px';
+        rulesBtn.style.border = '1px solid #6c5ce7';
+        rulesBtn.style.background = '#2d2640';
+        rulesBtn.style.color = '#dccffc';
+        rulesBtn.style.cursor = 'pointer';
+        rulesBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            openAlertRulesDialog();
+        });
         header.appendChild(headerTitle);
         header.appendChild(refreshThisBtn);
         header.appendChild(refreshAllBtn);
+        header.appendChild(rulesBtn);
         header.appendChild(closeB);
         header.style.flexShrink = '0';
 
@@ -4641,7 +5310,14 @@
         updateRefreshThisLabel();
 
         onDocKey = function (e) {
-            if (e.key === 'Escape' && modal && modal.style.display === 'flex') {
+            if (e.key !== 'Escape') {
+                return;
+            }
+            if (alertRulesModal && alertRulesModal.style.display === 'flex') {
+                closeAlertRulesDialog();
+                return;
+            }
+            if (modal && modal.style.display === 'flex') {
                 closeModal();
             }
         };
@@ -4699,6 +5375,23 @@
                 modal.remove();
             }
         } catch (e) {}
+        try {
+            if (alertRulesBackdrop) {
+                alertRulesBackdrop.remove();
+            }
+        } catch (e) {}
+        try {
+            if (alertRulesModal) {
+                alertRulesModal.remove();
+            }
+        } catch (e) {}
+        alertRulesBackdrop = null;
+        alertRulesModal = null;
+        alertRulesModeSelect = null;
+        alertRulesGlobalBlock = null;
+        alertRulesGlobalHost = null;
+        alertRulesPerSectionWrap = null;
+        alertRulesPerHost = null;
         try {
             if (btn) {
                 btn.remove();
