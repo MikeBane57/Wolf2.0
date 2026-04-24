@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.8.1
+// @version      1.8.2
 // @description  Tight pax, per-block send. Alt+click opens Pax in a real popup (like middle-click) and refocuses the worksheet if preferred.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -1106,6 +1106,27 @@
      * Minutes from midnight, local interpretation. Picks first H:MM or HH:MM
      * (with optional a/p) in the cell. Returns null if none.
      */
+    function stripNestedTablesGetText(el) {
+        if (!el || !el.cloneNode) {
+            return '';
+        }
+        const c = el.cloneNode(true);
+        const nests = c.querySelectorAll('table');
+        for (var ni = 0; ni < nests.length; ni++) {
+            if (nests[ni] && nests[ni].parentNode) {
+                nests[ni].parentNode.removeChild(nests[ni]);
+            }
+        }
+        return (c.textContent || '')
+            .replace(/[\r\n\u00a0]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .replace(/^\s+|\s+$/g, '');
+    }
+
+    /**
+     * Schedule ETD/ETA: ignore nested tooltips (e.g. swap FLT table) so the
+     * first H:MM in the line cell is the one compared to ref ETA.
+     */
     function parseTimeToMinutesFromText(raw) {
         if (!raw) {
             return null;
@@ -1206,12 +1227,9 @@
             if (!tcell) {
                 return null;
             }
-            const m = parseTimeToMinutesFromText(
-                tcell.getAttribute('title') ||
-                tcell.textContent ||
-                ''
+            return parseTimeToMinutesFromText(
+                tcell.getAttribute('title') || stripNestedTablesGetText(tcell)
             );
-            return m;
         }
         return null;
     }
@@ -1239,7 +1257,7 @@
             return false;
         }
         const etdM = parseTimeToMinutesFromText(
-            tcell.getAttribute('title') || tcell.textContent || ''
+            tcell.getAttribute('title') || stripNestedTablesGetText(tcell)
         );
         if (etdM == null) {
             return false;
@@ -1426,8 +1444,9 @@
         if (!tds1[etaCol]) {
             return null;
         }
+        const elEta = tds1[etaCol];
         return parseTimeToMinutesFromText(
-            tds1[etaCol].getAttribute('title') || tds1[etaCol].textContent
+            elEta.getAttribute('title') || stripNestedTablesGetText(elEta)
         );
     }
 
