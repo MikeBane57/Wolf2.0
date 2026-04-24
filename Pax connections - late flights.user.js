@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.8.0
-// @description  Tight pax: FLT cell parses main flight (not nested ETD table). Per-connection-city inline Send + remembered worksheet. Block-scoped ref ETA from SCH ARR table.
+// @version      1.8.1
+// @description  Tight pax, per-block send. Alt+click opens Pax in a real popup (like middle-click) and refocuses the worksheet if preferred.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","default":true,"description":"Alt+left-click: collect and send. Pax page: inline send per connection block."},"paxLateToWsOpenPaxWindow":{"type":"boolean","group":"Pax late to worksheet","label":"Open Pax on Alt+click","default":true},"paxLateToWsAfterOpenWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After open Pax, wait (ms)","default":2000,"min":0,"max":20000,"step":100},"paxLateToWsPaxInlineSend":{"type":"boolean","group":"Pax late to worksheet","label":"Pax: inline send by connection","default":true,"description":"Insert a Send control next to SCH ARR/ETA for each ref-leg block. Remembers a default worksheet per connection (IATA) in local storage."},"paxLateToWsWorksheetPicker":{"type":"boolean","group":"Pax late to worksheet","label":"Ask which worksheet (multi-tab)","default":true,"description":"When no remembered target or target missing."},"paxLateToWsListWorksheetsMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet list wait (ms)","default":500,"min":200,"max":2000,"step":50},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match leg to Pax URL","default":true},"paxLateToWsTightByTime":{"type":"boolean","group":"Pax late to worksheet · time","label":"Tight = ETD within gap of ref ETA","default":true,"description":"Ref ETA from the SCH ARR/ETA line for the ref leg block when available."},"paxLateToWsTightMaxGapMin":{"type":"number","group":"Pax late to worksheet · time","label":"Max minutes (ETD after ref ETA)","default":20,"min":0,"max":300,"step":1},"paxLateToWsTightTimeOrColor":{"type":"boolean","group":"Pax late to worksheet · time","label":"OR include red/orange rows","default":true},"paxLateToWsDownlineColumn":{"type":"select","group":"Pax late to worksheet","label":"IATA filter column","default":"off","options":[{"value":"off","label":"No IATA filter"},{"value":"final","label":"FINAL only"},{"value":"next","label":"NEXT only"},{"value":"next_or_final","label":"NEXT or FINAL"}]},"paxLateToWsDownlineIata":{"type":"string","group":"Pax late to worksheet","label":"IATA list","default":"","placeholder":"e.g. MSP"},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound first","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound (ms)","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Broadcast from Pax to worksheet","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Pax reply wait (ms)","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Debug log","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Enter delay (ms)","default":250,"min":0,"max":5000,"step":50}}
+// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","default":true},"paxLateToWsOpenPaxWindow":{"type":"boolean","group":"Pax late to worksheet","label":"Open Pax on Alt+click","default":true,"description":"Opens a separate browser window (not a tab) when the popup options below are used."},"paxLateToWsPaxAsPopupWindow":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Pax in popup (not new tab)","default":true,"description":"Uses window features (size/position) like Middle-click launcher, so the worksheet can stay the focused tab."},"paxLateToWsPaxRefocusOpener":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Refocus this window after open","default":true,"description":"Call window.focus() on the schedule/worksheet window after opening Pax (best-effort; browser may still show the popup on top)."},"paxLateToWsPaxWinW":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup width (px)","default":1000,"min":400,"max":2400,"step":10},"paxLateToWsPaxWinH":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup height (px)","default":800,"min":400,"max":2000,"step":10},"paxLateToWsPaxWinLeft":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup left offset from this window (px)","default":24,"min":-2000,"max":2000,"step":1},"paxLateToWsPaxWinTop":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup top offset (px)","default":24,"min":0,"max":2000,"step":1},"paxLateToWsPaxWindowName":{"type":"string","group":"Pax late to worksheet · open Pax","label":"Reusable window name","default":"__dcPaxLateFlightsPax__","description":"If another Pax from this control is already using this name, the same window may navigate (browser dependent). Use a new name to always get a new popup."},"paxLateToWsAfterOpenWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After open Pax, wait (ms)","default":2000,"min":0,"max":20000,"step":100},"paxLateToWsPaxInlineSend":{"type":"boolean","group":"Pax late to worksheet","label":"Pax: inline send by connection","default":true,"description":"Insert a Send control next to SCH ARR/ETA; remembers worksheet per IATA in local storage."},"paxLateToWsWorksheetPicker":{"type":"boolean","group":"Pax late to worksheet","label":"Ask which worksheet (multi-tab)","default":true},"paxLateToWsListWorksheetsMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet list wait (ms)","default":500,"min":200,"max":2000,"step":50},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match leg to Pax URL","default":true},"paxLateToWsTightByTime":{"type":"boolean","group":"Pax late to worksheet · time","label":"Tight = ETD within gap of ref ETA","default":true},"paxLateToWsTightMaxGapMin":{"type":"number","group":"Pax late to worksheet · time","label":"Max minutes (ETD after ref ETA)","default":20,"min":0,"max":300,"step":1},"paxLateToWsTightTimeOrColor":{"type":"boolean","group":"Pax late to worksheet · time","label":"OR include red/orange rows","default":true},"paxLateToWsDownlineColumn":{"type":"select","group":"Pax late to worksheet","label":"IATA filter column","default":"off","options":[{"value":"off","label":"No IATA filter"},{"value":"final","label":"FINAL only"},{"value":"next","label":"NEXT only"},{"value":"next_or_final","label":"NEXT or FINAL"}]},"paxLateToWsDownlineIata":{"type":"string","group":"Pax late to worksheet","label":"IATA list","default":"","placeholder":"e.g. MSP"},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound first","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound (ms)","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Broadcast from Pax to worksheet","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Pax reply wait (ms)","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Debug log","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Enter delay (ms)","default":250,"min":0,"max":5000,"step":50}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // ==/UserScript==
@@ -77,6 +77,85 @@
             return 2000;
         }
         return Math.min(20000, Math.max(0, Math.floor(n)));
+    }
+
+    function numPref(key, def, lo, hi) {
+        const n = Number(getPref(key, def));
+        if (!Number.isFinite(n)) {
+            return def;
+        }
+        return Math.min(hi, Math.max(lo, n));
+    }
+
+    function openPaxInSeparateWindow(paxUrl) {
+        if (!paxUrl) {
+            return null;
+        }
+        if (getPref('paxLateToWsPaxAsPopupWindow', true) === false) {
+            try {
+                return window.open(paxUrl, '_blank', 'noopener');
+            } catch (e) {
+                return null;
+            }
+        }
+        const w = numPref('paxLateToWsPaxWinW', 1000, 400, 2400);
+        const h = numPref('paxLateToWsPaxWinH', 800, 400, 2000);
+        const ox = numPref('paxLateToWsPaxWinLeft', 24, -2000, 2000);
+        const oy = numPref('paxLateToWsPaxWinTop', 24, 0, 2000);
+        var left = 0;
+        var top = 0;
+        try {
+            const sx = typeof window.screenX === 'number' ? window.screenX : 0;
+            const sy = typeof window.screenY === 'number' ? window.screenY : 0;
+            left = Math.round(sx + ox);
+            top = Math.round(sy + oy);
+            if (left < 0) {
+                left = 0;
+            }
+            if (top < 0) {
+                top = 0;
+            }
+        } catch (e) {
+            left = Math.max(0, Math.round(ox + 100));
+            top = Math.max(0, Math.round(oy + 100));
+        }
+        var wname = String(
+            (getPref('paxLateToWsPaxWindowName', '__dcPaxLateFlightsPax__') ||
+            '')
+        );
+        wname = wname.replace(/^\s+|\s+$/g, '');
+        if (!wname) {
+            wname = 'dcPaxLateW_' + String(Date.now());
+        }
+        const features =
+            'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top + ',resizable=yes,scrollbars=yes,toolbar=no,location=yes,status=no,menubar=no';
+        var win;
+        try {
+            win = window.open(paxUrl, wname, features);
+        } catch (e) {
+            win = null;
+        }
+        if (getPref('paxLateToWsPaxRefocusOpener', true) !== false) {
+            const refocus = function () {
+                try {
+                    if (window && window.focus) {
+                        window.focus();
+                    }
+                } catch (e2) {}
+            };
+            try {
+                if (window.requestAnimationFrame) {
+                    requestAnimationFrame(function () {
+                        setTimeout(refocus, 0);
+                    });
+                } else {
+                    setTimeout(refocus, 0);
+                }
+            } catch (e) {
+                setTimeout(refocus, 0);
+            }
+        }
+        return win;
     }
 
     function getDownlineColumnMode() {
@@ -2225,7 +2304,10 @@
             if (paxUrl) {
                 try {
                     log('Opening Pax window: ' + paxUrl);
-                    window.open(paxUrl, '_blank', 'noopener,noreferrer');
+                    const w = openPaxInSeparateWindow(paxUrl);
+                    if (!w) {
+                        log('Pax window blocked or failed to open; allow popups for this site.');
+                    }
                 } catch (e2) {}
             }
         }
