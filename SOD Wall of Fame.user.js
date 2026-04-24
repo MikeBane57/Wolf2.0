@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.7.4
+// @version      2.7.5
 // @description  FIMS tab: Wall of Fame; data from WALL of FAME/wall-of-fame.json + local cache (no baked-in accolades)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -1585,6 +1585,23 @@
         }
     }
 
+    /**
+     * Native Advisories tab: hide our WOF/leaderboard UI only. Do not toggle #fims-id —
+     * the app switches to a different segment; forcing the FIMS table visible breaks
+     * Advisories when used alongside the injected tabs.
+     */
+    function onNativeAdvisoriesTabClick() {
+        var tab = document.getElementById(TAB_ID);
+        if (tab) {
+            tab.classList.remove('active');
+        }
+        var panel = document.getElementById(PANEL_ID);
+        hideTopClickersPanel();
+        if (panel) {
+            panel.style.display = 'none';
+        }
+    }
+
     var lastWofActivate = 0;
 
     var menuTabMo = null;
@@ -1710,8 +1727,10 @@
                 continue;
             }
             var txt = (link.textContent || '').replace(/\s+/g, ' ');
-            if (txt.indexOf('FIMS') !== -1 || txt.indexOf('Advisories') !== -1) {
+            if (txt.indexOf('FIMS') !== -1) {
                 link.addEventListener('click', showFimsTable);
+            } else if (txt.indexOf('Advisories') !== -1) {
+                link.addEventListener('click', onNativeAdvisoriesTabClick);
             }
         }
     }
