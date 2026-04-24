@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Middle-click launcher
 // @namespace    Wolf 2.0
-// @version      3.0
+// @version      3.0.1
 // @description  Middle-click a flight puck to open Pax connections, Go turn details, and/or a custom URL (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -94,6 +94,33 @@
             }
             cur = cur.parentElement;
             depth++;
+        }
+        return '';
+    }
+
+    /**
+     * The hover id may be on a child of the leg puck (what you actually click), not on the
+     * puck itself — so walk from the *click target* up; then any descendant of the puck; then
+     * from the puck up (shared ancestors).
+     */
+    function getLinkedHoverIdForPuck(puck, clickTarget) {
+        if (clickTarget && clickTarget.nodeType === 1) {
+            var fromClick = getLinkedHoverIdFromAncestors(clickTarget);
+            if (fromClick) {
+                return fromClick;
+            }
+        }
+        if (puck && puck.querySelector) {
+            var d = puck.querySelector('[data-linked-hover-id]');
+            if (d) {
+                var a = d.getAttribute && d.getAttribute('data-linked-hover-id');
+                if (a && String(a).trim()) {
+                    return String(a).trim();
+                }
+            }
+        }
+        if (puck) {
+            return getLinkedHoverIdFromAncestors(puck);
         }
         return '';
     }
@@ -551,8 +578,8 @@
         tryNextTarget();
     }
 
-    function findFlightData(puck, probedGoSlug) {
-        var linkedRaw = getLinkedHoverIdFromAncestors(puck);
+    function findFlightData(puck, probedGoSlug, clickTarget) {
+        var linkedRaw = getLinkedHoverIdForPuck(puck, clickTarget);
         var fromLink = parseLinkedHoverRoute(linkedRaw);
 
         var domSlug = extractGoTurnSlugFromDom(puck);
@@ -897,7 +924,7 @@
                 var fromReact = extractGoTurnSlugFromReactInternals(puck);
                 if (fromReact) {
                     log('Go turn: slug from React props (fiber)');
-                    run(findFlightData(puck, fromReact));
+                    run(findFlightData(puck, fromReact, e.target));
                     return;
                 }
                 probeGoTurnSlugFromContextMenu(puck, function(probedSlug) {
@@ -906,10 +933,10 @@
                     } else if (wantGo) {
                         log('Go turn: context menu probe missed; using fallback slug if any');
                     }
-                    run(findFlightData(puck, probedSlug));
+                    run(findFlightData(puck, probedSlug, e.target));
                 });
             } else {
-                run(findFlightData(puck, null));
+                run(findFlightData(puck, null, e.target));
             }
         };
 
