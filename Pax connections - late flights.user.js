@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.6.0
-// @description  Tight pax: optional ETA/ETD gap, color fallback, IATA filter. Alt+click pucks; Pax page button sends flights to an open worksheet tab.
+// @version      1.7.0
+// @description  Tight pax, ETA/ETD, IATA, worksheet picker (tab title) when several worksheets are open, Pax "Send" button. Alt+click or broadcast to chosen worksheet.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","default":true,"description":"Alt+left-click a puck: collect tight rows and type them into the worksheet (with optional Pax open)."},"paxLateToWsOpenPaxWindow":{"type":"boolean","group":"Pax late to worksheet","label":"Open Pax on Alt+click","default":true,"description":"Opens pax-connections for the leg in a new tab."},"paxLateToWsAfterOpenWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After open Pax, wait (ms)","default":2000,"min":0,"max":20000,"step":100,"description":"Before Outbound + read."},"paxLateToWsPaxPageSendButton":{"type":"boolean","group":"Pax late to worksheet","label":"Pax: Send to worksheet button","default":true,"description":"Floating button on Pax pages: same collection → open worksheet tab."},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match leg to Pax URL","default":true,"description":"Only use the Pax window whose path matches the clicked leg."},"paxLateToWsTightByTime":{"type":"boolean","group":"Pax late to worksheet · time","label":"Tight = ETD within gap of ref ETA","default":true,"description":"Ref row: find ETA. Outbound rows: ETD. Include if (ETD − ref ETA) ≤ max minutes, or if OR-color is on and row is red/orange. If times missing, use color only when OR is on."},"paxLateToWsTightMaxGapMin":{"type":"number","group":"Pax late to worksheet · time","label":"Max minutes (ETD after ref ETA)","default":20,"min":0,"max":300,"step":1,"description":"Example: 20 = only outbounds with ETD at most 20 min after the ref flight ETA."},"paxLateToWsTightTimeOrColor":{"type":"boolean","group":"Pax late to worksheet · time","label":"OR include red/orange rows","default":true,"description":"If on: time match OR old color/tight style. If off: only time (when times parse)."},"paxLateToWsDownlineColumn":{"type":"select","group":"Pax late to worksheet","label":"IATA filter column","default":"off","options":[{"value":"off","label":"No IATA filter"},{"value":"final","label":"FINAL only"},{"value":"next","label":"NEXT only"},{"value":"next_or_final","label":"NEXT or FINAL"}],"description":"With IATA list below, also require that column to mention a code."},"paxLateToWsDownlineIata":{"type":"string","group":"Pax late to worksheet","label":"IATA list","default":"","placeholder":"e.g. MSP, DEN","description":"Comma-separated 3-letter codes."},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound tab first","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound (ms)","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Use BroadcastChannel from Pax","default":true,"description":"Worksheet tab asks a matching Pax window for the table."},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Pax reply wait (ms)","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Debug log","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between Enters (ms)","default":250,"min":0,"max":5000,"step":50}}
+// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","default":true,"description":"Alt+left-click a puck: collect tight rows and type them into the worksheet (or send to a chosen open worksheet)."},"paxLateToWsOpenPaxWindow":{"type":"boolean","group":"Pax late to worksheet","label":"Open Pax on Alt+click","default":true,"description":"Opens pax-connections for the leg in a new tab."},"paxLateToWsAfterOpenWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After open Pax, wait (ms)","default":2000,"min":0,"max":20000,"step":100,"description":"Before Outbound + read."},"paxLateToWsPaxPageSendButton":{"type":"boolean","group":"Pax late to worksheet","label":"Pax: Send to worksheet button","default":true,"description":"Floating button on Pax pages. Position set below."},"paxLateToWsPaxSendButtonCorner":{"type":"select","group":"Pax late to worksheet","label":"Pax “Send to worksheet” position","default":"br","options":[{"value":"br","label":"Bottom-right"},{"value":"tr","label":"Top-right"}],"description":"Screen corner for the button."},"paxLateToWsWorksheetPicker":{"type":"boolean","group":"Pax late to worksheet","label":"Ask which worksheet (multi-tab)","default":true,"description":"If several opssuitemain tabs with the flight search field are open, show a dialog listing window titles so you can pick a tab."},"paxLateToWsListWorksheetsMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet list wait (ms)","default":500,"min":200,"max":2000,"step":50,"description":"How long to wait for other tabs to report their document.title."},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match leg to Pax URL","default":true,"description":"Only use the Pax window whose path matches the clicked leg."},"paxLateToWsTightByTime":{"type":"boolean","group":"Pax late to worksheet · time","label":"Tight = ETD within gap of ref ETA","default":true,"description":"Ref row: find ETA. Outbound rows: ETD. Include if (ETD − ref ETA) ≤ max minutes, or if OR-color is on and row is red/orange. If times missing, use color only when OR is on."},"paxLateToWsTightMaxGapMin":{"type":"number","group":"Pax late to worksheet · time","label":"Max minutes (ETD after ref ETA)","default":20,"min":0,"max":300,"step":1,"description":"Example: 20 = only outbounds with ETD at most 20 min after the ref flight ETA."},"paxLateToWsTightTimeOrColor":{"type":"boolean","group":"Pax late to worksheet · time","label":"OR include red/orange rows","default":true,"description":"If on: time match OR old color/tight style. If off: only time (when times parse)."},"paxLateToWsDownlineColumn":{"type":"select","group":"Pax late to worksheet","label":"IATA filter column","default":"off","options":[{"value":"off","label":"No IATA filter"},{"value":"final","label":"FINAL only"},{"value":"next","label":"NEXT only"},{"value":"next_or_final","label":"NEXT or FINAL"}],"description":"With IATA list below, also require that column to mention a code."},"paxLateToWsDownlineIata":{"type":"string","group":"Pax late to worksheet","label":"IATA list","default":"","placeholder":"e.g. MSP, DEN","description":"Comma-separated 3-letter codes."},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound tab first","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound (ms)","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Use BroadcastChannel from Pax","default":true,"description":"Worksheet tab asks a matching Pax window for the table."},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Pax reply wait (ms)","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Debug log","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between Enters (ms)","default":250,"min":0,"max":5000,"step":50}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // ==/UserScript==
@@ -27,8 +27,12 @@
     /** Same channel name in every opssuitemain tab so Pax-in-popup can answer. */
     var BC_NAME = 'dc_pax_late_flights_v1';
     var BC_WS_NAME = 'dc_pax_late_to_ws_v1';
+    var WS_TAB_ID_KEY = 'dcPaxLateWsTabId';
     var bcastChannel = null;
     var wsChannel = null;
+    var worksheetTabId = null;
+    var wsTitleObserver = null;
+    var worksheetPickerOverlay = null;
     var paxButtonEl = null;
     var paxButtonMo = null;
 
@@ -1535,6 +1539,53 @@
         }
     }
 
+    function getWorksheetListWaitMs() {
+        const n = Number(getPref('paxLateToWsListWorksheetsMs', 500));
+        if (!Number.isFinite(n)) {
+            return 500;
+        }
+        return Math.min(2000, Math.max(200, Math.floor(n)));
+    }
+
+    function getWorksheetPageTitle() {
+        var t;
+        try {
+            t = document.title || '';
+        } catch (e) {
+            t = '';
+        }
+        t = String(t).replace(/^\s+|\s+$/g, '');
+        if (!t) {
+            t = 'Worksheet (untitled tab)';
+        }
+        if (t.length > 200) {
+            t = t.slice(0, 200) + '…';
+        }
+        return t;
+    }
+
+    function getOrCreateWorksheetTabId() {
+        if (worksheetTabId) {
+            return worksheetTabId;
+        }
+        try {
+            const ex = sessionStorage.getItem(WS_TAB_ID_KEY);
+            if (ex) {
+                worksheetTabId = ex;
+                return ex;
+            }
+        } catch (e) {}
+        worksheetTabId =
+            'ws' +
+            String(Date.now()) +
+            '-' +
+            String(Math.random()).slice(2, 10);
+        try {
+            sessionStorage.setItem(WS_TAB_ID_KEY, worksheetTabId);
+        } catch (e) {}
+        return worksheetTabId;
+    }
+
     function findWorksheetFlightSearchInput() {
         const host = document.querySelector('div[name="flight"]');
         if (!host) {
@@ -1546,6 +1597,175 @@
         );
     }
 
+    function ensureWorksheetRegistration() {
+        if (!findWorksheetFlightSearchInput() || !wsChannel) {
+            return;
+        }
+        getOrCreateWorksheetTabId();
+        var announce = function () {
+            if (!wsChannel || !findWorksheetFlightSearchInput()) {
+                return;
+            }
+            try {
+                wsChannel.postMessage({
+                    t: 'ws_hello',
+                    tabId: getOrCreateWorksheetTabId(),
+                    title: getWorksheetPageTitle()
+                });
+            } catch (e) {}
+        };
+        announce();
+        if (!wsTitleObserver && document.querySelector('title')) {
+            try {
+                wsTitleObserver = new MutationObserver(announce);
+                wsTitleObserver.observe(
+                    document.querySelector('title'),
+                    {
+                        childList: true,
+                        subtree: true,
+                        characterData: true
+                    }
+                );
+            } catch (e) {
+                wsTitleObserver = null;
+            }
+        }
+    }
+
+    function listWorksheetTabs() {
+        return new Promise(function (resolve) {
+            const ch = ensureWsChannel();
+            if (!ch) {
+                resolve([]);
+                return;
+            }
+            const listId = randomBcastId();
+            const seen = Object.create(null);
+            var did = false;
+            const finish = function () {
+                if (did) {
+                    return;
+                }
+                did = true;
+                try {
+                    ch.removeEventListener('message', onListMsg);
+                } catch (e) {}
+                try {
+                    clearTimeout(to);
+                } catch (e) {}
+                const out = [];
+                var k;
+                for (k in seen) {
+                    if (Object.prototype.hasOwnProperty.call(seen, k)) {
+                        out.push(seen[k]);
+                    }
+                }
+                out.sort(function (a, b) {
+                    return String(a.title).localeCompare(String(b.title));
+                });
+                resolve(out);
+            };
+            function onListMsg(ev) {
+                const d = ev && ev.data;
+                if (!d) {
+                    return;
+                }
+                if (d.t === 'ws_hello' && d.listId === listId && d.tabId) {
+                    seen[d.tabId] = { tabId: d.tabId, title: d.title || d.tabId };
+                }
+            }
+            ch.addEventListener('message', onListMsg);
+            const to = setTimeout(finish, getWorksheetListWaitMs());
+            try {
+                ch.postMessage({ t: 'ws_list', listId: listId });
+            } catch (e) {
+                finish();
+                return;
+            }
+        });
+    }
+
+    function showWorksheetPickerDialog(flights, tabs) {
+        return new Promise(function (resolve) {
+            if (!document.body) {
+                resolve(null);
+                return;
+            }
+            if (worksheetPickerOverlay) {
+                try {
+                    if (worksheetPickerOverlay.parentNode) {
+                        worksheetPickerOverlay.parentNode.removeChild(
+                            worksheetPickerOverlay
+                        );
+                    }
+                } catch (e) {}
+                worksheetPickerOverlay = null;
+            }
+            const o = document.createElement('div');
+            o.setAttribute('data-dc-pax-late-picker', '1');
+            o.style.cssText =
+                'position:fixed!important;inset:0!important;z-index:1000000!important;background:rgba(0,0,0,.45)!important;display:flex!important;align-items:center!important;justify-content:center!important;';
+            const p = document.createElement('div');
+            p.style.cssText =
+                'background:#1e1e1e!important;color:#eee!important;padding:18px 20px!important;max-width:min(92vw,440px)!important;border-radius:8px!important;box-shadow:0 4px 24px rgba(0,0,0,.45)!important;font:14px/1.35 system-ui,Segoe UI,sans-serif!important;';
+            const h = document.createElement('div');
+            h.textContent = 'Send ' + flights.length + ' flight(s) to which worksheet?';
+            h.style.cssText = 'margin-bottom:10px!important;font-weight:600!important;';
+            p.appendChild(h);
+            const sc = document.createElement('div');
+            sc.style.cssText =
+                'max-height:min(50vh,320px)!important;overflow-y:auto!important;';
+            for (var i = 0; i < tabs.length; i++) {
+                (function (tab) {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.textContent = tab.title;
+                    b.style.cssText =
+                        'display:block!important;width:100%!important;text-align:left!important;padding:8px 10px!important;margin:4px 0!important;border:1px solid #4a4a4a!important;border-radius:4px!important;background:#2a2a2a!important;color:#eee!important;cursor:pointer!important;font:inherit!important;';
+                    b.addEventListener('click', function () {
+                        cleanup();
+                        resolve(tab.tabId);
+                    });
+                    sc.appendChild(b);
+                })(tabs[i]);
+            }
+            p.appendChild(sc);
+            const row = document.createElement('div');
+            row.style.cssText =
+                'margin-top:12px!important;display:flex!important;gap:8px!important;justify-content:flex-end!important;';
+            const cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.textContent = 'Cancel';
+            function cleanup() {
+                if (o.parentNode) {
+                    try {
+                        o.parentNode.removeChild(o);
+                    } catch (e) {}
+                }
+                worksheetPickerOverlay = null;
+            }
+            function cancelAll() {
+                cleanup();
+                resolve(null);
+            }
+            cancel.addEventListener('click', cancelAll);
+            o.addEventListener('click', function (ev) {
+                if (ev.target === o) {
+                    cancelAll();
+                }
+            });
+            row.appendChild(cancel);
+            p.appendChild(row);
+            o.appendChild(p);
+            worksheetPickerOverlay = o;
+            try {
+                document.body.appendChild(o);
+            } catch (e) {
+                resolve(null);
+            }
+        });
+    }
+
     function ensureWsChannel() {
         if (wsChannel) {
             return wsChannel;
@@ -1555,45 +1775,124 @@
         }
         try {
             wsChannel = new BroadcastChannel(BC_WS_NAME);
-            wsChannel.addEventListener('message', onWsBcastForApply);
+            wsChannel.addEventListener('message', onWsBcast);
         } catch (e) {
             wsChannel = null;
+        }
+        if (wsChannel && findWorksheetFlightSearchInput()) {
+            ensureWorksheetRegistration();
         }
         return wsChannel;
     }
 
-    function onWsBcastForApply(ev) {
+    function onWsBcast(ev) {
         const d = ev && ev.data;
-        if (!d || d.t !== 'ws_apply' || !d.id) {
+        if (!d || !wsChannel) {
             return;
         }
-        if (!d.flights || !d.flights.length) {
+        if (d.t === 'ws_list' && d.listId) {
+            if (!findWorksheetFlightSearchInput()) {
+                return;
+            }
+            try {
+                wsChannel.postMessage({
+                    t: 'ws_hello',
+                    listId: d.listId,
+                    tabId: getOrCreateWorksheetTabId(),
+                    title: getWorksheetPageTitle()
+                });
+            } catch (e) {}
             return;
         }
-        if (!findWorksheetFlightSearchInput()) {
+        if (d.t === 'ws_hello' && d.tabId && d.title) {
             return;
         }
-        try {
-            applyFlightsToWorksheetInThisTab(d.flights, 'broadcast');
-        } catch (e) {}
+        if (d.t === 'ws_apply' && d.id) {
+            if (!d.flights || !d.flights.length) {
+                return;
+            }
+            if (!d.targetTabId) {
+                return;
+            }
+            if (d.targetTabId !== getOrCreateWorksheetTabId()) {
+                return;
+            }
+            if (!findWorksheetFlightSearchInput()) {
+                return;
+            }
+            try {
+                applyFlightsToWorksheetInThisTab(
+                    d.flights,
+                    'worksheet: ' + getWorksheetPageTitle()
+                );
+            } catch (e) {}
+        }
     }
 
     function requestApplyFlightsToWorksheet(flights) {
-        const ch = ensureWsChannel();
-        if (!ch || !flights || !flights.length) {
+        if (!flights || !flights.length) {
             return;
         }
         if (findWorksheetFlightSearchInput()) {
-            applyFlightsToWorksheetInThisTab(flights, 'local');
+            applyFlightsToWorksheetInThisTab(flights, 'this tab');
             return;
         }
-        try {
-            ch.postMessage({
-                t: 'ws_apply',
-                id: randomBcastId(),
-                flights: flights
+        const ch = ensureWsChannel();
+        if (!ch) {
+            log('No BroadcastChannel; cannot target a worksheet tab.');
+            return;
+        }
+        if (getPref('paxLateToWsWorksheetPicker', true) === false) {
+            listWorksheetTabs().then(function (tabs) {
+                if (tabs.length === 0) {
+                    log('No worksheet tab found (flight field + this script).');
+                } else if (tabs.length === 1) {
+                    try {
+                        ch.postMessage({
+                            t: 'ws_apply',
+                            id: randomBcastId(),
+                            flights: flights,
+                            targetTabId: tabs[0].tabId
+                        });
+                    } catch (e) {}
+                } else {
+                    log(
+                        'Multiple worksheet tabs open: turn on "Ask which worksheet" in script prefs, or leave only one worksheet open.'
+                    );
+                }
             });
-        } catch (e) {}
+            return;
+        }
+        listWorksheetTabs().then(function (tabs) {
+            if (tabs.length === 0) {
+                log('No worksheet tab with this userscript (flight field).');
+                return;
+            }
+            if (tabs.length === 1) {
+                try {
+                    ch.postMessage({
+                        t: 'ws_apply',
+                        id: randomBcastId(),
+                        flights: flights,
+                        targetTabId: tabs[0].tabId
+                    });
+                } catch (e) {}
+                return;
+            }
+            showWorksheetPickerDialog(flights, tabs).then(function (id) {
+                if (!id) {
+                    return;
+                }
+                try {
+                    ch.postMessage({
+                        t: 'ws_apply',
+                        id: randomBcastId(),
+                        flights: flights,
+                        targetTabId: id
+                    });
+                } catch (e) {}
+            });
+        });
     }
 
     function setFlightAndCommit(input, flight) {
@@ -1687,7 +1986,6 @@
             applyFlightsToWorksheetInThisTab(flights, 'alt+click local');
         } else {
             requestApplyFlightsToWorksheet(flights);
-            log('Worksheet is in another tab: sent ' + flights.length + ' flight(s) via channel.');
         }
     }
 
@@ -1843,8 +2141,14 @@
         paxButtonEl.setAttribute('data-dc-pax-late-ws', '1');
         paxButtonEl.textContent = 'Send to worksheet';
         paxButtonEl.setAttribute('title', 'Puts tight outbound flight numbers from this Outbound table into the worksheet search field in another opssuitemain tab (if open).');
+        const corner = getPref('paxLateToWsPaxSendButtonCorner', 'br');
+        const yPos =
+            corner === 'tr'
+                ? 'top:12px!important;bottom:auto!important;'
+                : 'top:auto!important;bottom:20px!important;';
         paxButtonEl.style.cssText =
-            'position:fixed!important;z-index:999999!important;right:12px!important;bottom:20px!important;' +
+            'position:fixed!important;z-index:999999!important;right:12px!important;' +
+            yPos +
             'padding:8px 12px!important;border-radius:6px!important;border:1px solid #2d5016!important;' +
             'background:linear-gradient(#2ecc71,#27ae60)!important;color:#fff!important;font:13px/1.2 ' +
             'system-ui,Segoe UI,sans-serif!important;cursor:pointer!important;box-shadow:0 2px 8px rgba(0,0,0,.25)!important;';
@@ -1899,10 +2203,20 @@
         );
     }
 
+    function maybeRegisterWorksheetAfterDomChange() {
+        if (findWorksheetFlightSearchInput()) {
+            ensureWsChannel();
+            ensureWorksheetRegistration();
+        }
+    }
+
     function init() {
         if (isLikelyPaxConnectionsPage()) {
             ensureWsChannel();
             mountPaxSendButton();
+        } else {
+            ensureWsChannel();
+            maybeRegisterWorksheetAfterDomChange();
         }
         scan();
         mo = new MutationObserver(function (mutations) {
@@ -1921,6 +2235,7 @@
                     }
                 }
             }
+            maybeRegisterWorksheetAfterDomChange();
         });
         mo.observe(document.body, { childList: true, subtree: true });
     }
@@ -1954,6 +2269,22 @@
         }
         pendingBcastById = Object.create(null);
         removePaxSendButton();
+        if (worksheetPickerOverlay) {
+            try {
+                if (worksheetPickerOverlay.parentNode) {
+                    worksheetPickerOverlay.parentNode.removeChild(
+                        worksheetPickerOverlay
+                    );
+                }
+            } catch (e) {}
+            worksheetPickerOverlay = null;
+        }
+        if (wsTitleObserver) {
+            try {
+                wsTitleObserver.disconnect();
+            } catch (e) {}
+            wsTitleObserver = null;
+        }
         if (bcastChannel) {
             try {
                 bcastChannel.removeEventListener('message', paxBcastOnMessage);
@@ -1963,7 +2294,7 @@
         }
         if (wsChannel) {
             try {
-                wsChannel.removeEventListener('message', onWsBcastForApply);
+                wsChannel.removeEventListener('message', onWsBcast);
                 wsChannel.close();
             } catch (e) {}
             wsChannel = null;
