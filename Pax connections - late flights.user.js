@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.3.0
-// @description  Alt+click a flight puck: from Pax connections outbound, queue late (red/orange) rows into the worksheet flight field. Scans this page + iframes; if Pax is in another opssuitemain window, queries it via BroadcastChannel. Optional auto Outbound tab.
+// @version      1.4.0
+// @description  Alt+click a flight puck: from Pax for that same leg, queue late (red/orange) outbound rows into the worksheet. Matches /pax-connections/{date}-{dep}-{flight}-… to the window you opened for that leg; other Pax windows are ignored. BroadcastChannel for separate-window Pax.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","description":"When on, Alt+left-click a puck finds outbound Pax (FLT) rows on red/orange highlights (row/cell class or background) or tight-style rows, then fills the worksheet flight field.","default":true},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound before scan","description":"Tries to click the Pax 'Outbound' tab in each context (this window, then other windows you query), then waits so the table can render.","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound click (ms)","description":"How long to wait before reading the table.","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Merge late flights from other windows","description":"After scanning this page, other opssuitemain.com tabs and popup windows (e.g. Pax in a separate window) can report late flights; results are combined. The Pax window must keep this userscript enabled.","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Wait for other windows (ms)","description":"How long to wait for other windows to reply before applying flights to the worksheet. Increase if counts are still empty.","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Console debug log","description":"Log [PAX-LATE-WS] lines when Alt+clicking. Off by default.","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between flights (ms)","description":"Waits this long after each Enter before the next number.","default":250,"min":0,"max":5000,"step":50}}
+// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","description":"When on, Alt+left-click a puck finds outbound Pax (FLT) rows for the clicked leg, on red/orange highlights (row/cell class or background) or tight-style rows, then fills the worksheet flight field.","default":true},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match clicked leg to Pax window","description":"Uses the same URL segment as Middle-click Pax: …/pax-connections/{date}-{dep}-{flight}-WN-NULL so only the Pax window opened for that leg is used. Turn off to merge all red/orange rows (legacy, can mix different flights if several Pax popups are open).","default":true},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound before scan","description":"Tries to click the Pax 'Outbound' tab in the matching context, then waits so the table can render.","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound click (ms)","description":"How long to wait before reading the table.","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Merge from other opssuitemain windows","description":"Query other same-origin windows over BroadcastChannel. With “Match clicked leg” on, only a Pax page whose path matches the clicked leg replies.","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Wait for other windows (ms)","description":"How long to wait for the matching Pax window to reply. Increase if results are still empty.","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Console debug log","description":"Log [PAX-LATE-WS] lines when Alt+clicking. Off by default.","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between flights (ms)","description":"Waits this long after each Enter before the next number.","default":250,"min":0,"max":5000,"step":50}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // ==/UserScript==
@@ -135,12 +135,22 @@
         return null;
     }
 
-    function tryClickPaxOutboundTab(cb, rootDocument) {
+    function tryClickPaxOutboundTab(cb, rootDocument, paxPathKey) {
         if (!getPref('paxLateToWsAutoOutboundTab', true)) {
             if (cb) {
                 cb(false);
             }
             return;
+        }
+        if (paxPathKey) {
+            const rootDoc = rootDocument || document;
+            const wk = paxPathKeyFromWindowLocation(rootDoc);
+            if (wk !== paxPathKey) {
+                if (cb) {
+                    cb(false);
+                }
+                return;
+            }
         }
         const btn = findClickablePaxTab(/^outbound$/i, rootDocument);
         if (!btn) {
@@ -183,6 +193,342 @@
             console,
             ['%c[PAX-LATE-WS]', 'color:#e67e22'].concat([].slice.call(arguments))
         );
+    }
+
+    /**
+     * The Pax URL path is /pax-connections/{date}-{dep}-{flight}-WN-NULL (same as Middle-click launcher).
+     * We only scan (or accept broadcast from) a window whose path matches the clicked puck.
+     * Logic aligned with findFlightData in Middle-click launcher (sync parts only).
+     */
+    function extractDateFromLinked(linked) {
+        if (linked) {
+            const match = linked.match(/^(\d{4}-\d{2}-\d{2})/);
+            if (match) {
+                return match[1].replace(/-/g, '');
+            }
+            const compact = linked.match(/^(\d{8})-/);
+            if (compact) {
+                return compact[1];
+            }
+        }
+        return new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    }
+
+    function slugFromGoTurnHref(href) {
+        var m = String(href || '').match(/go-turn-details\/([^/?#]+)/i);
+        if (!m || !m[1]) {
+            return null;
+        }
+        try {
+            return decodeURIComponent(m[1]);
+        } catch (e) {
+            return m[1];
+        }
+    }
+
+    function parseGoTurnSlugEnrichment(slug) {
+        if (!slug || typeof slug !== 'string') {
+            return null;
+        }
+        var p = slug.split('-');
+        if (p.length < 6 || !/^\d{8}$/.test(p[0])) {
+            return null;
+        }
+        return {
+            dateCompact: p[0],
+            legFlight: /^\d{1,4}$/.test(p[1]) ? p[1] : null,
+            depAirport: /^[A-Z]{3}$/.test(p[2]) ? p[2] : null,
+            opFlight: p.length > 4 && /^\d{1,4}$/.test(p[4]) ? p[4] : null,
+            arrAirport: p.length > 5 && /^[A-Z]{3}$/.test(p[5]) ? p[5] : null
+        };
+    }
+
+    function parseLinkedHoverRoute(linked) {
+        if (!linked || typeof linked !== 'string') {
+            return null;
+        }
+        const parts = linked.split('-');
+        if (parts.length < 4) {
+            return null;
+        }
+        var dateCompact;
+        var routeParts;
+        if (/^\d{8}$/.test(parts[0])) {
+            dateCompact = parts[0];
+            routeParts = parts.slice(1);
+        } else if (
+            parts.length >= 9 &&
+            /^\d{4}$/.test(parts[0]) &&
+            /^\d{2}$/.test(parts[1]) &&
+            /^\d{2}$/.test(parts[2])
+        ) {
+            dateCompact = parts[0] + parts[1] + parts[2];
+            routeParts = parts.slice(3);
+        } else {
+            return null;
+        }
+        if (routeParts.length < 3) {
+            return null;
+        }
+        var slug = dateCompact + '-' + routeParts.join('-');
+        var legFlight = /^\d{1,4}$/.test(routeParts[0]) ? routeParts[0] : null;
+        var depAirport = /^[A-Z]{3}$/.test(routeParts[1]) ? routeParts[1] : null;
+        var opFlight =
+            routeParts.length > 3 && /^\d{1,4}$/.test(routeParts[3])
+                ? routeParts[3]
+                : legFlight;
+        return {
+            dateCompact: dateCompact,
+            slug: slug,
+            legFlight: legFlight,
+            depAirport: depAirport,
+            opFlight: opFlight || legFlight,
+            arrAirport:
+                routeParts.length > 4 && /^[A-Z]{3}$/.test(routeParts[4])
+                    ? routeParts[4]
+                    : null
+        };
+    }
+
+    function getLinkedHoverIdFromAncestors(el) {
+        var cur = el;
+        var depth = 0;
+        while (cur && depth < 16) {
+            if (cur.nodeType === 1 && cur.getAttribute) {
+                var v = cur.getAttribute('data-linked-hover-id');
+                if (v && String(v).trim()) {
+                    return String(v).trim();
+                }
+            }
+            cur = cur.parentElement;
+            depth++;
+        }
+        return '';
+    }
+
+    function getLinkedHoverIdForPuck(puck, clickTarget) {
+        if (clickTarget && clickTarget.nodeType === 1) {
+            var fromClick = getLinkedHoverIdFromAncestors(clickTarget);
+            if (fromClick) {
+                return fromClick;
+            }
+        }
+        if (puck && puck.querySelector) {
+            var d = puck.querySelector('[data-linked-hover-id]');
+            if (d) {
+                var a = d.getAttribute && d.getAttribute('data-linked-hover-id');
+                if (a && String(a).trim()) {
+                    return String(a).trim();
+                }
+            }
+        }
+        if (puck) {
+            return getLinkedHoverIdFromAncestors(puck);
+        }
+        return '';
+    }
+
+    function extractGoTurnSlugFromDom(puck) {
+        if (!puck) {
+            return null;
+        }
+        var cur = puck;
+        var depth = 0;
+        while (cur && depth < 16) {
+            if (cur.querySelectorAll) {
+                var nodes = cur.querySelectorAll('a[href*="go-turn-details"]');
+                var i;
+                for (i = 0; i < nodes.length; i++) {
+                    var sl = slugFromGoTurnHref(
+                        nodes[i].getAttribute('href') || nodes[i].href
+                    );
+                    if (sl) {
+                        return sl;
+                    }
+                }
+            }
+            cur = cur.parentElement;
+            depth++;
+        }
+        return null;
+    }
+
+    function buildGoTurnSlugFallback(data) {
+        var leg = data.legFlight || data.flight;
+        var op = data.opFlight || data.flight;
+        var dep = data.depAirport;
+        var arr = data.arrAirport;
+        if (!arr || !/^[A-Z]{3}$/.test(arr)) {
+            arr = 'NULL';
+        }
+        if (!data.date || !leg || !dep || !op) {
+            return null;
+        }
+        return (
+            data.date +
+            '-' +
+            leg +
+            '-' +
+            dep +
+            '-NULL-' +
+            op +
+            '-' +
+            arr +
+            '-NULL'
+        );
+    }
+
+    function findFlightDataFromPuck(puck, clickTarget) {
+        if (!puck) {
+            return null;
+        }
+        var linkedRaw = getLinkedHoverIdForPuck(puck, clickTarget);
+        var fromLink = parseLinkedHoverRoute(linkedRaw);
+        var domSlug = extractGoTurnSlugFromDom(puck);
+        if (fromLink && fromLink.slug && domSlug && domSlug !== fromLink.slug) {
+            domSlug = null;
+        }
+        var slugForEnrich = (fromLink && fromLink.slug) || domSlug;
+        var fromDom = slugForEnrich
+            ? parseGoTurnSlugEnrichment(slugForEnrich)
+            : null;
+        const stationNodes = puck.querySelectorAll('[class*="tg9Iiv9oAOo="]');
+        const airports = Array.from(stationNodes)
+            .map(function (n) {
+                return n.textContent.trim();
+            })
+            .filter(function (txt) {
+                return /^[A-Z]{3}$/.test(txt);
+            });
+        var depAirport =
+            airports[0] ||
+            (fromLink && fromLink.depAirport) ||
+            (fromDom && fromDom.depAirport) ||
+            null;
+        var arrAirport =
+            airports[1] ||
+            (fromLink && fromLink.arrAirport) ||
+            (fromDom && fromDom.arrAirport) ||
+            null;
+        var flight = null;
+        const flightWrapper = puck.querySelector('[class*="u8OLVYUVzvY="]');
+        if (flightWrapper) {
+            const spanFlight = flightWrapper.querySelector('span');
+            if (
+                spanFlight &&
+                /^\d{1,4}$/.test(spanFlight.textContent.trim())
+            ) {
+                flight = spanFlight.textContent.trim();
+            }
+            if (!flight) {
+                const divFlight = flightWrapper.querySelector(
+                    '[class*="tw9pR6Lavy8="]'
+                );
+                if (
+                    divFlight &&
+                    /^\d{1,4}$/.test(divFlight.textContent.trim())
+                ) {
+                    flight = divFlight.textContent.trim();
+                }
+            }
+        }
+        if (!flight) {
+            const match = linkedRaw && linkedRaw.match(/^\d{4}-\d{2}-\d{2}-(\d+)-/);
+            if (match) {
+                flight = match[1];
+            }
+        }
+        if (!flight && fromLink && fromLink.opFlight) {
+            flight = fromLink.opFlight;
+        }
+        if (!flight && fromLink && fromLink.legFlight) {
+            flight = fromLink.legFlight;
+        }
+        if (!flight && fromDom) {
+            flight = fromDom.opFlight || fromDom.legFlight;
+        }
+        if (!/^\d+$/.test(flight)) {
+            flight = null;
+        }
+        var legFlight =
+            (fromLink && fromLink.legFlight) ||
+            (fromDom && fromDom.legFlight) ||
+            flight;
+        var opFlight =
+            (fromLink && fromLink.opFlight) || (fromDom && fromDom.opFlight) || flight;
+        var date =
+            (fromLink && fromLink.dateCompact) ||
+            (fromDom && fromDom.dateCompact) ||
+            extractDateFromLinked(linkedRaw);
+        if (!depAirport || !flight) {
+            return null;
+        }
+        return {
+            depAirport: depAirport || '',
+            arrAirport: arrAirport,
+            flight: flight || '',
+            legFlight: legFlight || flight,
+            opFlight: opFlight || flight,
+            date: date
+        };
+    }
+
+    /**
+     * Canonical key: YYYYMMDD-DEP-NNNN — must match first segment of pathname after
+     * /pax-connections/ (Pax "open for this leg").
+     */
+    function buildPaxPathKeyFromFlightData(fd) {
+        if (!fd || !fd.flight || !fd.depAirport || !fd.date) {
+            return null;
+        }
+        if (!/^\d{8}$/.test(String(fd.date))) {
+            return null;
+        }
+        if (!/^[A-Z]{3}$/.test(String(fd.depAirport || '').toUpperCase())) {
+            return null;
+        }
+        if (!/^\d{1,4}$/.test(String(fd.flight))) {
+            return null;
+        }
+        return (
+            fd.date + '-' + String(fd.depAirport).toUpperCase() + '-' + String(fd.flight)
+        );
+    }
+
+    function paxPathKeyFromWindowLocation(doc) {
+        var d = doc || document;
+        var loc;
+        try {
+            loc = d && d.defaultView && d.defaultView.location
+                ? d.defaultView.location
+                : null;
+        } catch (e) {
+            return '';
+        }
+        if (!loc || !loc.pathname) {
+            return '';
+        }
+        var p = (loc.pathname || '').toLowerCase();
+        var needle = '/pax-connections/';
+        var idx = p.indexOf(needle);
+        if (idx < 0) {
+            return '';
+        }
+        var rest = p.slice(idx + needle.length);
+        if (rest.indexOf('/') >= 0) {
+            rest = rest.split('/')[0];
+        }
+        var segs = rest.split('-');
+        if (segs.length < 3) {
+            return '';
+        }
+        if (!/^\d{8}$/.test(segs[0])) {
+            return '';
+        }
+        if (!/^[a-z]{3}$/i.test(segs[1]) || !/^\d{1,4}$/.test(segs[2])) {
+            return '';
+        }
+        return segs[0] + '-' + segs[1].toUpperCase() + '-' + segs[2];
     }
 
     function parseNumericTriplet(s) {
@@ -532,8 +878,14 @@
         return out;
     }
 
-    function collectLateFlightsFromPageForRoot(rootDocument) {
+    function collectLateFlightsFromPageForRoot(rootDocument, paxPathKey) {
         const base = rootDocument || document;
+        if (paxPathKey) {
+            var wk0 = paxPathKeyFromWindowLocation(base);
+            if (wk0 && wk0 !== paxPathKey) {
+                return [];
+            }
+        }
         const seen = Object.create(null);
         const unique = [];
         function mergePart(part) {
@@ -603,27 +955,44 @@
             if (!isLikelyPaxConnectionsPage()) {
                 return;
             }
+            if (d.paxPathKey) {
+                var wkR = paxPathKeyFromWindowLocation(document);
+                if (!wkR || wkR !== d.paxPathKey) {
+                    return;
+                }
+            }
             if (!getPref('paxLateToWsEnabled', true)) {
                 try {
-                    bcastChannel.postMessage({ t: 'r', id: d.id, flights: [] });
+                    bcastChannel.postMessage({
+                        t: 'r',
+                        id: d.id,
+                        flights: [],
+                        paxPathKey: d.paxPathKey || null
+                    });
                 } catch (e) {}
                 return;
             }
             const reqId = d.id;
+            const rKey = d.paxPathKey || null;
             tryClickPaxOutboundTab(
                 function () {
-                    const list = collectLateFlightsFromPageForRoot(document);
+                    const list = collectLateFlightsFromPageForRoot(
+                        document,
+                        rKey
+                    );
                     try {
                         if (bcastChannel) {
                             bcastChannel.postMessage({
                                 t: 'r',
                                 id: reqId,
-                                flights: list
+                                flights: list,
+                                paxPathKey: rKey
                             });
                         }
                     } catch (e) {}
                 },
-                document
+                document,
+                rKey
             );
             return;
         }
@@ -631,6 +1000,11 @@
             const st = pendingBcastById[d.id];
             if (!st) {
                 return;
+            }
+            if (st.paxPathKey) {
+                if (d.paxPathKey && d.paxPathKey !== st.paxPathKey) {
+                    return;
+                }
             }
             if (d.flights && d.flights.length) {
                 mergeFlightsUniqueInto(st.list, d.flights);
@@ -654,7 +1028,7 @@
         return bcastChannel;
     }
 
-    function requestLateFlightsFromOtherWindows(localList, onDone) {
+    function requestLateFlightsFromOtherWindows(localList, paxPathKey, onDone) {
         if (!getPref('paxLateToWsQueryOtherWindows', true)) {
             onDone(localList);
             return;
@@ -670,7 +1044,7 @@
             return;
         }
         const id = randomBcastId();
-        const st = { list: [] };
+        const st = { list: [], paxPathKey: paxPathKey || null };
         mergeFlightsUniqueInto(st.list, localList);
         st.timer = setTimeout(function () {
             if (pendingBcastById[id] === st) {
@@ -681,8 +1055,12 @@
             } catch (e) {}
         }, wait);
         pendingBcastById[id] = st;
+        var payload = { t: 'q', id: id };
+        if (paxPathKey) {
+            payload.paxPathKey = paxPathKey;
+        }
         try {
-            ch.postMessage({ t: 'q', id: id });
+            ch.postMessage(payload);
         } catch (e) {
             if (pendingBcastById[id] === st) {
                 try {
@@ -783,7 +1161,7 @@
         runOne();
     }
 
-    function onPuckClick(e) {
+    function onPuckClick(e, puck) {
         if (!e.altKey || e.button !== 0) {
             return;
         }
@@ -793,17 +1171,52 @@
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
-        tryClickPaxOutboundTab(function () {
-            const local = collectLateFlightsFromPage();
-            log('Local late flights: ' + (local.length ? local.join(', ') : '(none)'));
-            requestLateFlightsFromOtherWindows(local, function (flights) {
-                log('Merged late flights: ' + (flights.length ? flights.join(', ') : '(none)'));
-                const t0 = setTimeout(function () {
-                    stepThroughFlights(flights);
+        var wantMatch = getPref('paxLateToWsMatchPaxPath', true);
+        var paxPathKey = null;
+        if (wantMatch) {
+            var fd = findFlightDataFromPuck(puck, e.target);
+            if (!fd) {
+                log('Could not read dep/flight for the clicked leg (puck). Open Pax for this same leg (Middle-click) or turn off "Match clicked leg" in script prefs.');
+                setTimeout(function () {
+                    stepThroughFlights([]);
                 }, 0);
-                pendingTimeouts.push(t0);
-            });
-        });
+                return;
+            }
+            paxPathKey = buildPaxPathKeyFromFlightData(fd);
+            if (!paxPathKey) {
+                log('Could not build Pax window key (need yyyymmdd, dep, flight on puck).');
+                setTimeout(function () {
+                    stepThroughFlights([]);
+                }, 0);
+                return;
+            }
+            log('Clicked leg key ' + paxPathKey + ' (only this Pax page window is used).');
+        }
+        tryClickPaxOutboundTab(
+            function () {
+                const local = collectLateFlightsFromPageForRoot(
+                    document,
+                    paxPathKey
+                );
+                log('Local late flights: ' + (local.length ? local.join(', ') : '(none)'));
+                requestLateFlightsFromOtherWindows(
+                    local,
+                    paxPathKey,
+                    function (flights) {
+                        log(
+                            'Merged late flights: ' +
+                            (flights.length ? flights.join(', ') : '(none)')
+                        );
+                        const t0 = setTimeout(function () {
+                            stepThroughFlights(flights);
+                        }, 0);
+                        pendingTimeouts.push(t0);
+                    }
+                );
+            },
+            document,
+            paxPathKey
+        );
     }
 
     function bindPuck(puck) {
@@ -813,8 +1226,11 @@
         if (puck.setAttribute) {
             puck.setAttribute(BOUND, '1');
         }
-        puckClickHandlers.set(puck, onPuckClick);
-        puck.addEventListener('click', onPuckClick, true);
+        var handler = function (ev) {
+            onPuckClick(ev, puck);
+        };
+        puckClickHandlers.set(puck, handler);
+        puck.addEventListener('click', handler, true);
     }
 
     function scan() {
