@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.1.0
-// @description  Alt+click a flight puck: from Pax connections outbound, queue flights in red/orange-highlighted (or tight) rows into the worksheet flight field.
+// @version      1.2.0
+// @description  Alt+click a flight puck: from Pax connections outbound, queue late (red/orange) rows into the worksheet flight field. Scans main page + iframes; optional auto Outbound tab.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","description":"When on, Alt+left-click a puck finds outbound Pax (FLT) rows on a red/orange row/cell background (or the apps tight style), then fills the worksheet flight field.","default":true},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Console debug log","description":"Log [PAX-LATE-WS] lines when Alt+clicking. Off by default.","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between flights (ms)","description":"Waits this long after each Enter before the next number.","default":250,"min":0,"max":5000,"step":50}}
+// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","description":"When on, Alt+left-click a puck finds outbound Pax (FLT) rows on red/orange highlights (row/cell class or background) or tight-style rows, then fills the worksheet flight field.","default":true},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound before scan","description":"Tries to click the Pax 'Outbound' tab in the same window, then waits so the table can render (reduces need to open the tab yourself).","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound click (ms)","description":"How long to wait before reading the table.","default":500,"min":0,"max":5000,"step":50},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Console debug log","description":"Log [PAX-LATE-WS] lines when Alt+clicking. Off by default.","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between flights (ms)","description":"Waits this long after each Enter before the next number.","default":250,"min":0,"max":5000,"step":50}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // ==/UserScript==
@@ -42,6 +42,118 @@
             return 250;
         }
         return Math.min(5000, Math.max(0, Math.floor(n)));
+    }
+
+    function outboundWaitMs() {
+        const n = Number(getPref('paxLateToWsOutboundWaitMs', 500));
+        if (!Number.isFinite(n)) {
+            return 500;
+        }
+        return Math.min(5000, Math.max(0, Math.floor(n)));
+    }
+
+    function isVisibleForClick(el) {
+        if (!el) {
+            return false;
+        }
+        var r = el.getBoundingClientRect
+            ? el.getBoundingClientRect()
+            : { width: 0, height: 0 };
+        return r.width > 1 && r.height > 1;
+    }
+
+    function findClickablePaxTab(labelRe) {
+        const roots = [document].concat(iframeDocumentList());
+        var ri;
+        for (ri = 0; ri < roots.length; ri++) {
+            var root = roots[ri];
+            if (!root || !root.querySelectorAll) {
+                continue;
+            }
+            var cands = root.querySelectorAll(
+                'button, a, [role="button"], [role="tab"]'
+            );
+            var j;
+            for (j = 0; j < cands.length; j++) {
+                const el = cands[j];
+                if (!isVisibleForClick(el)) {
+                    continue;
+                }
+                const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+                if (!t || t.length > 32) {
+                    continue;
+                }
+                if (labelRe.test(t)) {
+                    return el;
+                }
+            }
+        }
+        return null;
+    }
+
+    function tryClickPaxOutboundTab(cb) {
+        if (!getPref('paxLateToWsAutoOutboundTab', true)) {
+            if (cb) {
+                cb(false);
+            }
+            return;
+        }
+        const btn = findClickablePaxTab(/^outbound$/i);
+        if (!btn) {
+            if (cb) {
+                cb(false);
+            }
+            return;
+        }
+        try {
+            log('Clicking Outbound tab');
+            btn.click();
+        } catch (e) {
+            if (cb) {
+                cb(false);
+            }
+            return;
+        }
+        const ms = outboundWaitMs();
+        if (ms > 0) {
+            const tid = setTimeout(function () {
+                if (cb) {
+                    cb(true);
+                }
+            }, ms);
+            pendingTimeouts.push(tid);
+        } else if (cb) {
+            cb(true);
+        }
+    }
+
+    function iframeDocumentList() {
+        const out = [];
+        var stack = [];
+        var list = document.querySelectorAll('iframe');
+        var k;
+        for (k = 0; k < list.length; k++) {
+            stack.push(list[k]);
+        }
+        while (stack.length) {
+            const fr = stack.pop();
+            var doc;
+            try {
+                doc = fr && fr.contentDocument;
+            } catch (e) {
+                continue;
+            }
+            if (doc) {
+                out.push(doc);
+                if (doc.querySelectorAll) {
+                    var inners = doc.querySelectorAll('iframe');
+                    for (k = 0; k < inners.length; k++) {
+                        stack.push(inners[k]);
+                    }
+                }
+            }
+        }
+        return out;
     }
 
     function log() {
@@ -101,21 +213,35 @@
         if (!rgb) {
             return false;
         }
-        if (rgb.r < 100 && rgb.g < 100 && rgb.b < 100) {
+        var r = rgb.r;
+        var g = rgb.g;
+        var b = rgb.b;
+        if (r + g + b < 32) {
             return false;
         }
-        var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
-        if (hsl.l < 0.12 || hsl.l > 0.98) {
+        if (g > 210 && b > 210) {
             return false;
         }
-        if (hsl.s < 0.12) {
+        if (r > g + 20 && r > b + 15 && r > 40) {
+            if (g < 160 && b < 160) {
+                return true;
+            }
+        }
+        if (r > 90 && g > 50 && b < 130 && r - b > 20) {
+            return true;
+        }
+        var hsl = rgbToHsl(r, g, b);
+        if (hsl.l < 0.08 || hsl.l > 0.97) {
             return false;
         }
-        if (hsl.h < 15 || hsl.h > 350) {
-            return hsl.s >= 0.2;
+        if (hsl.s < 0.1) {
+            return false;
         }
-        if (hsl.h >= 12 && hsl.h <= 48) {
-            return hsl.s >= 0.18;
+        if (hsl.h < 18 || hsl.h > 352) {
+            return hsl.s >= 0.14;
+        }
+        if (hsl.h >= 10 && hsl.h <= 58) {
+            return hsl.s >= 0.12;
         }
         return false;
     }
@@ -126,20 +252,33 @@
         }
         var st;
         try {
-            st = window.getComputedStyle(el);
+            st = (el.ownerDocument && el.ownerDocument.defaultView
+                ? el.ownerDocument.defaultView
+                : window
+            ).getComputedStyle(el);
         } catch (e) {
             return false;
         }
         if (!st) {
             return false;
         }
-        var bg = st.backgroundColor;
-        if (String(bg || '').toLowerCase().indexOf('gradient') >= 0) {
+        if (
+            String(st.backgroundImage || '')
+                .toLowerCase()
+                .indexOf('gradient') >= 0
+        ) {
             return true;
         }
-        var tri = parseNumericTriplet(bg);
+        var tri = parseNumericTriplet(st.backgroundColor);
         if (isRedOrOrangeBackground(tri)) {
             return true;
+        }
+        var bLeft = st.borderLeftColor;
+        if (bLeft) {
+            var tri2 = parseNumericTriplet(bLeft);
+            if (isRedOrOrangeBackground(tri2)) {
+                return true;
+            }
         }
         return false;
     }
@@ -152,8 +291,7 @@
             return true;
         }
         var tds = tr.querySelectorAll('td');
-        var n = Math.min(4, tds.length);
-        for (var i = 0; i < n; i++) {
+        for (var i = 0; i < tds.length; i++) {
             if (elementBackgroundLooksAlert(tds[i])) {
                 return true;
             }
@@ -165,34 +303,56 @@
         return !!(table && table.closest && table.closest('td, th'));
     }
 
+    function thTextNorm(th) {
+        return th && th.textContent
+            ? th.textContent.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '')
+            : '';
+    }
+
     function isOutboundPaxTable(table) {
         if (!table) {
             return false;
         }
-        const tr = table.querySelector('tr');
-        if (!tr) {
-            return false;
+        const rows = table.querySelectorAll('tr');
+        var r;
+        for (r = 0; r < rows.length; r++) {
+            const ths = rows[r].querySelectorAll('th');
+            if (ths.length < 6) {
+                continue;
+            }
+            const parts = [];
+            var j;
+            for (j = 0; j < ths.length; j++) {
+                parts.push(thTextNorm(ths[j]));
+            }
+            const joined = parts.join(' ');
+            if (parts.indexOf('FLT') < 0) {
+                continue;
+            }
+            if (joined.indexOf('NEXT') < 0 && joined.indexOf('FINAL') < 0) {
+                continue;
+            }
+            return true;
         }
-        const ths = tr.querySelectorAll('th');
-        if (ths.length < 8) {
-            return false;
-        }
-        const parts = [];
-        for (var i = 0; i < ths.length; i++) {
-            parts.push(
-                ths[i].textContent.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '')
-            );
-        }
-        const j = parts.join(' ');
-        const hasFlt = parts.indexOf('FLT') >= 0;
-        const hasNextFin = j.indexOf('NEXT') >= 0 || j.indexOf('FINAL') >= 0;
-        return hasFlt && hasNextFin;
+        return false;
     }
 
     function findHeaderTr(table) {
         const rows = table.querySelectorAll('tr');
         for (var r = 0; r < rows.length; r++) {
-            if (rows[r].querySelector('th')) {
+            if (!rows[r].querySelector('th')) {
+                continue;
+            }
+            const ths = rows[r].querySelectorAll('th');
+            var hasFlt = false;
+            var j;
+            for (j = 0; j < ths.length; j++) {
+                if (thTextNorm(ths[j]) === 'FLT') {
+                    hasFlt = true;
+                    break;
+                }
+            }
+            if (hasFlt) {
                 return rows[r];
             }
         }
@@ -202,7 +362,7 @@
     function findFltColumnIndex(tr) {
         const ths = tr.querySelectorAll('th');
         for (var i = 0; i < ths.length; i++) {
-            if (ths[i].textContent.replace(/\s+/g, ' ').trim() === 'FLT') {
+            if (thTextNorm(ths[i]) === 'FLT') {
                 return i;
             }
         }
@@ -213,15 +373,35 @@
         if (!tr || tr.nodeName !== 'TR') {
             return false;
         }
-        const list = tr.querySelectorAll('i');
+        const list = tr.querySelectorAll('i, svg, [class*="exclamation"]');
         for (var i = 0; i < list.length; i++) {
-            const ic = ' ' + String(list[i].className || '') + ' ';
-            if (ic.indexOf(' exclamation') < 0 && ic.indexOf('exclamation-') < 0) {
+            const ic = ' ' + String(list[i].className && list[i].className.baseVal !== undefined
+                ? list[i].className.baseVal
+                : list[i].className || '') + ' ';
+            if (ic.indexOf('exclamation') < 0) {
                 continue;
             }
             if (ic.indexOf(' red ') >= 0 || ic.indexOf(' orange ') >= 0) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    function classNameLooksAlertClass(el) {
+        var c = el && (el.getAttribute('class') || (el.className && String(el.className)));
+        c = String(c || '');
+        if (!c) {
+            return false;
+        }
+        if (c.indexOf('inverted') >= 0) {
+            return false;
+        }
+        if (/(^|\s)red(\s|$)/.test(c) || /(^|\s)orange(\s|$)/.test(c)) {
+            return true;
+        }
+        if (c.indexOf('negative') >= 0 || c.indexOf('warning') >= 0) {
+            return true;
         }
         return false;
     }
@@ -234,10 +414,31 @@
         return false;
     }
 
+    function rowOrDescendantClassLooksAlert(tr) {
+        if (!tr) {
+            return false;
+        }
+        if (classNameLooksAlertClass(tr)) {
+            return true;
+        }
+        var tds = tr.querySelectorAll('td');
+        var t;
+        for (t = 0; t < tds.length; t++) {
+            if (classNameLooksAlertClass(tds[t])) {
+                return true;
+            }
+        }
+        if (tr.querySelector('i.red, i.orange, [class~="red"], [class~="orange"]')) {
+            return true;
+        }
+        return false;
+    }
+
     function isLateStyleRow(tr) {
         return (
             rowHasRedOrOrangeExclamation(tr) ||
             isTightPaxRow(tr) ||
+            rowOrDescendantClassLooksAlert(tr) ||
             rowHasRedOrOrangeTableBackground(tr)
         );
     }
@@ -271,8 +472,11 @@
         return m2 ? m2[1] : '';
     }
 
-    function collectLateFlightsFromPage() {
-        const tables = document.querySelectorAll('table');
+    function collectLateFlightsFromRoot(root) {
+        if (!root || !root.querySelectorAll) {
+            return [];
+        }
+        const tables = root.querySelectorAll('table');
         const out = [];
         for (var t = 0; t < tables.length; t++) {
             const table = tables[t];
@@ -306,13 +510,29 @@
                 }
             }
         }
+        return out;
+    }
+
+    function collectLateFlightsFromPage() {
         const seen = Object.create(null);
         const unique = [];
-        for (var i = 0; i < out.length; i++) {
-            if (!seen[out[i]]) {
-                seen[out[i]] = true;
-                unique.push(out[i]);
+        function mergePart(part) {
+            if (!part || !part.length) {
+                return;
             }
+            var i;
+            for (i = 0; i < part.length; i++) {
+                if (!seen[part[i]]) {
+                    seen[part[i]] = true;
+                    unique.push(part[i]);
+                }
+            }
+        }
+        mergePart(collectLateFlightsFromRoot(document));
+        const ifrDocs = iframeDocumentList();
+        var d;
+        for (d = 0; d < ifrDocs.length; d++) {
+            mergePart(collectLateFlightsFromRoot(ifrDocs[d]));
         }
         return unique;
     }
@@ -416,12 +636,14 @@
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
-        const flights = collectLateFlightsFromPage();
-        log('Late flights: ' + (flights.length ? flights.join(', ') : '(none)'));
-        const t0 = setTimeout(function () {
-            stepThroughFlights(flights);
-        }, 0);
-        pendingTimeouts.push(t0);
+        tryClickPaxOutboundTab(function () {
+            const flights = collectLateFlightsFromPage();
+            log('Late flights: ' + (flights.length ? flights.join(', ') : '(none)'));
+            const t0 = setTimeout(function () {
+                stepThroughFlights(flights);
+            }, 0);
+            pendingTimeouts.push(t0);
+        });
     }
 
     function bindPuck(puck) {
