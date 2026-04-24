@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.2.0
-// @description  Alt+click a flight puck: from Pax connections outbound, queue late (red/orange) rows into the worksheet flight field. Scans main page + iframes; optional auto Outbound tab.
+// @version      1.3.0
+// @description  Alt+click a flight puck: from Pax connections outbound, queue late (red/orange) rows into the worksheet flight field. Scans this page + iframes; if Pax is in another opssuitemain window, queries it via BroadcastChannel. Optional auto Outbound tab.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","description":"When on, Alt+left-click a puck finds outbound Pax (FLT) rows on red/orange highlights (row/cell class or background) or tight-style rows, then fills the worksheet flight field.","default":true},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound before scan","description":"Tries to click the Pax 'Outbound' tab in the same window, then waits so the table can render (reduces need to open the tab yourself).","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound click (ms)","description":"How long to wait before reading the table.","default":500,"min":0,"max":5000,"step":50},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Console debug log","description":"Log [PAX-LATE-WS] lines when Alt+clicking. Off by default.","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between flights (ms)","description":"Waits this long after each Enter before the next number.","default":250,"min":0,"max":5000,"step":50}}
+// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","description":"When on, Alt+left-click a puck finds outbound Pax (FLT) rows on red/orange highlights (row/cell class or background) or tight-style rows, then fills the worksheet flight field.","default":true},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound before scan","description":"Tries to click the Pax 'Outbound' tab in each context (this window, then other windows you query), then waits so the table can render.","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound click (ms)","description":"How long to wait before reading the table.","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Merge late flights from other windows","description":"After scanning this page, other opssuitemain.com tabs and popup windows (e.g. Pax in a separate window) can report late flights; results are combined. The Pax window must keep this userscript enabled.","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Wait for other windows (ms)","description":"How long to wait for other windows to reply before applying flights to the worksheet. Increase if counts are still empty.","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Console debug log","description":"Log [PAX-LATE-WS] lines when Alt+clicking. Off by default.","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between flights (ms)","description":"Waits this long after each Enter before the next number.","default":250,"min":0,"max":5000,"step":50}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // ==/UserScript==
@@ -24,6 +24,9 @@
     var mo = null;
     var initTimer = null;
     var pendingTimeouts = [];
+    /** Same channel name in every opssuitemain tab so Pax-in-popup can answer. */
+    var BC_NAME = 'dc_pax_late_flights_v1';
+    var bcastChannel = null;
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -34,6 +37,14 @@
             return def;
         }
         return v;
+    }
+
+    function bcastTimeoutMs() {
+        const n = Number(getPref('paxLateToWsBcastTimeoutMs', 2000));
+        if (!Number.isFinite(n)) {
+            return 2000;
+        }
+        return Math.min(10000, Math.max(0, Math.floor(n)));
     }
 
     function stepMs() {
@@ -62,8 +73,41 @@
         return r.width > 1 && r.height > 1;
     }
 
-    function findClickablePaxTab(labelRe) {
-        const roots = [document].concat(iframeDocumentList());
+    function iframeDocumentListFrom(rootDocument) {
+        const base = rootDocument || document;
+        const out = [];
+        var stack = [];
+        var list = base.querySelectorAll
+            ? base.querySelectorAll('iframe')
+            : [];
+        var k;
+        for (k = 0; k < list.length; k++) {
+            stack.push(list[k]);
+        }
+        while (stack.length) {
+            const fr = stack.pop();
+            var doc;
+            try {
+                doc = fr && fr.contentDocument;
+            } catch (e) {
+                continue;
+            }
+            if (doc) {
+                out.push(doc);
+                if (doc.querySelectorAll) {
+                    var inners = doc.querySelectorAll('iframe');
+                    for (k = 0; k < inners.length; k++) {
+                        stack.push(inners[k]);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    function findClickablePaxTab(labelRe, rootDocument) {
+        const base = rootDocument || document;
+        const roots = [base].concat(iframeDocumentListFrom(base));
         var ri;
         for (ri = 0; ri < roots.length; ri++) {
             var root = roots[ri];
@@ -91,14 +135,14 @@
         return null;
     }
 
-    function tryClickPaxOutboundTab(cb) {
+    function tryClickPaxOutboundTab(cb, rootDocument) {
         if (!getPref('paxLateToWsAutoOutboundTab', true)) {
             if (cb) {
                 cb(false);
             }
             return;
         }
-        const btn = findClickablePaxTab(/^outbound$/i);
+        const btn = findClickablePaxTab(/^outbound$/i, rootDocument);
         if (!btn) {
             if (cb) {
                 cb(false);
@@ -128,32 +172,7 @@
     }
 
     function iframeDocumentList() {
-        const out = [];
-        var stack = [];
-        var list = document.querySelectorAll('iframe');
-        var k;
-        for (k = 0; k < list.length; k++) {
-            stack.push(list[k]);
-        }
-        while (stack.length) {
-            const fr = stack.pop();
-            var doc;
-            try {
-                doc = fr && fr.contentDocument;
-            } catch (e) {
-                continue;
-            }
-            if (doc) {
-                out.push(doc);
-                if (doc.querySelectorAll) {
-                    var inners = doc.querySelectorAll('iframe');
-                    for (k = 0; k < inners.length; k++) {
-                        stack.push(inners[k]);
-                    }
-                }
-            }
-        }
-        return out;
+        return iframeDocumentListFrom(document);
     }
 
     function log() {
@@ -513,7 +532,8 @@
         return out;
     }
 
-    function collectLateFlightsFromPage() {
+    function collectLateFlightsFromPageForRoot(rootDocument) {
+        const base = rootDocument || document;
         const seen = Object.create(null);
         const unique = [];
         function mergePart(part) {
@@ -528,13 +548,150 @@
                 }
             }
         }
-        mergePart(collectLateFlightsFromRoot(document));
-        const ifrDocs = iframeDocumentList();
+        mergePart(collectLateFlightsFromRoot(base));
+        const ifrDocs = iframeDocumentListFrom(base);
         var d;
         for (d = 0; d < ifrDocs.length; d++) {
             mergePart(collectLateFlightsFromRoot(ifrDocs[d]));
         }
         return unique;
+    }
+
+    function collectLateFlightsFromPage() {
+        return collectLateFlightsFromPageForRoot(document);
+    }
+
+    var pendingBcastById = Object.create(null);
+
+    function randomBcastId() {
+        return String(Date.now()) + '-' + String(Math.random()).slice(2, 11);
+    }
+
+    function mergeFlightsUniqueInto(uniq, part) {
+        if (!part || !part.length) {
+            return;
+        }
+        const seen = Object.create(null);
+        for (var i = 0; i < uniq.length; i++) {
+            seen[uniq[i]] = true;
+        }
+        for (i = 0; i < part.length; i++) {
+            if (!seen[part[i]]) {
+                seen[part[i]] = true;
+                uniq.push(part[i]);
+            }
+        }
+    }
+
+    function isLikelyPaxConnectionsPage() {
+        try {
+            const p = (location.pathname || '').toLowerCase();
+            if (p.indexOf('pax-connections') >= 0) {
+                return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function paxBcastOnMessage(ev) {
+        const ch = ensureBcastChannel();
+        const d = ev && ev.data;
+        if (!d || ch !== bcastChannel) {
+            return;
+        }
+        if (d.t === 'q' && d.id) {
+            if (!isLikelyPaxConnectionsPage()) {
+                return;
+            }
+            if (!getPref('paxLateToWsEnabled', true)) {
+                try {
+                    bcastChannel.postMessage({ t: 'r', id: d.id, flights: [] });
+                } catch (e) {}
+                return;
+            }
+            const reqId = d.id;
+            tryClickPaxOutboundTab(
+                function () {
+                    const list = collectLateFlightsFromPageForRoot(document);
+                    try {
+                        if (bcastChannel) {
+                            bcastChannel.postMessage({
+                                t: 'r',
+                                id: reqId,
+                                flights: list
+                            });
+                        }
+                    } catch (e) {}
+                },
+                document
+            );
+            return;
+        }
+        if (d.t === 'r' && d.id) {
+            const st = pendingBcastById[d.id];
+            if (!st) {
+                return;
+            }
+            if (d.flights && d.flights.length) {
+                mergeFlightsUniqueInto(st.list, d.flights);
+            }
+        }
+    }
+
+    function ensureBcastChannel() {
+        if (bcastChannel) {
+            return bcastChannel;
+        }
+        if (typeof BroadcastChannel === 'undefined') {
+            return null;
+        }
+        try {
+            bcastChannel = new BroadcastChannel(BC_NAME);
+            bcastChannel.addEventListener('message', paxBcastOnMessage);
+        } catch (e) {
+            bcastChannel = null;
+        }
+        return bcastChannel;
+    }
+
+    function requestLateFlightsFromOtherWindows(localList, onDone) {
+        if (!getPref('paxLateToWsQueryOtherWindows', true)) {
+            onDone(localList);
+            return;
+        }
+        const ch = ensureBcastChannel();
+        if (!ch) {
+            onDone(localList);
+            return;
+        }
+        const wait = bcastTimeoutMs();
+        if (wait <= 0) {
+            onDone(localList);
+            return;
+        }
+        const id = randomBcastId();
+        const st = { list: [] };
+        mergeFlightsUniqueInto(st.list, localList);
+        st.timer = setTimeout(function () {
+            if (pendingBcastById[id] === st) {
+                delete pendingBcastById[id];
+            }
+            try {
+                onDone(st.list);
+            } catch (e) {}
+        }, wait);
+        pendingBcastById[id] = st;
+        try {
+            ch.postMessage({ t: 'q', id: id });
+        } catch (e) {
+            if (pendingBcastById[id] === st) {
+                try {
+                    clearTimeout(st.timer);
+                } catch (e2) {}
+                delete pendingBcastById[id];
+            }
+            onDone(st.list);
+        }
     }
 
     function findWorksheetFlightSearchInput() {
@@ -637,12 +794,15 @@
         e.stopPropagation();
         e.stopImmediatePropagation();
         tryClickPaxOutboundTab(function () {
-            const flights = collectLateFlightsFromPage();
-            log('Late flights: ' + (flights.length ? flights.join(', ') : '(none)'));
-            const t0 = setTimeout(function () {
-                stepThroughFlights(flights);
-            }, 0);
-            pendingTimeouts.push(t0);
+            const local = collectLateFlightsFromPage();
+            log('Local late flights: ' + (local.length ? local.join(', ') : '(none)'));
+            requestLateFlightsFromOtherWindows(local, function (flights) {
+                log('Merged late flights: ' + (flights.length ? flights.join(', ') : '(none)'));
+                const t0 = setTimeout(function () {
+                    stepThroughFlights(flights);
+                }, 0);
+                pendingTimeouts.push(t0);
+            });
         });
     }
 
@@ -692,7 +852,10 @@
         mo.observe(document.body, { childList: true, subtree: true });
     }
 
-    initTimer = setTimeout(init, 800);
+    initTimer = setTimeout(function () {
+        ensureBcastChannel();
+        init();
+    }, 800);
 
     window.__myScriptCleanup = function () {
         if (initTimer) {
@@ -703,6 +866,25 @@
             try {
                 clearTimeout(pendingTimeouts.pop());
             } catch (e) {}
+        }
+        var bId;
+        for (bId in pendingBcastById) {
+            if (Object.prototype.hasOwnProperty.call(pendingBcastById, bId)) {
+                const st = pendingBcastById[bId];
+                if (st && st.timer) {
+                    try {
+                        clearTimeout(st.timer);
+                    } catch (e) {}
+                }
+            }
+        }
+        pendingBcastById = Object.create(null);
+        if (bcastChannel) {
+            try {
+                bcastChannel.removeEventListener('message', paxBcastOnMessage);
+                bcastChannel.close();
+            } catch (e) {}
+            bcastChannel = null;
         }
         if (mo) {
             try {
