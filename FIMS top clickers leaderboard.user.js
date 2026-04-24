@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FIMS top clickers leaderboard
 // @namespace    Wolf 2.0
-// @version      1.4.3
+// @version      1.4.4
 // @description  Leaderboard of FIMS message senders (by FIM #); tab opens list in the FIMS area
 // @match        https://opssuitemain.swacorp.com/*
 // @donkeycode-pref {"fimsTopClickersMaxNames":{"type":"number","group":"Leaderboard","label":"Max names shown","description":"0 = show everyone with a count. Set a positive number only if you want to cap a very long list.","default":0,"min":0,"max":500,"step":1},"fimsTopClickersPersist":{"type":"boolean","group":"Leaderboard","label":"Persist counts","description":"Keep running totals in localStorage across reloads (same browser profile).","default":true},"fimsTopClickersStorageKey":{"type":"string","group":"Leaderboard","label":"Storage key suffix","description":"Change if you need separate stats per machine; stored as donkeycode.fimsTopClickers.<suffix>","default":"default"}}
@@ -17,6 +17,8 @@
     var PANEL_ID = 'dc-fims-top-clickers-panel';
     var WOF_PANEL_ID = 'dc-wof-panel';
     var STYLE_ID = 'dc-fims-top-clickers-style';
+    /** FIMS #fims-id can sit beside the advisory MFE in the same active segment; hide with !important when user picks Advisories. */
+    var HIDE_FIMS_FOR_ADVIS_ATTR = 'data-dc-fims-id-hide-for-advisories';
 
     function hideWallOfFamePanel() {
         var wof = document.getElementById(WOF_PANEL_ID);
@@ -602,6 +604,20 @@
         return out;
     }
 
+    function applyFimsIdAdvisoriesVisibility(hide) {
+        var el = document.getElementById(TABLE_ID);
+        if (!el) {
+            return;
+        }
+        if (hide) {
+            el.setAttribute(HIDE_FIMS_FOR_ADVIS_ATTR, '1');
+            el.style.setProperty('display', 'none', 'important');
+        } else {
+            el.removeAttribute(HIDE_FIMS_FOR_ADVIS_ATTR);
+            el.style.removeProperty('display');
+        }
+    }
+
     /**
      * Document capture on **click** (not mousedown): preventDefault on mousedown does not
      * cancel the click, so Semantic UI still switched tabs on mouseup. Click capture runs
@@ -685,6 +701,13 @@
             panel.style.display = 'none';
         }
         hideWallOfFamePanel();
+        function refix() {
+            applyFimsIdAdvisoriesVisibility(true);
+        }
+        refix();
+        setTimeout(refix, 0);
+        setTimeout(refix, 80);
+        setTimeout(refix, 200);
     }
 
     function showLeaderboardInFimsArea() {
@@ -719,7 +742,7 @@
             segments[0].classList.add('active');
         }
 
-        hideWallOfFamePanel();
+        applyFimsIdAdvisoriesVisibility(false);
         table.style.display = 'none';
         mountPanelInFimsTabSegment(panel, table);
         panel.style.display = 'flex';
@@ -733,6 +756,7 @@
         }
         var table = document.getElementById(TABLE_ID);
         var panel = document.getElementById(PANEL_ID);
+        applyFimsIdAdvisoriesVisibility(false);
         if (table) {
             table.style.display = '';
         }
