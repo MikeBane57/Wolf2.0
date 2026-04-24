@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.0.0
-// @description  Alt+click a flight puck: from Pax connections outbound, queue flights in rows marked red/orange (tight) into the worksheet flight field.
+// @version      1.1.0
+// @description  Alt+click a flight puck: from Pax connections outbound, queue flights in red/orange-highlighted (or tight) rows into the worksheet flight field.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","description":"When on, Alt+left-click a puck parses visible Pax outbound (FLT) rows with red or orange exclamation (or the apps tight row style), then fills the worksheet flight search field in order.","default":true},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between flights (ms)","description":"Waits this long after each Enter before the next number.","default":250,"min":0,"max":5000,"step":50}}
+// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","description":"When on, Alt+left-click a puck finds outbound Pax (FLT) rows on a red/orange row/cell background (or the apps tight style), then fills the worksheet flight field.","default":true},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Console debug log","description":"Log [PAX-LATE-WS] lines when Alt+clicking. Off by default.","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between flights (ms)","description":"Waits this long after each Enter before the next number.","default":250,"min":0,"max":5000,"step":50}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // ==/UserScript==
@@ -45,10 +45,120 @@
     }
 
     function log() {
+        if (!getPref('paxLateToWsVerboseLog', false)) {
+            return;
+        }
         console.log.apply(
             console,
             ['%c[PAX-LATE-WS]', 'color:#e67e22'].concat([].slice.call(arguments))
         );
+    }
+
+    function parseNumericTriplet(s) {
+        var p = /rgba?\s*\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i.exec(
+            String(s || '')
+        );
+        if (!p) {
+            return null;
+        }
+        var r = Math.round(Math.min(255, Math.max(0, Number(p[1]))));
+        var g = Math.round(Math.min(255, Math.max(0, Number(p[2]))));
+        var b = Math.round(Math.min(255, Math.max(0, Number(p[3]))));
+        if (!Number.isFinite(r + g + b)) {
+            return null;
+        }
+        return { r: r, g: g, b: b };
+    }
+
+    function rgbToHsl(r, g, b) {
+        r /= 255;
+        g /= 255;
+        b /= 255;
+        var max = Math.max(r, g, b);
+        var min = Math.min(r, g, b);
+        var h = 0;
+        var s = 0;
+        var l = (max + min) / 2;
+        if (max !== min) {
+            var d = max - min;
+            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+            switch (max) {
+                case r:
+                    h = (g - b) / d + (g < b ? 6 : 0);
+                    break;
+                case g:
+                    h = (b - r) / d + 2;
+                    break;
+                default:
+                    h = (r - g) / d + 4;
+            }
+            h *= 60;
+        }
+        return { h: h, s: s, l: l };
+    }
+
+    function isRedOrOrangeBackground(rgb) {
+        if (!rgb) {
+            return false;
+        }
+        if (rgb.r < 100 && rgb.g < 100 && rgb.b < 100) {
+            return false;
+        }
+        var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+        if (hsl.l < 0.12 || hsl.l > 0.98) {
+            return false;
+        }
+        if (hsl.s < 0.12) {
+            return false;
+        }
+        if (hsl.h < 15 || hsl.h > 350) {
+            return hsl.s >= 0.2;
+        }
+        if (hsl.h >= 12 && hsl.h <= 48) {
+            return hsl.s >= 0.18;
+        }
+        return false;
+    }
+
+    function elementBackgroundLooksAlert(el) {
+        if (!el || el.nodeType !== 1) {
+            return false;
+        }
+        var st;
+        try {
+            st = window.getComputedStyle(el);
+        } catch (e) {
+            return false;
+        }
+        if (!st) {
+            return false;
+        }
+        var bg = st.backgroundColor;
+        if (String(bg || '').toLowerCase().indexOf('gradient') >= 0) {
+            return true;
+        }
+        var tri = parseNumericTriplet(bg);
+        if (isRedOrOrangeBackground(tri)) {
+            return true;
+        }
+        return false;
+    }
+
+    function rowHasRedOrOrangeTableBackground(tr) {
+        if (!tr || tr.nodeName !== 'TR') {
+            return false;
+        }
+        if (elementBackgroundLooksAlert(tr)) {
+            return true;
+        }
+        var tds = tr.querySelectorAll('td');
+        var n = Math.min(4, tds.length);
+        for (var i = 0; i < n; i++) {
+            if (elementBackgroundLooksAlert(tds[i])) {
+                return true;
+            }
+        }
+        return false;
     }
 
     function isNestedInCell(table) {
@@ -125,7 +235,11 @@
     }
 
     function isLateStyleRow(tr) {
-        return rowHasRedOrOrangeExclamation(tr) || isTightPaxRow(tr);
+        return (
+            rowHasRedOrOrangeExclamation(tr) ||
+            isTightPaxRow(tr) ||
+            rowHasRedOrOrangeTableBackground(tr)
+        );
     }
 
     function parseFltFromCell(td) {

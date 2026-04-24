@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.30
+// @version      2.0.31
 // @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache + HTTP fallback), cross-tab poll (BC + storage) + alert/view sync, optional notify rules (form: High/Advisory colors + per-rule, or JSON), detail token highlights, WX yellow/red + badge, NEW until you leave station, collapsible AFD
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -3025,7 +3025,16 @@
         return (s >= 200 && s < 300) || s === 304;
     }
 
+    /** NOAA text FTP is not CORS-enabled; page `fetch` only creates console noise. Use GM only. */
+    function isTgftpNoaaUrl(u) {
+        return typeof u === 'string' && u.indexOf('https://tgftp.nws.noaa.gov/') === 0;
+    }
+
     function fetchTextViaPageFetch(url, cb) {
+        if (isTgftpNoaaUrl(url)) {
+            cb('');
+            return;
+        }
         if (typeof fetch !== 'function') {
             cb('');
             return;
@@ -3052,6 +3061,10 @@
             cb(typeof txt === 'string' ? txt : '');
         }
         function fallback() {
+            if (isTgftpNoaaUrl(url)) {
+                finish('');
+                return;
+            }
             if (typeof fetch !== 'function') {
                 finish('');
                 return;
@@ -3081,15 +3094,35 @@
                         finish(txt);
                         return;
                     }
+                    if (isTgftpNoaaUrl(url)) {
+                        finish(typeof txt === 'string' ? txt : '');
+                        return;
+                    }
                     fallback();
                 },
-                onerror: fallback,
-                ontimeout: fallback
+                onerror: function () {
+                    if (isTgftpNoaaUrl(url)) {
+                        finish('');
+                        return;
+                    }
+                    fallback();
+                },
+                ontimeout: function () {
+                    if (isTgftpNoaaUrl(url)) {
+                        finish('');
+                        return;
+                    }
+                    fallback();
+                }
             };
             if (headers) {
                 details.headers = headers;
             }
             GM_xmlhttpRequest(details);
+            return;
+        }
+        if (isTgftpNoaaUrl(url)) {
+            finish('');
             return;
         }
         fallback();
