@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.4.0
-// @description  Alt+click a flight puck: from Pax for that same leg, queue late (red/orange) outbound rows into the worksheet. Matches /pax-connections/{date}-{dep}-{flight}-… to the window you opened for that leg; other Pax windows are ignored. BroadcastChannel for separate-window Pax.
+// @version      1.5.0
+// @description  Alt+click a flight puck: optionally open Pax for that leg, then queue late (red/orange) outbound downline rows (optional NEXT/FINAL station filter) into the worksheet. Path match to /pax-connections/…; BroadcastChannel for a separate Pax window.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","description":"When on, Alt+left-click a puck finds outbound Pax (FLT) rows for the clicked leg, on red/orange highlights (row/cell class or background) or tight-style rows, then fills the worksheet flight field.","default":true},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match clicked leg to Pax window","description":"Uses the same URL segment as Middle-click Pax: …/pax-connections/{date}-{dep}-{flight}-WN-NULL so only the Pax window opened for that leg is used. Turn off to merge all red/orange rows (legacy, can mix different flights if several Pax popups are open).","default":true},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound before scan","description":"Tries to click the Pax 'Outbound' tab in the matching context, then waits so the table can render.","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound click (ms)","description":"How long to wait before reading the table.","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Merge from other opssuitemain windows","description":"Query other same-origin windows over BroadcastChannel. With “Match clicked leg” on, only a Pax page whose path matches the clicked leg replies.","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Wait for other windows (ms)","description":"How long to wait for the matching Pax window to reply. Increase if results are still empty.","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Console debug log","description":"Log [PAX-LATE-WS] lines when Alt+clicking. Off by default.","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between flights (ms)","description":"Waits this long after each Enter before the next number.","default":250,"min":0,"max":5000,"step":50}}
+// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","description":"When on, Alt+left-click a puck opens Pax (optional) and finds outbound red/orange (or tight) downline rows for the clicked leg, then fills the worksheet flight field.","default":true},"paxLateToWsOpenPaxWindow":{"type":"boolean","group":"Pax late to worksheet","label":"Open Pax window on Alt+click","description":"Opens the Pax connections URL for the clicked leg (…/pax-connections/{date}-{dep}-{flight}-WN-NULL) in a new tab/window, same as Middle-click, so a scan is not only from BroadcastChannel.","default":true},"paxLateToWsAfterOpenWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After opening Pax, wait (ms)","description":"Delay before clicking Outbound and reading the table (Pax can still be painting).","default":2000,"min":0,"max":20000,"step":100},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match clicked leg to Pax window","description":"Use …/pax-connections/{date}-{dep}-{flight}-… so only that leg’s table is read. The worksheet no longer uses unrelated tables.","default":true},"paxLateToWsDownlineColumn":{"type":"select","group":"Pax late to worksheet","label":"Downline station filter","description":"With filter IATA (below) non-empty, only count late rows whose NEXT and/or FINAL column text includes one of those 3-letter codes. Example: FINAL + MSP to skip a tight earlier downline.","default":"off","options":[{"value":"off","label":"No station filter (all red/orange rows)"},{"value":"final","label":"Must match in FINAL type column"},{"value":"next","label":"Must match in NEXT type column"},{"value":"next_or_final","label":"Match if in NEXT or FINAL"}]},"paxLateToWsDownlineIata":{"type":"string","group":"Pax late to worksheet","label":"Downline filter IATA codes","description":"Comma-separated, e.g. \"MSP, DEN\" — with column mode above, only those downline late rows (same row color rules) that mention a code in the chosen column(s) are sent to the worksheet. Leave empty to not filter.","default":"","placeholder":"e.g. MSP"},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound before scan","description":"Clicks the Pax 'Outbound' tab, then waits (Outbound wait ms) before reading.","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound click (ms)","description":"How long to wait before reading the table.","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Merge from other opssuitemain windows","description":"Query other same-origin windows over BroadcastChannel. With “Match clicked leg” on, only a Pax page whose path matches the clicked leg replies.","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Wait for other windows (ms)","description":"How long to wait for the matching Pax window to reply. Increase if results are still empty.","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Console debug log","description":"Log [PAX-LATE-WS] lines when Alt+clicking. Off by default.","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Delay between flights (ms)","description":"Waits this long after each Enter before the next number.","default":250,"min":0,"max":5000,"step":50}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // ==/UserScript==
@@ -61,6 +61,60 @@
             return 500;
         }
         return Math.min(5000, Math.max(0, Math.floor(n)));
+    }
+
+    function afterOpenPaxWaitMs() {
+        const n = Number(getPref('paxLateToWsAfterOpenWaitMs', 2000));
+        if (!Number.isFinite(n)) {
+            return 2000;
+        }
+        return Math.min(20000, Math.max(0, Math.floor(n)));
+    }
+
+    function getDownlineColumnMode() {
+        const v = getPref('paxLateToWsDownlineColumn', 'off');
+        if (v === 'final' || v === 'next' || v === 'next_or_final' || v === 'off') {
+            return v;
+        }
+        return 'off';
+    }
+
+    function parseDownlineIataListFromString(raw) {
+        if (!raw || typeof raw !== 'string') {
+            return [];
+        }
+        return String(raw)
+            .split(/[\s,;]+/)
+            .map(function (s) {
+                return s.replace(/^\s+|\s+$/g, '');
+            })
+            .filter(function (s) {
+                return /^[A-Z]{3}$/i.test(s);
+            })
+            .map(function (s) {
+                return s.toUpperCase();
+            });
+    }
+
+    function normalizeCollectOpts(obj) {
+        if (!obj) {
+            return {
+                downlineMode: getDownlineColumnMode(),
+                downlineIataList: parseDownlineIataListFromString(
+                    getPref('paxLateToWsDownlineIata', '') || ''
+                )
+            };
+        }
+        var mode =
+            obj.downlineMode !== undefined && obj.downlineMode !== null
+                ? obj.downlineMode
+                : getDownlineColumnMode();
+        var list = Array.isArray(obj.downlineIataList)
+            ? obj.downlineIataList
+            : parseDownlineIataListFromString(
+                  String(obj.downlineIataRaw || obj.downlineIata || '')
+              );
+        return { downlineMode: mode, downlineIataList: list };
     }
 
     function isVisibleForClick(el) {
@@ -138,7 +192,7 @@
     function tryClickPaxOutboundTab(cb, rootDocument, paxPathKey) {
         if (!getPref('paxLateToWsAutoOutboundTab', true)) {
             if (cb) {
-                cb(false);
+                cb(true);
             }
             return;
         }
@@ -147,7 +201,7 @@
             const wk = paxPathKeyFromWindowLocation(rootDoc);
             if (wk !== paxPathKey) {
                 if (cb) {
-                    cb(false);
+                    cb(true);
                 }
                 return;
             }
@@ -155,7 +209,7 @@
         const btn = findClickablePaxTab(/^outbound$/i, rootDocument);
         if (!btn) {
             if (cb) {
-                cb(false);
+                cb(true);
             }
             return;
         }
@@ -164,7 +218,7 @@
             btn.click();
         } catch (e) {
             if (cb) {
-                cb(false);
+                cb(true);
             }
             return;
         }
@@ -495,6 +549,21 @@
         );
     }
 
+    function buildPaxUrlForFlightData(fd) {
+        if (!buildPaxPathKeyFromFlightData(fd)) {
+            return null;
+        }
+        return (
+            'https://opssuitemain.swacorp.com/pax-connections/' +
+            fd.date +
+            '-' +
+            String(fd.depAirport).toUpperCase() +
+            '-' +
+            String(fd.flight) +
+            '-WN-NULL'
+        );
+    }
+
     function paxPathKeyFromWindowLocation(doc) {
         var d = doc || document;
         var loc;
@@ -808,6 +877,73 @@
         );
     }
 
+    function findHeaderColumnIndexByText(headerTr, substr) {
+        if (!headerTr || !substr) {
+            return -1;
+        }
+        const u = String(substr).toUpperCase();
+        const ths = headerTr.querySelectorAll('th');
+        for (var i = 0; i < ths.length; i++) {
+            if (thTextNorm(ths[i]).toUpperCase().indexOf(u) >= 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    function rowTextAtCellIndex(tr, colIdx) {
+        if (colIdx < 0) {
+            return '';
+        }
+        const tds = tr.querySelectorAll('td');
+        if (colIdx >= tds.length) {
+            return '';
+        }
+        return (tds[colIdx].textContent || '').replace(/\s+/g, ' ').toUpperCase();
+    }
+
+    function textContainsAnyIata(uppercasedCellText, iataList) {
+        if (!iataList || !iataList.length) {
+            return true;
+        }
+        var t = (uppercasedCellText || '').toUpperCase();
+        var j;
+        for (j = 0; j < iataList.length; j++) {
+            var c = (iataList[j] && String(iataList[j])) || '';
+            c = c.replace(/^\s+|\s+$/g, '').toUpperCase();
+            if (c && t.indexOf(c) >= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function rowMatchesDownlineFilter(tr, headerTr, opts) {
+        if (!tr || !headerTr) {
+            return true;
+        }
+        var o = opts || { downlineMode: 'off', downlineIataList: [] };
+        if (o.downlineMode === 'off' || !o.downlineIataList || !o.downlineIataList.length) {
+            return true;
+        }
+        var nextIdx = findHeaderColumnIndexByText(headerTr, 'NEXT');
+        var finalIdx = findHeaderColumnIndexByText(headerTr, 'FINAL');
+        var tNext = rowTextAtCellIndex(tr, nextIdx);
+        var tFin = rowTextAtCellIndex(tr, finalIdx);
+        var mNext = textContainsAnyIata(tNext, o.downlineIataList);
+        var mFin = textContainsAnyIata(tFin, o.downlineIataList);
+        if (o.downlineMode === 'next') {
+            return mNext;
+        }
+        if (o.downlineMode === 'final') {
+            return mFin;
+        }
+        if (o.downlineMode === 'next_or_final') {
+            return mNext || mFin;
+        }
+        return true;
+    }
+
     function parseFltFromCell(td) {
         if (!td) {
             return '';
@@ -837,10 +973,11 @@
         return m2 ? m2[1] : '';
     }
 
-    function collectLateFlightsFromRoot(root) {
+    function collectLateFlightsFromRoot(root, opts) {
         if (!root || !root.querySelectorAll) {
             return [];
         }
+        const scanOpts = opts || { downlineMode: 'off', downlineIataList: [] };
         const tables = root.querySelectorAll('table');
         const out = [];
         for (var t = 0; t < tables.length; t++) {
@@ -865,6 +1002,9 @@
                 if (!isLateStyleRow(tr)) {
                     continue;
                 }
+                if (!rowMatchesDownlineFilter(tr, headerTr, scanOpts)) {
+                    continue;
+                }
                 const cells = tr.querySelectorAll('td');
                 if (cells.length <= idx) {
                     continue;
@@ -878,14 +1018,15 @@
         return out;
     }
 
-    function collectLateFlightsFromPageForRoot(rootDocument, paxPathKey) {
+    function collectLateFlightsFromPageForRoot(rootDocument, paxPathKey, collectOpts) {
         const base = rootDocument || document;
         if (paxPathKey) {
             var wk0 = paxPathKeyFromWindowLocation(base);
-            if (wk0 && wk0 !== paxPathKey) {
+            if (wk0 !== paxPathKey) {
                 return [];
             }
         }
+        const co = normalizeCollectOpts(collectOpts);
         const seen = Object.create(null);
         const unique = [];
         function mergePart(part) {
@@ -900,11 +1041,11 @@
                 }
             }
         }
-        mergePart(collectLateFlightsFromRoot(base));
+        mergePart(collectLateFlightsFromRoot(base, co));
         const ifrDocs = iframeDocumentListFrom(base);
         var d;
         for (d = 0; d < ifrDocs.length; d++) {
-            mergePart(collectLateFlightsFromRoot(ifrDocs[d]));
+            mergePart(collectLateFlightsFromRoot(ifrDocs[d], co));
         }
         return unique;
     }
@@ -974,11 +1115,13 @@
             }
             const reqId = d.id;
             const rKey = d.paxPathKey || null;
+            const cOpts = normalizeCollectOpts(d.collectOpts || null);
             tryClickPaxOutboundTab(
                 function () {
                     const list = collectLateFlightsFromPageForRoot(
                         document,
-                        rKey
+                        rKey,
+                        cOpts
                     );
                     try {
                         if (bcastChannel) {
@@ -986,7 +1129,8 @@
                                 t: 'r',
                                 id: reqId,
                                 flights: list,
-                                paxPathKey: rKey
+                                paxPathKey: rKey,
+                                collectOpts: cOpts
                             });
                         }
                     } catch (e) {}
@@ -1003,6 +1147,19 @@
             }
             if (st.paxPathKey) {
                 if (d.paxPathKey && d.paxPathKey !== st.paxPathKey) {
+                    return;
+                }
+            }
+            if (st.collectOpts && d.collectOpts) {
+                if (
+                    String(st.collectOpts.downlineMode) !==
+                    String(d.collectOpts.downlineMode)
+                ) {
+                    return;
+                }
+                const a = (st.collectOpts.downlineIataList || []).join(',');
+                const b = (d.collectOpts.downlineIataList || []).join(',');
+                if (a !== b) {
                     return;
                 }
             }
@@ -1028,7 +1185,12 @@
         return bcastChannel;
     }
 
-    function requestLateFlightsFromOtherWindows(localList, paxPathKey, onDone) {
+    function requestLateFlightsFromOtherWindows(
+        localList,
+        paxPathKey,
+        collectOpts,
+        onDone
+    ) {
         if (!getPref('paxLateToWsQueryOtherWindows', true)) {
             onDone(localList);
             return;
@@ -1044,7 +1206,12 @@
             return;
         }
         const id = randomBcastId();
-        const st = { list: [], paxPathKey: paxPathKey || null };
+        const cOpts = normalizeCollectOpts(collectOpts);
+        const st = {
+            list: [],
+            paxPathKey: paxPathKey || null,
+            collectOpts: cOpts
+        };
         mergeFlightsUniqueInto(st.list, localList);
         st.timer = setTimeout(function () {
             if (pendingBcastById[id] === st) {
@@ -1055,7 +1222,7 @@
             } catch (e) {}
         }, wait);
         pendingBcastById[id] = st;
-        var payload = { t: 'q', id: id };
+        var payload = { t: 'q', id: id, collectOpts: cOpts };
         if (paxPathKey) {
             payload.paxPathKey = paxPathKey;
         }
@@ -1171,18 +1338,18 @@
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
+        const clickFd = findFlightDataFromPuck(puck, e.target);
         var wantMatch = getPref('paxLateToWsMatchPaxPath', true);
         var paxPathKey = null;
         if (wantMatch) {
-            var fd = findFlightDataFromPuck(puck, e.target);
-            if (!fd) {
-                log('Could not read dep/flight for the clicked leg (puck). Open Pax for this same leg (Middle-click) or turn off "Match clicked leg" in script prefs.');
+            if (!clickFd) {
+                log('Could not read dep/flight for the clicked leg (puck). Turn off "Match clicked leg" in script prefs or use a different puck area.');
                 setTimeout(function () {
                     stepThroughFlights([]);
                 }, 0);
                 return;
             }
-            paxPathKey = buildPaxPathKeyFromFlightData(fd);
+            paxPathKey = buildPaxPathKeyFromFlightData(clickFd);
             if (!paxPathKey) {
                 log('Could not build Pax window key (need yyyymmdd, dep, flight on puck).');
                 setTimeout(function () {
@@ -1192,31 +1359,64 @@
             }
             log('Clicked leg key ' + paxPathKey + ' (only this Pax page window is used).');
         }
-        tryClickPaxOutboundTab(
-            function () {
-                const local = collectLateFlightsFromPageForRoot(
-                    document,
-                    paxPathKey
-                );
-                log('Local late flights: ' + (local.length ? local.join(', ') : '(none)'));
-                requestLateFlightsFromOtherWindows(
-                    local,
-                    paxPathKey,
-                    function (flights) {
-                        log(
-                            'Merged late flights: ' +
-                            (flights.length ? flights.join(', ') : '(none)')
-                        );
-                        const t0 = setTimeout(function () {
-                            stepThroughFlights(flights);
-                        }, 0);
-                        pendingTimeouts.push(t0);
-                    }
-                );
-            },
-            document,
-            paxPathKey
-        );
+        var cOpts = normalizeCollectOpts(null);
+
+        function runPaxToWorksheetCollection() {
+            tryClickPaxOutboundTab(
+                function () {
+                    const local = collectLateFlightsFromPageForRoot(
+                        document,
+                        paxPathKey,
+                        cOpts
+                    );
+                    log(
+                        'Local late flights: ' +
+                        (local.length ? local.join(', ') : '(none)')
+                    );
+                    requestLateFlightsFromOtherWindows(
+                        local,
+                        paxPathKey,
+                        cOpts,
+                        function (flights) {
+                            log(
+                                'Merged late flights: ' +
+                                (flights.length
+                                    ? flights.join(', ')
+                                    : '(none)')
+                            );
+                            const t0 = setTimeout(function () {
+                                stepThroughFlights(flights);
+                            }, 0);
+                            pendingTimeouts.push(t0);
+                        }
+                    );
+                },
+                document,
+                paxPathKey
+            );
+        }
+
+        if (getPref('paxLateToWsOpenPaxWindow', true) && clickFd) {
+            const paxUrl = buildPaxUrlForFlightData(clickFd);
+            if (paxUrl) {
+                try {
+                    log('Opening Pax window: ' + paxUrl);
+                    window.open(paxUrl, '_blank', 'noopener,noreferrer');
+                } catch (e2) {}
+            }
+        }
+
+        if (getPref('paxLateToWsOpenPaxWindow', true) && clickFd && paxPathKey) {
+            var tOpen = setTimeout(
+                function () {
+                    runPaxToWorksheetCollection();
+                },
+                afterOpenPaxWaitMs()
+            );
+            pendingTimeouts.push(tOpen);
+        } else {
+            runPaxToWorksheetCollection();
+        }
     }
 
     function bindPuck(puck) {
