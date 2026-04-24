@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.7.5
+// @version      2.7.6
 // @description  FIMS tab: Wall of Fame; data from WALL of FAME/wall-of-fame.json + local cache (no baked-in accolades)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -21,6 +21,7 @@
     var PANEL_ID = 'dc-wof-panel';
     var TCP_PANEL_ID = 'dc-fims-top-clickers-panel';
     var STYLE_ID = 'dc-wof-style';
+    var HIDE_FIMS_FOR_ADVIS_ATTR = 'data-dc-fims-id-hide-for-advisories';
 
     /** Defaults when DonkeyCODE session-sync prefs are absent (getPref('donkeycode_github_*')). */
     var GITHUB_OWNER = 'MikeBane57';
@@ -1569,6 +1570,20 @@
         return out;
     }
 
+    function applyFimsIdAdvisoriesVisibility(hide) {
+        var el = document.getElementById(TABLE_ID);
+        if (!el) {
+            return;
+        }
+        if (hide) {
+            el.setAttribute(HIDE_FIMS_FOR_ADVIS_ATTR, '1');
+            el.style.setProperty('display', 'none', 'important');
+        } else {
+            el.removeAttribute(HIDE_FIMS_FOR_ADVIS_ATTR);
+            el.style.removeProperty('display');
+        }
+    }
+
     function showFimsTable() {
         var tab = document.getElementById(TAB_ID);
         if (tab) {
@@ -1577,6 +1592,7 @@
         var table = document.getElementById(TABLE_ID);
         var panel = document.getElementById(PANEL_ID);
         hideTopClickersPanel();
+        applyFimsIdAdvisoriesVisibility(false);
         if (table) {
             table.style.display = '';
         }
@@ -1586,9 +1602,8 @@
     }
 
     /**
-     * Native Advisories tab: hide our WOF/leaderboard UI only. Do not toggle #fims-id —
-     * the app switches to a different segment; forcing the FIMS table visible breaks
-     * Advisories when used alongside the injected tabs.
+     * Native Advisories tab: FIMS #fims-id can share the same active segment as the
+     * advisory MFE; hide the FIMS table (with !important) and our injected panels.
      */
     function onNativeAdvisoriesTabClick() {
         var tab = document.getElementById(TAB_ID);
@@ -1600,6 +1615,13 @@
         if (panel) {
             panel.style.display = 'none';
         }
+        function refix() {
+            applyFimsIdAdvisoriesVisibility(true);
+        }
+        refix();
+        setTimeout(refix, 0);
+        setTimeout(refix, 80);
+        setTimeout(refix, 200);
     }
 
     var lastWofActivate = 0;
@@ -1672,6 +1694,7 @@
         } else if (segments.length === 1) {
             segments[0].classList.add('active');
         }
+        applyFimsIdAdvisoriesVisibility(false);
         hideTopClickersPanel();
         table.style.display = 'none';
         mountPanelInFimsTabSegment(panel, table);
