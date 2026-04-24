@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.8.5
-// @description  Tight pax: compact “Send tight conx to worksheet” button, toasts, faster worksheet discovery. Alt+click opens Pax popup; refocus optional.
+// @version      1.8.6
+// @description  Tight pax: outbound ETD uses line time (not swap/hover). Compact Send, toasts, worksheet discovery. Alt+click opens Pax popup; refocus optional.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","default":true},"paxLateToWsOpenPaxWindow":{"type":"boolean","group":"Pax late to worksheet","label":"Open Pax on Alt+click","default":true,"description":"Opens a separate browser window (not a tab) when the popup options below are used."},"paxLateToWsPaxAsPopupWindow":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Pax in popup (not new tab)","default":true,"description":"Uses window features (size/position) like Middle-click launcher, so the worksheet can stay the focused tab."},"paxLateToWsPaxRefocusOpener":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Refocus this window after open","default":true,"description":"Call window.focus() on the schedule/worksheet window after opening Pax (best-effort; browser may still show the popup on top)."},"paxLateToWsPaxWinW":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup width (px)","default":1000,"min":400,"max":2400,"step":10},"paxLateToWsPaxWinH":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup height (px)","default":800,"min":400,"max":2000,"step":10},"paxLateToWsPaxWinLeft":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup left offset from this window (px)","default":24,"min":-2000,"max":2000,"step":1},"paxLateToWsPaxWinTop":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup top offset (px)","default":24,"min":0,"max":2000,"step":1},"paxLateToWsPaxWindowName":{"type":"string","group":"Pax late to worksheet · open Pax","label":"Reusable window name","default":"__dcPaxLateFlightsPax__","description":"If another Pax from this control is already using this name, the same window may navigate (browser dependent). Use a new name to always get a new popup."},"paxLateToWsAfterOpenWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After open Pax, wait (ms)","default":2000,"min":0,"max":20000,"step":100},"paxLateToWsPaxInlineSend":{"type":"boolean","group":"Pax late to worksheet","label":"Pax: inline send by connection","default":true,"description":"Compact button between CONNECT and SCH ARR; remembers worksheet per IATA."},"paxLateToWsWorksheetPicker":{"type":"boolean","group":"Pax late to worksheet","label":"Ask which worksheet (multi-tab)","default":true},"paxLateToWsListWorksheetsMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet list wait (ms)","default":1200,"min":200,"max":5000,"step":50,"description":"Other tabs need time to answer; raise if the Send button does nothing (no worksheet found)."},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match leg to Pax URL","default":true},"paxLateToWsTightByTime":{"type":"boolean","group":"Pax late to worksheet · time","label":"Tight = ETD within gap of ref ETA","default":true},"paxLateToWsTightMaxGapMin":{"type":"number","group":"Pax late to worksheet · time","label":"Max minutes (ETD after ref ETA)","default":20,"min":0,"max":300,"step":1},"paxLateToWsTightTimeOrColor":{"type":"boolean","group":"Pax late to worksheet · time","label":"OR include red/orange rows","default":true},"paxLateToWsDownlineColumn":{"type":"select","group":"Pax late to worksheet","label":"IATA filter column","default":"off","options":[{"value":"off","label":"No IATA filter"},{"value":"final","label":"FINAL only"},{"value":"next","label":"NEXT only"},{"value":"next_or_final","label":"NEXT or FINAL"}]},"paxLateToWsDownlineIata":{"type":"string","group":"Pax late to worksheet","label":"IATA list","default":"","placeholder":"e.g. MSP"},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound first","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound (ms)","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Broadcast from Pax to worksheet","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Pax reply wait (ms)","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Debug log","default":false},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Enter delay (ms)","default":250,"min":0,"max":5000,"step":50}}
@@ -1160,8 +1160,7 @@
     }
 
     /**
-     * Schedule ETD/ETA: ignore nested tooltips (e.g. swap FLT table) so the
-     * first H:MM in the line cell is the one compared to ref ETA.
+     * First H:MM in the string (for SCH ARR, single-time cells).
      */
     function parseTimeToMinutesFromText(raw) {
         if (!raw) {
@@ -1191,6 +1190,31 @@
             h = 0;
         }
         return h * 60 + min;
+    }
+
+    /**
+     * Outbound ETD: do not use cell title (hover often lists swap 18:25 first).
+     * After stripping swap tables, if several times remain, the line schedule
+     * ETD is the last in reading order (e.g. 14:16 after 18:25 in DOM text).
+     */
+    function parseOutboundEtdFromCell(tcell) {
+        if (!tcell) {
+            return null;
+        }
+        const base = stripNestedTablesGetText(tcell);
+        if (!base) {
+            return null;
+        }
+        const re = /(\d{1,2})\s*:\s*(\d{2})/g;
+        var lastSub = null;
+        var m;
+        while ((m = re.exec(base)) !== null) {
+            lastSub = m[0];
+        }
+        if (!lastSub) {
+            return null;
+        }
+        return parseTimeToMinutesFromText(lastSub);
     }
 
     function findEtaColumnIndex(headerTr) {
@@ -1292,9 +1316,7 @@
         if (!tcell) {
             return false;
         }
-        const etdM = parseTimeToMinutesFromText(
-            tcell.getAttribute('title') || stripNestedTablesGetText(tcell)
-        );
+        const etdM = parseOutboundEtdFromCell(tcell);
         if (etdM == null) {
             return false;
         }
