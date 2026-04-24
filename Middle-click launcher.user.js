@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Middle-click launcher
 // @namespace    Wolf 2.0
-// @version      3.0.1
+// @version      3.0.2
 // @description  Middle-click a flight puck to open Pax connections, Go turn details, and/or a custom URL (prefs)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -252,6 +252,24 @@
         return null;
     }
 
+    function tryStringAsGoTurnSlug(s) {
+        if (!s || typeof s !== 'string') {
+            return null;
+        }
+        var t = s.trim();
+        if (t.indexOf('go-turn-details') !== -1) {
+            return slugFromGoTurnHref(t);
+        }
+        if (parseGoTurnSlugEnrichment(t)) {
+            return t;
+        }
+        var pl = parseLinkedHoverRoute(t);
+        if (pl && pl.slug) {
+            return pl.slug;
+        }
+        return null;
+    }
+
     function scanValueForGoTurnSlug(val, depth) {
         if (depth > 8) {
             return null;
@@ -260,6 +278,10 @@
             return null;
         }
         if (typeof val === 'string') {
+            var asSlug = tryStringAsGoTurnSlug(val);
+            if (asSlug) {
+                return asSlug;
+            }
             if (val.indexOf('go-turn-details') !== -1) {
                 return slugFromGoTurnHref(val);
             }
@@ -356,6 +378,47 @@
         return null;
     }
 
+    /**
+     * Turn Details in the AC puck menu is often <a class="item"> with no href and
+     * value="[object Object]" — route is only in React; scan fiber from that row.
+     */
+    function findVisibleTurnDetailsMenuItem() {
+        var candidates = document.querySelectorAll('a.item, a[class*="item"]');
+        var i;
+        for (i = 0; i < candidates.length; i++) {
+            var el = candidates[i];
+            var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+            if (!/^turn details$/i.test(t)) {
+                continue;
+            }
+            var r = el.getBoundingClientRect();
+            if (r.width < 1 || r.height < 1) {
+                continue;
+            }
+            var st = window.getComputedStyle ? window.getComputedStyle(el) : null;
+            if (st && (st.visibility === 'hidden' || st.display === 'none')) {
+                continue;
+            }
+            return el;
+        }
+        return null;
+    }
+
+    function extractGoTurnSlugFromTurnDetailsMenuRow(anchor) {
+        if (!anchor) {
+            return null;
+        }
+        var fib = getReactFiberFromNode(anchor);
+        if (fib) {
+            var seen = new WeakSet();
+            var up = walkFiberAncestorsForGoTurnSlug(fib, seen);
+            if (up) {
+                return up;
+            }
+        }
+        return extractGoTurnSlugFromReactInternals(anchor);
+    }
+
     function readGoTurnSlugFromOpenMenu() {
         function slugFromAnchor(node) {
             if (!node) {
@@ -363,6 +426,13 @@
             }
             var href = node.getAttribute('href') || node.href || '';
             return slugFromGoTurnHref(href);
+        }
+        var tdRow = findVisibleTurnDetailsMenuItem();
+        if (tdRow) {
+            var fromFiber = extractGoTurnSlugFromTurnDetailsMenuRow(tdRow);
+            if (fromFiber) {
+                return fromFiber;
+            }
         }
         var menu = document.querySelector('[data-testid="puck-context-menu"]');
         var a = menu && menu.querySelector('a[href*="go-turn-details"], a[href*="/widgets/go-turn-details"]');
