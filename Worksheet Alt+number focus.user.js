@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Worksheet Alt+number focus
 // @namespace    Wolf 2.0
-// @version      1.0.0
-// @description  Alt+1..9 = focus worksheet 1..9, Alt+0 = worksheet 10. Matches tab title (WS #, Worksheet renamer, etc.); uses same broadcast channel as Pax late → worksheet.
+// @version      1.1.0
+// @description  Alt+1..9 / Alt+0 (10): BroadcastChannel + localStorage for cross-tab focus. Bare title "1" matches. Browsers may block raising tab to front.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"wsAltNumJumperEnabled":{"type":"boolean","group":"Worksheet hotkey","label":"Enable Alt+number","default":true,"description":"Alt+1..9 focus WS 1..9, Alt+0 = WS 10. Best-effort: browser may not switch tabs; matching worksheet still runs window.focus() and a title flash if hidden."},"wsAltNumJumperLog":{"type":"boolean","group":"Worksheet hotkey","label":"Debug log","default":false,"description":"Console: which worksheet matched, focus attempts."}}
+// @donkeycode-pref {"wsAltNumJumperEnabled":{"type":"boolean","group":"Worksheet hotkey","label":"Enable Alt+number","default":true,"description":"Alt+1..9 and Alt+0 = worksheet 10. Uses BroadcastChannel plus localStorage so other tabs get the request when yours is not focused. Chromium often blocks programmatic tab activation; title will still flash if a match. For a true top tab, use Ctrl+Tab, the window’s own hotkeys, or reorder and use Chrome/Edge Alt+1-8."},"wsAltNumJumperLog":{"type":"boolean","group":"Worksheet hotkey","label":"Debug log","default":false,"description":"Console: which # was requested, what the page title parsed to, and if a match fired focus."}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20Alt%2Bnumber%20focus.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20Alt%2Bnumber%20focus.user.js
 // ==/UserScript==
@@ -15,10 +15,13 @@
 
     var BC_NAME = 'dc_pax_late_to_ws_v1';
     var MSG_T = 'ws_focus_by_num';
+    /** Same-origin; storage event is delivered to *other* tabs and often more reliable than broadcast for focus. */
+    var LS_FOCUS_KEY = 'dc_ws_alt_focus_v1';
 
     var ch = null;
     var onKey = null;
     var onBcast = null;
+    var onStorage = null;
     var initTimer = null;
 
     function getPref(key, def) {
@@ -59,9 +62,13 @@
 
     /**
      * Best-effort: same idea as Worksheet renamer — get the canonical # from the tab title.
+     * Includes bare "1" or "12" (renamed tab is only the index).
      */
     function extractWorksheetNumberFromTitle(t) {
-        var s = String(t || '');
+        var s = String(t || '').trim();
+        if (!s) {
+            return '';
+        }
         var m = s.match(/WorkSheet\s*#?\s*(\d{1,4})/i);
         if (m) {
             return m[1];
@@ -78,7 +85,11 @@
         if (m) {
             return m[1];
         }
-        m = s.match(/^\s*(\d{1,4})\s*[·•]\s*/);
+        m = s.match(/^\s*(\d{1,4})\s*[·•]/);
+        if (m) {
+            return m[1];
+        }
+        m = /^\s*(\d{1,4})\s*$/.exec(s);
         if (m) {
             return m[1];
         }
@@ -92,24 +103,39 @@
         var w = String(wantNum);
         var got = extractWorksheetNumberFromTitle(document.title);
         if (!got || got !== w) {
+            if (getPref('wsAltNumJumperLog', false) !== false) {
+                log('No match: want ' + w + ', title parsed as "' + got + '" (raw title: ' + (document.title || '').slice(0, 80) + ')');
+            }
             return;
         }
-        log('Match WS ' + w + ' — focus this tab');
+        log('Match WS ' + w + ' — focus (hidden=' + !!document.hidden + ')');
+        function doFocus() {
+            try {
+                if (document.body && document.body.focus) {
+                    document.body.focus();
+                }
+            } catch (e0) {}
+            try {
+                window.focus();
+            } catch (e) {}
+        }
+        doFocus();
+        setTimeout(doFocus, 0);
+        setTimeout(doFocus, 50);
         try {
-            window.focus();
-        } catch (e) {}
-        try {
-            if (document.hidden) {
-                var o = document.title;
+            var o = document.title;
+            if (o) {
                 var step = 0;
                 var iv = setInterval(function () {
                     document.title = step % 2 ? o : '► ' + o;
                     step++;
                     if (step > 5) {
-                        clearInterval(iv);
+                        try {
+                            clearInterval(iv);
+                        } catch (e) {}
                         document.title = o;
                     }
-                }, 200);
+                }, 220);
             }
         } catch (e2) {}
     }
@@ -145,15 +171,28 @@
         var c = ensureChannel();
         if (!c) {
             log('BroadcastChannel unavailable');
-            return;
+        } else {
+            try {
+                c.postMessage({
+                    t: MSG_T,
+                    n: num,
+                    ts: Date.now()
+                });
+            } catch (e) {}
         }
         try {
-            c.postMessage({
-                t: MSG_T,
-                n: num,
-                ts: Date.now()
-            });
-        } catch (e) {}
+            localStorage.setItem(
+                LS_FOCUS_KEY,
+                JSON.stringify({
+                    t: MSG_T,
+                    n: num,
+                    ts: Date.now(),
+                    r: String(Math.random()).slice(2, 12)
+                })
+            );
+        } catch (e) {
+            log('localStorage focus ping failed (private mode?)');
+        }
     }
 
     function keyToWorksheetNumber(e) {
@@ -207,10 +246,30 @@
         }
     }
 
+    function onStorageEvent(ev) {
+        if (!ev || ev.key !== LS_FOCUS_KEY || !ev.newValue) {
+            return;
+        }
+        var d;
+        try {
+            d = JSON.parse(ev.newValue);
+        } catch (e) {
+            return;
+        }
+        if (!d || d.t !== MSG_T || d.n == null) {
+            return;
+        }
+        tryFocusThisWorksheetIfNumberMatches(d.n);
+    }
+
     function init() {
         onBcast = onBroadcastMessage;
+        onStorage = onStorageEvent;
         onKey = onKeyDown;
         ensureChannel();
+        try {
+            window.addEventListener('storage', onStorage, false);
+        } catch (e) {}
         document.addEventListener('keydown', onKey, true);
     }
 
@@ -226,6 +285,12 @@
                 document.removeEventListener('keydown', onKey, true);
             } catch (e) {}
             onKey = null;
+        }
+        if (onStorage) {
+            try {
+                window.removeEventListener('storage', onStorage, false);
+            } catch (e) {}
+            onStorage = null;
         }
         if (ch) {
             try {
