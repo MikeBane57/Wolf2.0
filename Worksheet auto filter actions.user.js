@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.3.7
-// @description  Worksheet: compact collapsible auto filter actions; watch AC/LN/FLT; Replace/Append/Remove on change or interval.
+// @version      1.3.8
+// @description  Worksheet: auto filter per worksheet tab; watch/interval/operational time scoped by session tab id.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
 // @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto filter actions","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto filter actions","label":"Interval (seconds)","description":"Default seconds for interval clicks when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
@@ -23,6 +23,14 @@
     var LS_METRICS = 'dc_worksheet_auto_replace_metrics';
     var LS_COLLAPSED = 'dc_worksheet_auto_replace_collapsed';
     var LS_OP_TIME_AUTO = 'dc_worksheet_auto_op_time_24h';
+    /**
+     * Per-worksheet-tab state. Keys = session tab id (see dcPaxLateWsTabId); values = settings object.
+     * Replaces the flat localStorage keys above (migrated once from legacy on first read).
+     */
+    var LS_BY_WORKSHEET_TAB = 'dc_worksheet_auto_replace_by_tab_v1';
+    var SS_WORKSHEET_TAB_ID = 'dcPaxLateWsTabId';
+
+    var cachedWorksheetTabId = null;
 
     var pollTimer = null;
     var intervalTimer = null;
@@ -53,32 +61,33 @@
         return Math.min(10000, Math.max(200, Math.floor(n)));
     }
 
-    function readWatchOn() {
-        try {
-            return localStorage.getItem(LS_KEY) === '1';
-        } catch (e) {
-            return false;
+    function getOrCreateWorksheetTabId() {
+        if (cachedWorksheetTabId) {
+            return cachedWorksheetTabId;
         }
-    }
-
-    function writeWatchOn(on) {
         try {
-            localStorage.setItem(LS_KEY, on ? '1' : '0');
+            var ex = sessionStorage.getItem(SS_WORKSHEET_TAB_ID);
+            if (ex) {
+                cachedWorksheetTabId = ex;
+                return ex;
+            }
         } catch (e) {}
-    }
-
-    function readIntervalOn() {
+        cachedWorksheetTabId = 'ws' + String(Date.now()) + '-' + String(Math.random()).slice(2, 10);
         try {
-            return localStorage.getItem(LS_INTERVAL_ON) === '1';
-        } catch (e) {
-            return false;
-        }
-    }
-
-    function writeIntervalOn(on) {
-        try {
-            localStorage.setItem(LS_INTERVAL_ON, on ? '1' : '0');
+            sessionStorage.setItem(SS_WORKSHEET_TAB_ID, cachedWorksheetTabId);
         } catch (e) {}
+        return cachedWorksheetTabId;
+    }
+
+    function readAllByTab() {
+        try {
+            var raw = localStorage.getItem(LS_BY_WORKSHEET_TAB);
+            if (raw) {
+                var o = JSON.parse(raw);
+                return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+            }
+        } catch (e) {}
+        return {};
     }
 
     function intervalSecFromPref() {
@@ -89,112 +98,269 @@
         return Math.min(3600, Math.max(5, Math.floor(n)));
     }
 
-    function intervalSecEffective() {
+    function defaultTabState() {
+        return {
+            watchOn: false,
+            intervalOn: false,
+            intervalSec: intervalSecFromPref(),
+            actionWatch: 'replace',
+            actionInterval: 'replace',
+            metrics: { tails: true, lines: true, flights: true },
+            collapsed: false,
+            opTimeAuto: false
+        };
+    }
+
+    var LS_LEGACY_MIGRATED = 'dc_worksheet_auto_replace_legacy_to_tab_v1';
+
+    function hasLegacyLocalStorageKeys() {
         try {
-            var raw = localStorage.getItem(LS_INTERVAL_SEC);
-            if (raw !== null && raw !== '') {
-                var n = parseInt(raw, 10);
+            if (localStorage.getItem(LS_KEY) != null) {
+                return true;
+            }
+            if (localStorage.getItem(LS_INTERVAL_ON) != null) {
+                return true;
+            }
+            if (localStorage.getItem(LS_INTERVAL_SEC) != null) {
+                return true;
+            }
+            if (localStorage.getItem(LS_ACTION_WATCH) != null) {
+                return true;
+            }
+            if (localStorage.getItem(LS_ACTION_INTERVAL) != null) {
+                return true;
+            }
+            if (localStorage.getItem(LS_METRICS) != null) {
+                return true;
+            }
+            if (localStorage.getItem(LS_COLLAPSED) != null) {
+                return true;
+            }
+            if (localStorage.getItem(LS_OP_TIME_AUTO) != null) {
+                return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function clearLegacyLocalStorageKeys() {
+        var keys = [
+            LS_KEY,
+            LS_INTERVAL_ON,
+            LS_INTERVAL_SEC,
+            LS_ACTION_WATCH,
+            LS_ACTION_INTERVAL,
+            LS_METRICS,
+            LS_COLLAPSED,
+            LS_OP_TIME_AUTO
+        ];
+        var i;
+        for (i = 0; i < keys.length; i++) {
+            try {
+                localStorage.removeItem(keys[i]);
+            } catch (e) {}
+        }
+    }
+
+    function buildStateFromLegacyKeys() {
+        var s = defaultTabState();
+        try {
+            if (localStorage.getItem(LS_KEY) === '1') {
+                s.watchOn = true;
+            }
+        } catch (e) {}
+        try {
+            if (localStorage.getItem(LS_INTERVAL_ON) === '1') {
+                s.intervalOn = true;
+            }
+        } catch (e) {}
+        try {
+            var isec = localStorage.getItem(LS_INTERVAL_SEC);
+            if (isec != null && isec !== '') {
+                var n = parseInt(isec, 10);
                 if (Number.isFinite(n)) {
-                    return Math.min(3600, Math.max(5, n));
+                    s.intervalSec = Math.min(3600, Math.max(5, n));
                 }
             }
         } catch (e) {}
-        return intervalSecFromPref();
+        try {
+            var aw = localStorage.getItem(LS_ACTION_WATCH);
+            if (aw === 'append' || aw === 'remove') {
+                s.actionWatch = aw;
+            }
+        } catch (e) {}
+        try {
+            var ai = localStorage.getItem(LS_ACTION_INTERVAL);
+            if (ai === 'append' || ai === 'remove') {
+                s.actionInterval = ai;
+            }
+        } catch (e) {}
+        try {
+            var rawM = localStorage.getItem(LS_METRICS);
+            if (rawM) {
+                var parts = String(rawM)
+                    .split(',')
+                    .map(function (x) {
+                        return x.trim().toLowerCase();
+                    });
+                s.metrics = {
+                    tails: parts.indexOf('tails') >= 0,
+                    lines: parts.indexOf('lines') >= 0,
+                    flights: parts.indexOf('flights') >= 0
+                };
+                if (!s.metrics.tails && !s.metrics.lines && !s.metrics.flights) {
+                    s.metrics = { tails: true, lines: true, flights: true };
+                }
+            }
+        } catch (e) {}
+        try {
+            if (localStorage.getItem(LS_COLLAPSED) === '1') {
+                s.collapsed = true;
+            }
+        } catch (e) {}
+        try {
+            if (localStorage.getItem(LS_OP_TIME_AUTO) === '1') {
+                s.opTimeAuto = true;
+            }
+        } catch (e) {}
+        return s;
+    }
+
+    function migrateLegacyToPerTab() {
+        try {
+            if (localStorage.getItem(LS_LEGACY_MIGRATED) === '1' || !hasLegacyLocalStorageKeys()) {
+                return;
+            }
+        } catch (e) {
+            return;
+        }
+        var all = readAllByTab();
+        var tid = getOrCreateWorksheetTabId();
+        if (!all[tid]) {
+            all[tid] = buildStateFromLegacyKeys();
+            try {
+                localStorage.setItem(LS_BY_WORKSHEET_TAB, JSON.stringify(all));
+            } catch (e) {}
+        }
+        clearLegacyLocalStorageKeys();
+        try {
+            localStorage.setItem(LS_LEGACY_MIGRATED, '1');
+        } catch (e) {}
+    }
+
+    function readTabState() {
+        migrateLegacyToPerTab();
+        var tid = getOrCreateWorksheetTabId();
+        var all = readAllByTab();
+        var s = all[tid];
+        if (s && typeof s === 'object') {
+            var o = defaultTabState();
+            o.watchOn = !!s.watchOn;
+            o.intervalOn = !!s.intervalOn;
+            var nsec = Number(s.intervalSec);
+            o.intervalSec = Number.isFinite(nsec) ? Math.min(3600, Math.max(5, Math.floor(nsec))) : intervalSecFromPref();
+            o.actionWatch = s.actionWatch === 'append' || s.actionWatch === 'remove' ? s.actionWatch : 'replace';
+            o.actionInterval =
+                s.actionInterval === 'append' || s.actionInterval === 'remove' ? s.actionInterval : 'replace';
+            o.metrics = {
+                tails: !!(s.metrics && s.metrics.tails),
+                lines: !!(s.metrics && s.metrics.lines),
+                flights: !!(s.metrics && s.metrics.flights)
+            };
+            if (!o.metrics.tails && !o.metrics.lines && !o.metrics.flights) {
+                o.metrics = { tails: true, lines: true, flights: true };
+            }
+            o.collapsed = !!s.collapsed;
+            o.opTimeAuto = !!s.opTimeAuto;
+            return o;
+        }
+        return defaultTabState();
+    }
+
+    function writeTabState(next) {
+        var tid = getOrCreateWorksheetTabId();
+        var all = readAllByTab();
+        all[tid] = next;
+        try {
+            localStorage.setItem(LS_BY_WORKSHEET_TAB, JSON.stringify(all));
+        } catch (e) {}
+    }
+
+    function readWatchOn() {
+        return readTabState().watchOn;
+    }
+
+    function writeWatchOn(on) {
+        var s = readTabState();
+        s.watchOn = !!on;
+        writeTabState(s);
+    }
+
+    function readIntervalOn() {
+        return readTabState().intervalOn;
+    }
+
+    function writeIntervalOn(on) {
+        var s = readTabState();
+        s.intervalOn = !!on;
+        writeTabState(s);
+    }
+
+    function intervalSecEffective() {
+        return readTabState().intervalSec;
     }
 
     function writeIntervalSec(n) {
-        try {
-            localStorage.setItem(LS_INTERVAL_SEC, String(n));
-        } catch (e) {}
+        var s = readTabState();
+        s.intervalSec = n;
+        writeTabState(s);
     }
 
     function readActionWatch() {
-        try {
-            var v = localStorage.getItem(LS_ACTION_WATCH);
-            if (v === 'append' || v === 'remove' || v === 'replace') {
-                return v;
-            }
-        } catch (e) {}
-        return 'replace';
+        return readTabState().actionWatch;
     }
 
     function writeActionWatch(a) {
-        try {
-            localStorage.setItem(LS_ACTION_WATCH, a === 'append' || a === 'remove' ? a : 'replace');
-        } catch (e) {}
+        var s = readTabState();
+        s.actionWatch = a === 'append' || a === 'remove' ? a : 'replace';
+        writeTabState(s);
     }
 
     function readActionInterval() {
-        try {
-            var v = localStorage.getItem(LS_ACTION_INTERVAL);
-            if (v === 'append' || v === 'remove' || v === 'replace') {
-                return v;
-            }
-        } catch (e) {}
-        return 'replace';
+        return readTabState().actionInterval;
     }
 
     function writeActionInterval(a) {
-        try {
-            localStorage.setItem(LS_ACTION_INTERVAL, a === 'append' || a === 'remove' ? a : 'replace');
-        } catch (e) {}
+        var s = readTabState();
+        s.actionInterval = a === 'append' || a === 'remove' ? a : 'replace';
+        writeTabState(s);
     }
 
     function readMetricsSet() {
-        try {
-            var raw = localStorage.getItem(LS_METRICS);
-            if (!raw || raw === '') {
-                return { tails: true, lines: true, flights: true };
-            }
-            var parts = String(raw)
-                .split(',')
-                .map(function (s) {
-                    return s.trim().toLowerCase();
-                });
-            var o = {
-                tails: parts.indexOf('tails') >= 0,
-                lines: parts.indexOf('lines') >= 0,
-                flights: parts.indexOf('flights') >= 0
-            };
-            if (!o.tails && !o.lines && !o.flights) {
-                return { tails: true, lines: true, flights: true };
-            }
-            return o;
-        } catch (e) {}
-        return { tails: true, lines: true, flights: true };
+        return readTabState().metrics;
     }
 
     function writeMetricsSet(o) {
-        var arr = [];
-        if (o.tails) {
-            arr.push('tails');
+        var s = readTabState();
+        s.metrics = {
+            tails: !!o.tails,
+            lines: !!o.lines,
+            flights: !!o.flights
+        };
+        if (!s.metrics.tails && !s.metrics.lines && !s.metrics.flights) {
+            s.metrics = { tails: true, lines: true, flights: true };
         }
-        if (o.lines) {
-            arr.push('lines');
-        }
-        if (o.flights) {
-            arr.push('flights');
-        }
-        if (!arr.length) {
-            arr = ['tails', 'lines', 'flights'];
-        }
-        try {
-            localStorage.setItem(LS_METRICS, arr.join(','));
-        } catch (e) {}
+        writeTabState(s);
     }
 
     function readCollapsed() {
-        try {
-            return localStorage.getItem(LS_COLLAPSED) === '1';
-        } catch (e) {
-            return false;
-        }
+        return readTabState().collapsed;
     }
 
     function writeCollapsed(collapsed) {
-        try {
-            localStorage.setItem(LS_COLLAPSED, collapsed ? '1' : '0');
-        } catch (e) {}
+        var s = readTabState();
+        s.collapsed = !!collapsed;
+        writeTabState(s);
     }
 
     /**
@@ -708,17 +874,13 @@
     var OP_TIME_TICK_MS = 10 * 60 * 1000;
 
     function readOpTimeAuto() {
-        try {
-            return localStorage.getItem(LS_OP_TIME_AUTO) === '1';
-        } catch (e) {
-            return false;
-        }
+        return readTabState().opTimeAuto;
     }
 
     function writeOpTimeAuto(on) {
-        try {
-            localStorage.setItem(LS_OP_TIME_AUTO, on ? '1' : '0');
-        } catch (e) {}
+        var s = readTabState();
+        s.opTimeAuto = !!on;
+        writeTabState(s);
     }
 
     function findOperationalTimeField() {
@@ -846,7 +1008,7 @@
         cb.title = 'Fill OPERATIONAL TIME with the current time (24h, HHmm) and refresh every 10 minutes';
         cb.checked = readOpTimeAuto();
         var hint = document.createElement('span');
-        hint.textContent = 'auto current time (24h, updates every 10 min)';
+        hint.textContent = 'auto current time (24h, every 10 min) — this worksheet only';
         line.appendChild(cb);
         line.appendChild(hint);
 
@@ -879,7 +1041,7 @@
 
     var HOST_HTML =
         '<details class="dc-war-details">' +
-        '<summary>Worksheet auto filter actions</summary>' +
+        '<summary>Worksheet auto filter actions (this tab only)</summary>' +
         '<div class="dc-war-body">' +
         '<div class="dc-war-row dc-war-watch-row">' +
         '<label><input type="checkbox" data-dc-watch-toggle /> Watch</label>' +
