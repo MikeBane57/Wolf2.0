@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.43
+// @version      2.0.44
 // @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -5285,6 +5285,73 @@
         }
     }
 
+    function bindWorksheetToolbarButtonActivate(el, run) {
+        if (!el || el.getAttribute('data-dc-toolbar-activate') === '1') {
+            return;
+        }
+        el.setAttribute('data-dc-toolbar-activate', '1');
+        var suppressClick = false;
+        var tClear = 0;
+        el.addEventListener(
+            'pointerup',
+            function (ev) {
+                if (!ev || ev.isTrusted === false) {
+                    return;
+                }
+                if (ev.button != null && ev.button !== 0) {
+                    return;
+                }
+                suppressClick = true;
+                if (tClear) {
+                    try {
+                        clearTimeout(tClear);
+                    } catch (e) {}
+                }
+                tClear = setTimeout(function () {
+                    suppressClick = false;
+                }, 800);
+                try {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    if (ev.stopImmediatePropagation) {
+                        ev.stopImmediatePropagation();
+                    }
+                } catch (e2) {}
+                try {
+                    run(ev);
+                } catch (e3) {}
+            },
+            true
+        );
+        el.addEventListener(
+            'click',
+            function (ev) {
+                if (!ev || ev.isTrusted === false) {
+                    return;
+                }
+                if (ev.button != null && ev.button !== 0) {
+                    return;
+                }
+                if (suppressClick) {
+                    suppressClick = false;
+                    try {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                    } catch (e) {}
+                    return;
+                }
+                try {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                } catch (e2) {}
+                try {
+                    run(ev);
+                } catch (e3) {}
+            },
+            true
+        );
+    }
+
     function bindWxButtonIfNeeded() {
         if (!btn) {
             return;
@@ -5293,9 +5360,7 @@
             return;
         }
         btn.setAttribute('data-dc-wx-click-bound', '1');
-        btn.addEventListener('click', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
+        bindWorksheetToolbarButtonActivate(btn, function () {
             if (Notification && Notification.permission === 'default' && boolPref('metarWatchNotify', true)) {
                 try {
                     Notification.requestPermission();
