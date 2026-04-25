@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.40
+// @version      2.0.41
 // @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -5001,8 +5001,9 @@
 
     var WX_BTN_ATTR = 'data-dc-metar-watch-btn';
     var TOOLBAR_STYLE_ID = 'dc-metar-ws-toolbar-ptr-style';
-    var onWxDocClick = null;
-    var wxDocClickBound = false;
+    var WORKSHEET_FLOAT_HOST_ID = 'dc-worksheet-scripts-float-host';
+    var WSB_STATE_ID = 'dc-ws-state-reload-host';
+    var WSB_BRIEF_ID = 'dc-brief-ai-ws-host';
 
     function isPaxConnectionsPage() {
         try {
@@ -5068,23 +5069,46 @@
         return sorted && sorted.closest ? sorted.closest('.fields') : null;
     }
 
-    function orderWsbInHelper(helper) {
-        if (!helper) {
+    function orderWsbInFloat(fh) {
+        if (!fh) {
             return;
         }
-        var wxn = helper.querySelector('[data-dc-metar-watch-btn="1"]');
-        var br = document.getElementById('dc-brief-ai-ws-host');
-        var st = document.getElementById('dc-ws-state-reload-host');
+        var wxn = fh.querySelector('[' + WX_BTN_ATTR + '="1"]');
+        var br = document.getElementById(WSB_BRIEF_ID);
+        var st = document.getElementById(WSB_STATE_ID);
         var i;
         var list = [wxn, br, st];
         for (i = 0; i < list.length; i++) {
             var n = list[i];
-            if (n && n.parentNode === helper) {
+            if (n && n.parentNode === fh) {
                 try {
-                    helper.appendChild(n);
+                    fh.appendChild(n);
                 } catch (e) {}
             }
         }
+    }
+
+    function ensureWorksheetScriptFloatHost() {
+        var el = document.getElementById(WORKSHEET_FLOAT_HOST_ID);
+        if (el) {
+            return el;
+        }
+        el = document.createElement('div');
+        el.id = WORKSHEET_FLOAT_HOST_ID;
+        el.setAttribute('data-dc-worksheet-script-float', '1');
+        el.title = 'Wolf2.0 worksheet tools (WX, Brief, WS state)';
+        el.style.cssText =
+            'position:fixed!important;top:8px!important;right:8px!important;z-index:2147483640!important;' +
+            'display:inline-flex!important;align-items:stretch!important;flex-wrap:wrap!important;gap:6px!important;' +
+            'max-width:min(100vw - 16px, 680px)!important;box-sizing:border-box!important;padding:8px 10px!important;' +
+            'background:rgba(20,25,32,.95)!important;border:1px solid #4a5a6a!important;border-radius:8px!important;' +
+            'box-shadow:0 6px 24px rgba(0,0,0,.45)!important;pointer-events:auto!important;';
+        try {
+            if (document.body) {
+                document.body.appendChild(el);
+            }
+        } catch (e) {}
+        return el;
     }
 
     function positionWorksheetHelperToRowEnd(fields, helper) {
@@ -5123,52 +5147,36 @@
         return helper;
     }
 
-    function removeEmptyWorksheetHelperField() {
-        var helper = document.querySelector('[data-dc-worksheet-helper-buttons="1"]');
-        if (helper && !helper.querySelector('button,[data-dc-ws-state-reload-host],#dc-ws-state-reload-host')) {
+    function pruneWorksheetScriptFloatHost() {
+        var fh = document.getElementById(WORKSHEET_FLOAT_HOST_ID);
+        if (!fh) {
+            return;
+        }
+        if (
+            !fh.querySelector(
+                '#' + WSB_STATE_ID + ', #' + WSB_BRIEF_ID + ', [' + WX_BTN_ATTR + '="1"]'
+            )
+        ) {
             try {
-                helper.remove();
+                fh.remove();
             } catch (e) {}
         }
     }
 
-    function ensureWxDocumentClickCapture() {
-        if (wxDocClickBound) {
-            return;
+    function removeEmptyWorksheetHelperField() {
+        var helper = document.querySelector(
+            '[data-dc-worksheet-helper-buttons="1"]'
+        );
+        if (
+            helper &&
+            !helper.querySelector(
+                'button, #' + WSB_STATE_ID + ', #' + WSB_BRIEF_ID
+            )
+        ) {
+            try {
+                helper.remove();
+            } catch (e) {}
         }
-        onWxDocClick = function (ev) {
-            if (isPaxConnectionsPage()) {
-                return;
-            }
-            var t = ev.target;
-            if (!t) {
-                return;
-            }
-            if (t.nodeType !== 1) {
-                t = t.parentElement;
-            }
-            if (!t || !t.closest) {
-                return;
-            }
-            var wbtn = t.closest('[' + WX_BTN_ATTR + '="1"]');
-            if (!wbtn || wbtn.getAttribute('data-dc-mwx-disabled') === '1') {
-                return;
-            }
-            ev.preventDefault();
-            ev.stopPropagation();
-            ev.stopImmediatePropagation();
-            if (Notification && Notification.permission === 'default' && boolPref('metarWatchNotify', true)) {
-                try {
-                    Notification.requestPermission();
-                } catch (e) {}
-            }
-            openModal();
-        };
-        document.addEventListener('click', onWxDocClick, true);
-        try {
-            window.addEventListener('click', onWxDocClick, true);
-        } catch (e) {}
-        wxDocClickBound = true;
     }
 
     function ensureMetarToolbarZStyle() {
@@ -5266,16 +5274,38 @@
         }
     }
 
+    function bindWxButtonIfNeeded() {
+        if (!btn) {
+            return;
+        }
+        if (btn.getAttribute('data-dc-wx-click-bound') === '1') {
+            return;
+        }
+        btn.setAttribute('data-dc-wx-click-bound', '1');
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (Notification && Notification.permission === 'default' && boolPref('metarWatchNotify', true)) {
+                try {
+                    Notification.requestPermission();
+                } catch (e) {}
+            }
+            openModal();
+        });
+    }
+
     function mountButtonNearClock() {
         if (isPaxConnectionsPage()) {
             detachMetarWatchWxButton();
             return;
         }
-        ensureWxDocumentClickCapture();
         ensureMetarToolbarZStyle();
         dedupeWxButtonNodes();
 
-        var worksheetHelper = getOrCreateWorksheetHelperField();
+        var worksheetHelper =
+            isWorksheetWidgetPage() && document.body
+                ? ensureWorksheetScriptFloatHost()
+                : null;
         var anchor = worksheetHelper ? null : findGmtClockElement();
         var host = worksheetHelper || (anchor && anchor.parentElement ? anchor.parentElement : document.body);
         if (!btn) {
@@ -5320,15 +5350,18 @@
         if (!btn.getAttribute('data-dc-wx-open-bound')) {
             btn.setAttribute('data-dc-wx-open-bound', '1');
         }
+        bindWxButtonIfNeeded();
         if (worksheetHelper) {
             btn.style.marginLeft = '0';
             btn.style.minHeight = '36px';
             btn.style.height = 'auto';
             btn.style.alignSelf = 'stretch';
             if (btn.parentNode !== worksheetHelper) {
-                worksheetHelper.appendChild(btn);
+                try {
+                    worksheetHelper.appendChild(btn);
+                } catch (e) {}
             }
-            orderWsbInHelper(worksheetHelper);
+            orderWsbInFloat(worksheetHelper);
         } else if (anchor && anchor.parentNode) {
             var hPar = anchor.parentNode;
             btn.style.marginLeft = '8px';
@@ -6354,7 +6387,6 @@
     }
 
     function init() {
-        ensureWxDocumentClickCapture();
         buildModal();
         mountButtonNearClock();
         initCrossTabPollSync();
@@ -6423,16 +6455,6 @@
         alertRulesPerSectionWrap = null;
         alertRulesPerHost = null;
         try {
-            if (onWxDocClick) {
-                try {
-                    document.removeEventListener('click', onWxDocClick, true);
-                } catch (e) {}
-                try {
-                    window.removeEventListener('click', onWxDocClick, true);
-                } catch (e2) {}
-                onWxDocClick = null;
-            }
-            wxDocClickBound = false;
             if (btn) {
                 btn.remove();
             }
@@ -6444,18 +6466,21 @@
             }
         } catch (e3) {}
         try {
+            pruneWorksheetScriptFloatHost();
+        } catch (e4) {}
+        try {
             var hel = document.querySelector(
                 '[data-dc-worksheet-helper-buttons="1"]'
             );
             if (
                 hel &&
                 !hel.querySelector(
-                    'button, #dc-ws-state-reload-host, #dc-brief-ai-ws-host'
+                    'button, #' + WSB_STATE_ID + ', #' + WSB_BRIEF_ID
                 )
             ) {
                 hel.remove();
             }
-        } catch (e4) {}
+        } catch (e5) {}
         stopCodModelLoop();
         var pk;
         for (pk in codCacheByParms) {

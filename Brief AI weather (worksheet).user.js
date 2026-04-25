@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.1.8
+// @version      0.1.9
 // @description  Worksheet: regional weather brief (METAR-based) — optional LLM (Groq, Gemini, Ollama, etc.); button by WX/WS state.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/*
@@ -26,6 +26,7 @@
     var STYLE_ID = 'dc-brief-ai-ws-style';
     var WX_SEL = '[data-dc-metar-watch-btn="1"]';
     var STATE_HOST_ID = 'dc-ws-state-reload-host';
+    var WORKSHEET_FLOAT_HOST_ID = 'dc-worksheet-scripts-float-host';
 
     /** Default WN regions (IATA). Duplicates in source lists are de-duped at runtime. */
     var DEFAULT_EAST =
@@ -70,8 +71,6 @@
     var mountObserver = null;
     var modalOpen = false;
     var mountInterval = null;
-    var onBriefDocClick = null;
-    var briefDocClickBound = false;
 
     function isWorksheetPage() {
         try {
@@ -867,128 +866,77 @@
         }
     }
 
-    function ensureBriefDocumentClickCapture() {
-        if (briefDocClickBound) {
-            return;
-        }
-        onBriefDocClick = function (ev) {
-            if (!isWorksheetPage()) {
-                return;
-            }
-            var t = ev.target;
-            if (!t) {
-                return;
-            }
-            if (t.nodeType !== 1) {
-                t = t.parentElement;
-            }
-            if (!t || !t.closest) {
-                return;
-            }
-            var wbtn = t.closest('[' + BTN_ATTR + '="1"]');
-            if (!wbtn) {
-                return;
-            }
-            if (!wbtn.isConnected) {
-                return;
-            }
-            if (!document.getElementById(HOST_ID) || !document.getElementById(HOST_ID).contains(wbtn)) {
-                return;
-            }
-            ev.preventDefault();
-            ev.stopPropagation();
-            ev.stopImmediatePropagation();
-            startBrief();
-        };
-        document.addEventListener('click', onBriefDocClick, true);
-        try {
-            window.addEventListener('click', onBriefDocClick, true);
-        } catch (e) {}
-        briefDocClickBound = true;
-    }
-
     function makeButton() {
         var b = document.createElement('button');
         b.type = 'button';
         b.setAttribute(BTN_ATTR, '1');
         b.textContent = 'Brief AI';
         b.title = 'Regional weather brief (METAR + LLM: Groq/Gemini/Ollama in DonkeyCODE prefs)';
+        b.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            startBrief();
+        });
         return b;
     }
 
 
-    function textLabel(el) {
-        return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim();
-    }
-
-    function findWorksheetFieldsRow() {
-        var buttons = document.querySelectorAll('button');
-        var i;
-        for (i = 0; i < buttons.length; i++) {
-            if (/^Clear WS$/i.test(textLabel(buttons[i]))) {
-                var fields = buttons[i].closest && buttons[i].closest('.fields');
-                if (fields) {
-                    return fields;
-                }
-            }
-        }
-        var sorted = document.querySelector('div[name="sortedBy"]');
-        return sorted && sorted.closest ? sorted.closest('.fields') : null;
-    }
-
-    function orderWsbInHelper(helper) {
-        if (!helper) {
+    function orderWsbInFloat(fh) {
+        if (!fh) {
             return;
         }
-        var wxn = helper.querySelector('[data-dc-metar-watch-btn="1"]');
+        var wxn = fh.querySelector('[data-dc-metar-watch-btn="1"]');
         var br = document.getElementById(HOST_ID);
         var st = document.getElementById(STATE_HOST_ID);
         var i;
         var list = [wxn, br, st];
         for (i = 0; i < list.length; i++) {
             var n = list[i];
-            if (n && n.parentNode === helper) {
+            if (n && n.parentNode === fh) {
                 try {
-                    helper.appendChild(n);
+                    fh.appendChild(n);
                 } catch (e) {}
             }
         }
     }
 
-    function positionWorksheetHelperToRowEnd(fields, helper) {
-        if (!fields || !helper) {
-            return;
+    function ensureWorksheetScriptFloatHost() {
+        var el = document.getElementById(WORKSHEET_FLOAT_HOST_ID);
+        if (el) {
+            return el;
         }
+        el = document.createElement('div');
+        el.id = WORKSHEET_FLOAT_HOST_ID;
+        el.setAttribute('data-dc-worksheet-script-float', '1');
+        el.title = 'Wolf2.0 worksheet tools (WX, Brief, WS state)';
+        el.style.cssText =
+            'position:fixed!important;top:8px!important;right:8px!important;z-index:2147483640!important;' +
+            'display:inline-flex!important;align-items:stretch!important;flex-wrap:wrap!important;gap:6px!important;' +
+            'max-width:min(100vw - 16px, 680px)!important;box-sizing:border-box!important;padding:8px 10px!important;' +
+            'background:rgba(20,25,32,.95)!important;border:1px solid #4a5a6a!important;border-radius:8px!important;' +
+            'box-shadow:0 6px 24px rgba(0,0,0,.45)!important;pointer-events:auto!important;';
         try {
-            fields.appendChild(helper);
+            if (document.body) {
+                document.body.appendChild(el);
+            }
         } catch (e) {}
-        try {
-            helper.style.display = 'inline-flex';
-            helper.style.alignItems = 'stretch';
-            helper.style.gap = '4px';
-            helper.style.marginLeft = '';
-        } catch (e2) {}
+        return el;
     }
 
-    function getOrCreateWorksheetHelperField() {
-        var fields = findWorksheetFieldsRow();
-        if (!fields) {
-            return null;
+    function pruneWorksheetScriptFloatHost() {
+        var fh = document.getElementById(WORKSHEET_FLOAT_HOST_ID);
+        if (!fh) {
+            return;
         }
-        var helper = fields.querySelector('[data-dc-worksheet-helper-buttons="1"]');
-        if (helper) {
-            positionWorksheetHelperToRowEnd(fields, helper);
-            return helper;
+        if (
+            !fh.querySelector(
+                '#' + STATE_HOST_ID + ', #' + HOST_ID + ', [data-dc-metar-watch-btn="1"]'
+            )
+        ) {
+            try {
+                fh.remove();
+            } catch (e) {}
         }
-        helper = document.createElement('div');
-        helper.className = 'field';
-        helper.setAttribute('data-dc-worksheet-helper-buttons', '1');
-        helper.style.display = 'inline-flex';
-        helper.style.alignItems = 'stretch';
-        helper.style.gap = '4px';
-        fields.appendChild(helper);
-        positionWorksheetHelperToRowEnd(fields, helper);
-        return helper;
     }
 
     function removeEmptyWorksheetHelperField() {
@@ -1007,78 +955,10 @@
         }
     }
 
-    /**
-     * Same logic as WS state-reload / METAR: header + toolbar scan, time + GMT/Zulu.
-     */
-    function findGmtClockElement() {
-        var scopes = [];
-        var h = document.querySelector('header');
-        if (h) {
-            scopes.push(h);
-        }
-        var tb = document.querySelector(
-            '[class*="toolbar"],[class*="Toolbar"],[class*="topbar"],[class*="TopBar"],[class*="app-bar"]'
-        );
-        if (tb) {
-            scopes.push(tb);
-        }
-        if (!scopes.length) {
-            scopes.push(document.body);
-        }
-        var si, sj;
-        for (si = 0; si < scopes.length; si++) {
-            var candidates = scopes[si].querySelectorAll(
-                'span,div,button,p,time,li'
-            );
-            for (sj = 0; sj < candidates.length; sj++) {
-                var el = candidates[sj];
-                var t = trim(el.textContent || '');
-                if (t.length > 120 || !/\d{1,2}:\d{2}/.test(t)) {
-                    continue;
-                }
-                if (/GMT|Zulu|\bUTC\b|\(Z\)/i.test(t)) {
-                    return el;
-                }
-            }
-        }
-        return null;
-    }
-
-    function sizeHostToRow(host, refEl) {
-        if (!host || !refEl) {
-            return;
-        }
-        try {
-            var row = refEl.parentElement;
-            if (row) {
-                var cs = window.getComputedStyle(row);
-                if (cs && cs.display !== 'flex' && cs.display !== 'inline-flex') {
-                    row.style.display = 'flex';
-                    row.style.alignItems = 'stretch';
-                }
-            }
-            var rowH = Math.max(
-                (row && (row.offsetHeight || row.clientHeight)) || 0,
-                refEl.offsetHeight || 0,
-                refEl.clientHeight || 0
-            );
-            if (rowH < 24) {
-                rowH = 36;
-            }
-            rowH = Math.min(rowH, 50);
-            host.querySelectorAll('[' + BTN_ATTR + ']').forEach(function (b) {
-                b.style.minHeight = rowH + 'px';
-                b.style.height = 'auto';
-                b.style.alignSelf = 'stretch';
-            });
-        } catch (e) {}
-    }
-
     function mount() {
         if (!isWorksheetPage() || !document.body) {
             return;
         }
-        ensureBriefDocumentClickCapture();
         ensureStyle();
         var host = document.getElementById(HOST_ID);
         if (!host) {
@@ -1092,67 +972,29 @@
             } catch (e) {}
         }
 
-        var helper = getOrCreateWorksheetHelperField();
-        if (helper) {
+        var fh = ensureWorksheetScriptFloatHost();
+        if (fh) {
             host.style.cssText = '';
-            var sh1 = document.getElementById(STATE_HOST_ID);
             try {
-                if (sh1 && sh1.parentNode === helper) {
-                    helper.insertBefore(host, sh1);
-                } else {
-                    helper.appendChild(host);
-                }
-            } catch (e2) {
-                try {
-                    helper.appendChild(host);
-                } catch (e3) {}
-            }
-            orderWsbInHelper(helper);
+                fh.appendChild(host);
+            } catch (e2) {}
+            orderWsbInFloat(fh);
             host.querySelectorAll('[' + BTN_ATTR + ']').forEach(function (b) {
                 b.style.minHeight = '36px';
                 b.style.height = 'auto';
                 b.style.alignSelf = 'stretch';
             });
-            return;
         }
-
-        var stateHost = document.getElementById(STATE_HOST_ID);
-        if (stateHost && stateHost.parentNode) {
-            var par0 = stateHost.parentNode;
+        var oldH = document.querySelector(
+            '[data-dc-worksheet-helper-buttons="1"]'
+        );
+        if (oldH && oldH.querySelector('#' + HOST_ID)) {
             try {
-                par0.insertBefore(host, stateHost);
-            } catch (e4) {
-                try {
-                    par0.appendChild(host);
-                } catch (e5) {}
-            }
-            sizeHostToRow(host, stateHost);
-            return;
-        }
-
-        var wx = document.querySelector(WX_SEL);
-        var anchor = wx || findGmtClockElement();
-        if (anchor && anchor.parentNode) {
-            var par = anchor.parentNode;
-            try {
-                var sh2 = document.getElementById(STATE_HOST_ID);
-                if (sh2 && sh2.parentNode === par) {
-                    par.insertBefore(host, sh2);
-                } else {
-                    par.insertBefore(host, anchor.nextSibling);
+                var ob = oldH.querySelector('#' + HOST_ID);
+                if (ob) {
+                    ob.remove();
                 }
-            } catch (e6) {
-                try {
-                    par.appendChild(host);
-                } catch (e7) {}
-            }
-            sizeHostToRow(host, anchor);
-        } else {
-            host.style.cssText =
-                'position:fixed!important;right:12px!important;top:48px!important;z-index:2147483000!important;';
-            try {
-                document.body.appendChild(host);
-            } catch (e8) {}
+            } catch (e3) {}
         }
     }
 
@@ -1215,9 +1057,6 @@
             });
         } catch (e) {}
     }
-    if (isWorksheetPage() && document.body) {
-        ensureBriefDocumentClickCapture();
-    }
     startObservers();
     mountObserver = new MutationObserver(function () {
         schedule();
@@ -1255,31 +1094,24 @@
             } catch (e2) {}
             mountObserver = null;
         }
-        if (onBriefDocClick) {
-            try {
-                document.removeEventListener('click', onBriefDocClick, true);
-            } catch (e3) {}
-            try {
-                window.removeEventListener('click', onBriefDocClick, true);
-            } catch (e4) {}
-            onBriefDocClick = null;
-        }
-        briefDocClickBound = false;
         var h = document.getElementById(HOST_ID);
         if (h && h.parentNode) {
             try {
                 h.parentNode.removeChild(h);
-            } catch (e5) {}
+            } catch (e3) {}
         }
         var st = document.getElementById(STYLE_ID);
         if (st) {
             try {
                 st.remove();
-            } catch (e6) {}
+            } catch (e4) {}
         }
         try {
+            pruneWorksheetScriptFloatHost();
+        } catch (e5) {}
+        try {
             removeEmptyWorksheetHelperField();
-        } catch (e7) {}
+        } catch (e6) {}
         closeModal();
     };
     window.dcBriefAiScriptCleanup = dcBriefAiCoreCleanup;

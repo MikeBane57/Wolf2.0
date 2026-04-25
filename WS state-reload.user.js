@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.1.5
+// @version      0.1.6
 // @description  Worksheet: save named AC tail/line states, recall them later, quick reload/restore, and optionally share cloud states.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
@@ -24,6 +24,8 @@
     var SS_QUICK_RESTORE = 'dc_ws_state_reload_restore_after_reload_v1';
     var WX_BTN_SELECTOR = '[data-dc-metar-watch-btn="1"]';
     var BRIEF_HOST_ID = 'dc-brief-ai-ws-host';
+    /** Fixed bar on body — outside app root so DonkeyCODE/React do not eat clicks. */
+    var WORKSHEET_FLOAT_HOST_ID = 'dc-worksheet-scripts-float-host';
     var STATE_TTL_MS = 4 * 60 * 60 * 1000;
     var GITHUB_OWNER = 'MikeBane57';
     var GITHUB_REPO = 'Wolf2.0';
@@ -34,8 +36,6 @@
     var mountObserver = null;
     var mountRaf = 0;
     var restoreTimer = null;
-    var onWsToolbarDocClick = null;
-    var docClickCaptureBound = false;
     var activeApplyTimer = null;
     var cloudRowsHost = null;
     var localRowsHost = null;
@@ -832,22 +832,65 @@
         return sorted && sorted.closest ? sorted.closest('.fields') : null;
     }
 
-    function orderWsbInHelper(helper) {
-        if (!helper) {
+    function orderWsbInFloat(fh) {
+        if (!fh) {
             return;
         }
-        var wxn = helper.querySelector('[data-dc-metar-watch-btn="1"]');
-        var br = document.getElementById('dc-brief-ai-ws-host');
+        var wxn = fh.querySelector('[data-dc-metar-watch-btn="1"]');
+        var br = document.getElementById(BRIEF_HOST_ID);
         var st = document.getElementById(HOST_ID);
         var i;
         var list = [wxn, br, st];
         for (i = 0; i < list.length; i++) {
             var n = list[i];
-            if (n && n.parentNode === helper) {
+            if (n && n.parentNode === fh) {
                 try {
-                    helper.appendChild(n);
+                    fh.appendChild(n);
                 } catch (e) {}
             }
+        }
+    }
+
+    function ensureWorksheetScriptFloatHost() {
+        var el = document.getElementById(WORKSHEET_FLOAT_HOST_ID);
+        if (el) {
+            return el;
+        }
+        el = document.createElement('div');
+        el.id = WORKSHEET_FLOAT_HOST_ID;
+        el.setAttribute('data-dc-worksheet-script-float', '1');
+        el.title = 'Wolf2.0 worksheet tools (WX, Brief, WS state)';
+        el.style.cssText =
+            'position:fixed!important;top:8px!important;right:8px!important;z-index:2147483640!important;' +
+            'display:inline-flex!important;align-items:stretch!important;flex-wrap:wrap!important;gap:6px!important;' +
+            'max-width:min(100vw - 16px, 680px)!important;box-sizing:border-box!important;padding:8px 10px!important;' +
+            'background:rgba(20,25,32,.95)!important;border:1px solid #4a5a6a!important;border-radius:8px!important;' +
+            'box-shadow:0 6px 24px rgba(0,0,0,.45)!important;pointer-events:auto!important;';
+        try {
+            if (document.body) {
+                document.body.appendChild(el);
+            } else {
+                return el;
+            }
+        } catch (e) {
+            return el;
+        }
+        return el;
+    }
+
+    function pruneWorksheetScriptFloatHost() {
+        var fh = document.getElementById(WORKSHEET_FLOAT_HOST_ID);
+        if (!fh) {
+            return;
+        }
+        if (
+            !fh.querySelector(
+                '#' + HOST_ID + ', #' + BRIEF_HOST_ID + ', [data-dc-metar-watch-btn="1"]'
+            )
+        ) {
+            try {
+                fh.remove();
+            } catch (e) {}
         }
     }
 
@@ -953,6 +996,10 @@
         var st = document.createElement('style');
         st.id = STYLE_ID;
         st.textContent =
+            '#' +
+            WORKSHEET_FLOAT_HOST_ID +
+            ' button{' +
+            'min-height:34px!important;padding:0 10px!important;}' +
             '[data-dc-worksheet-helper-buttons="1"],#' +
             HOST_ID +
             ',#dc-brief-ai-ws-host,button[data-dc-metar-watch-btn="1"]{' +
@@ -1014,69 +1061,31 @@
         document.head.appendChild(st);
     }
 
-    /**
-     * DonkeyCODE can surface clicks after React/embedded handlers. Document capture runs first.
-     * data-dc-ws-action: save | load | quick
-     */
     function makeButton(label, title, action) {
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.textContent = label;
-        btn.title = title;
-        btn.setAttribute('data-dc-ws-action', String(action));
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        b.title = title;
+        b.setAttribute('data-dc-ws-action', String(action));
         if (action === 'load') {
-            btn.setAttribute('data-dc-ws-load', '1');
+            b.setAttribute('data-dc-ws-load', '1');
         } else if (action === 'quick') {
-            btn.setAttribute('data-dc-ws-quick', '1');
+            b.setAttribute('data-dc-ws-quick', '1');
         } else {
-            btn.setAttribute('data-dc-ws-save', '1');
+            b.setAttribute('data-dc-ws-save', '1');
         }
-        return btn;
-    }
-
-    function ensureWsStateDocumentClickCapture() {
-        if (docClickCaptureBound) {
-            return;
-        }
-        onWsToolbarDocClick = function (ev) {
-            if (!isWorksheetPage()) {
-                return;
-            }
-            var t = ev.target;
-            if (!t) {
-                return;
-            }
-            if (t.nodeType !== 1) {
-                t = t.parentElement;
-            }
-            if (!t || !t.closest) {
-                return;
-            }
-            var h = t.closest('#' + HOST_ID);
-            if (!h) {
-                return;
-            }
-            var btn = t.tagName === 'BUTTON' ? t : t.closest('button');
-            if (!btn || !h.contains(btn)) {
-                return;
-            }
+        b.addEventListener('click', function (ev) {
             ev.preventDefault();
             ev.stopPropagation();
-            ev.stopImmediatePropagation();
-            var a = (btn.getAttribute('data-dc-ws-action') || '').toLowerCase();
-            if (a === 'load') {
+            if (action === 'load') {
                 openLoadDialog();
-            } else if (a === 'quick') {
+            } else if (action === 'quick') {
                 quickReload();
             } else {
                 saveCurrentState();
             }
-        };
-        document.addEventListener('click', onWsToolbarDocClick, true);
-        try {
-            window.addEventListener('click', onWsToolbarDocClick, true);
-        } catch (e) {}
-        docClickCaptureBound = true;
+        });
+        return b;
     }
 
     function mountControls() {
@@ -1106,73 +1115,41 @@
                 )
             );
         }
-        ensureWsStateDocumentClickCapture();
-        var helper = getOrCreateWorksheetHelperField();
-        var anchor = helper ? null : findMountAnchor();
-        if (helper) {
+        var fh = ensureWorksheetScriptFloatHost();
+        if (fh) {
             host.style.position = '';
             host.style.right = '';
             host.style.top = '';
             host.style.zIndex = '';
-            if (host.parentNode !== helper) {
-                helper.appendChild(host);
-            }
-            orderWsbInHelper(helper);
-            host.querySelectorAll('button').forEach(function (b) {
-                b.style.minHeight = '36px';
-                b.style.height = 'auto';
-                b.style.alignSelf = 'stretch';
-            });
-        } else if (anchor && anchor.parentNode) {
-            var parent = anchor.parentNode;
-            host.style.position = '';
-            host.style.right = '';
-            host.style.top = '';
-            host.style.zIndex = '';
-            host.style.marginLeft = '';
-            if (host.parentNode !== parent) {
+            if (host.parentNode !== fh) {
                 try {
-                    parent.appendChild(host);
-                } catch (e0) {
-                    try {
-                        parent.insertBefore(host, anchor.nextSibling);
-                    } catch (e1) {}
-                }
-            } else if (host.nextSibling) {
-                try {
-                    parent.appendChild(host);
-                } catch (e2) {}
+                    fh.appendChild(host);
+                } catch (e) {}
             }
+            orderWsbInFloat(fh);
+        }
+        var oldHelper = document.querySelector(
+            '[data-dc-worksheet-helper-buttons="1"]'
+        );
+        if (oldHelper) {
             try {
-                var row = anchor.parentElement;
-                if (row) {
-                    var cs = window.getComputedStyle(row);
-                    if (cs && cs.display !== 'flex' && cs.display !== 'inline-flex') {
-                        row.style.display = 'flex';
-                        row.style.alignItems = 'stretch';
+                if (
+                    !oldHelper.querySelector(
+                        'button,#' + HOST_ID + ',#' + BRIEF_HOST_ID
+                    )
+                ) {
+                    oldHelper.remove();
+                } else {
+                    if (oldHelper.querySelector('#' + HOST_ID)) {
+                        var orphan = oldHelper.querySelector('#' + HOST_ID);
+                        if (orphan && orphan.parentNode === oldHelper) {
+                            try {
+                                orphan.remove();
+                            } catch (e2) {}
+                        }
                     }
                 }
-                var rowH = Math.max(
-                    (row && (row.offsetHeight || row.clientHeight)) || 0,
-                    anchor.offsetHeight || 0,
-                    anchor.clientHeight || 0
-                );
-                if (rowH < 24) {
-                    rowH = 36;
-                }
-                rowH = Math.min(rowH, 50);
-                host.querySelectorAll('button').forEach(function (b) {
-                    b.style.minHeight = rowH + 'px';
-                    b.style.height = 'auto';
-                    b.style.alignSelf = 'stretch';
-                });
-            } catch (e) {}
-        } else if (host.parentNode !== document.body) {
-            host.style.position = 'fixed';
-            host.style.right = '12px';
-            host.style.top = '12px';
-            host.style.zIndex = '99999';
-            document.body.appendChild(host);
+            } catch (e3) {}
         }
     }
 
@@ -1599,7 +1576,6 @@
         if (!isWorksheetPage()) {
             return;
         }
-        ensureWsStateDocumentClickCapture();
         readStateStore();
         mountControls();
         restoreAfterQuickReloadIfNeeded();
@@ -1614,16 +1590,6 @@
     }
 
     var dcWsStateCleanup = function () {
-        if (onWsToolbarDocClick) {
-            try {
-                document.removeEventListener('click', onWsToolbarDocClick, true);
-            } catch (e) {}
-            try {
-                window.removeEventListener('click', onWsToolbarDocClick, true);
-            } catch (e1) {}
-            onWsToolbarDocClick = null;
-        }
-        docClickCaptureBound = false;
         if (mountObserver) {
             mountObserver.disconnect();
             mountObserver = null;
@@ -1650,6 +1616,7 @@
             if (style) {
                 style.remove();
             }
+            pruneWorksheetScriptFloatHost();
             removeEmptyWorksheetHelperField();
         } catch (e) {}
     };
