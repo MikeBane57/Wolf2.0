@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.1.9
+// @version      0.2.0
 // @description  Worksheet: save named AC tail/line states, recall them later, quick reload/restore, and optionally share cloud states.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
@@ -23,7 +23,6 @@
     var SS_QUICK_STATE = 'dc_ws_state_reload_quick_state_v1';
     var SS_QUICK_RESTORE = 'dc_ws_state_reload_restore_after_reload_v1';
     var WX_BTN_SELECTOR = '[data-dc-metar-watch-btn="1"]';
-    var BRIEF_HOST_ID = 'dc-brief-ai-ws-host';
     var STATE_TTL_MS = 4 * 60 * 60 * 1000;
     var GITHUB_OWNER = 'MikeBane57';
     var GITHUB_REPO = 'Wolf2.0';
@@ -836,10 +835,9 @@
             return;
         }
         var wxn = helper.querySelector('[data-dc-metar-watch-btn="1"]');
-        var br = document.getElementById(BRIEF_HOST_ID);
         var st = document.getElementById(HOST_ID);
         var i;
-        var list = [wxn, br, st];
+        var list = [wxn, st];
         for (i = 0; i < list.length; i++) {
             var n = list[i];
             if (n && n.parentNode === helper) {
@@ -893,7 +891,7 @@
         if (
             helper &&
             !helper.querySelector(
-                'button, #' + HOST_ID + ', #dc-brief-ai-ws-host, [data-dc-metar-watch-btn="1"]'
+                'button, #' + HOST_ID + ', [data-dc-metar-watch-btn="1"]'
             )
         ) {
             try {
@@ -934,10 +932,6 @@
     }
 
     function findMountAnchor() {
-        var brief = document.getElementById(BRIEF_HOST_ID);
-        if (brief) {
-            return brief;
-        }
         var wx = document.querySelector(WX_BTN_SELECTOR);
         if (wx) {
             return wx;
@@ -955,9 +949,6 @@
         var t = (el.getAttribute('data-dc-ws-action') && ' [data-dc-ws-action=' + el.getAttribute('data-dc-ws-action') + ']') || '';
         if (el.getAttribute && el.getAttribute('data-dc-metar-watch-btn')) {
             t += ' [data-dc-metar-watch-btn]';
-        }
-        if (el.getAttribute && el.getAttribute('data-dc-brief-ai-btn')) {
-            t += ' [data-dc-brief-ai-btn]';
         }
         return '<' + tag + id + cls + '>' + t;
     }
@@ -1006,7 +997,6 @@
                 pickPath.push(
                     hlp.querySelector('[data-dc-metar-watch-btn="1"]') || null
                 );
-                pickPath.push(document.getElementById(BRIEF_HOST_ID) || null);
                 pickPath.push(document.getElementById(HOST_ID) || null);
             }
             var lines = ['[Wolf2.0][WS] toolbar ' + ev.type, '  target: ' + elDesc(t), '  elementFromPoint: ' + elDesc(pick)];
@@ -1049,7 +1039,7 @@
         st.textContent =
             '[data-dc-worksheet-helper-buttons="1"],#' +
             HOST_ID +
-            ',#dc-brief-ai-ws-host,button[data-dc-metar-watch-btn="1"]{' +
+            ',button[data-dc-metar-watch-btn="1"]{' +
             'position:relative!important;z-index:2147482000!important;pointer-events:auto!important;}' +
             'button[data-testid="transaction-toggle-button"],' +
             '.one.wide.column:has(> .ui.form button[data-testid="transaction-toggle-button"]){' +

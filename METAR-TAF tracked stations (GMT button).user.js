@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.44
+// @version      2.0.45
 // @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -5003,7 +5003,6 @@
     var WX_BTN_ATTR = 'data-dc-metar-watch-btn';
     var TOOLBAR_STYLE_ID = 'dc-metar-ws-toolbar-ptr-style';
     var WSB_STATE_ID = 'dc-ws-state-reload-host';
-    var WSB_BRIEF_ID = 'dc-brief-ai-ws-host';
 
     function isPaxConnectionsPage() {
         try {
@@ -5074,10 +5073,9 @@
             return;
         }
         var wxn = helper.querySelector('[' + WX_BTN_ATTR + '="1"]');
-        var br = document.getElementById(WSB_BRIEF_ID);
         var st = document.getElementById(WSB_STATE_ID);
         var i;
-        var list = [wxn, br, st];
+        var list = [wxn, st];
         for (i = 0; i < list.length; i++) {
             var n = list[i];
             if (n && n.parentNode === helper) {
@@ -5131,7 +5129,7 @@
         if (
             helper &&
             !helper.querySelector(
-                'button, #' + WSB_STATE_ID + ', #' + WSB_BRIEF_ID
+                'button, #' + WSB_STATE_ID
             )
         ) {
             try {
@@ -5201,9 +5199,8 @@
             WX_BTN_ATTR +
             '="1"]{' +
             'position:relative!important;z-index:2147482000!important;pointer-events:auto!important;}' +
-            'span#dc-ws-state-reload-host,span#dc-brief-ai-ws-host,#' +
-            'dc-ws-state-reload-host,#' +
-            'dc-brief-ai-ws-host' +
+            'span#dc-ws-state-reload-host,#' +
+            'dc-ws-state-reload-host' +
             '{position:relative!important;z-index:2147482000!important;pointer-events:auto!important;}';
         try {
             document.head.appendChild(st);
@@ -6564,7 +6561,7 @@
             if (
                 hel &&
                 !hel.querySelector(
-                    'button, #' + WSB_STATE_ID + ', #' + WSB_BRIEF_ID
+                    'button, #' + WSB_STATE_ID
                 )
             ) {
                 hel.remove();
