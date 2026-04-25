@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Worksheet Alt+number focus
 // @namespace    Wolf 2.0
-// @version      1.1.0
-// @description  Alt+1..9 / Alt+0 (10): BroadcastChannel + localStorage for cross-tab focus. Bare title "1" matches. Browsers may block raising tab to front.
+// @version      1.2.0
+// @description  Alt+1..0: focus hint by WS#; in-tab callout + optional OS notification to click and focus. Cannot force-raise a background window (browser security).
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"wsAltNumJumperEnabled":{"type":"boolean","group":"Worksheet hotkey","label":"Enable Alt+number","default":true,"description":"Alt+1..9 and Alt+0 = worksheet 10. Uses BroadcastChannel plus localStorage so other tabs get the request when yours is not focused. Chromium often blocks programmatic tab activation; title will still flash if a match. For a true top tab, use Ctrl+Tab, the window’s own hotkeys, or reorder and use Chrome/Edge Alt+1-8."},"wsAltNumJumperLog":{"type":"boolean","group":"Worksheet hotkey","label":"Debug log","default":false,"description":"Console: which # was requested, what the page title parsed to, and if a match fired focus."}}
+// @donkeycode-pref {"wsAltNumJumperEnabled":{"type":"boolean","group":"Worksheet hotkey","label":"Enable Alt+number","default":true,"description":"Alt+1..9 and Alt+0 = worksheet 10. Uses BroadcastChannel + localStorage."},"wsAltNumJumperCallout":{"type":"boolean","group":"Worksheet hotkey","label":"Click-to-focus bar on target WS","default":true,"description":"On the matching worksheet tab, show a bottom bar: one click runs window focus (user gesture — best chance to raise the window)."},"wsAltNumJumperNotify":{"type":"boolean","group":"Worksheet hotkey","label":"OS notification (if allowed)","default":true,"description":"If the site already has notification permission, show a desktop note you can click to focus. Won’t request permission by itself; enable in the browser for opssuitemain.swacorp.com."},"wsAltNumJumperLog":{"type":"boolean","group":"Worksheet hotkey","label":"Debug log","default":false,"description":"Console: parse and match details."}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20Alt%2Bnumber%20focus.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20Alt%2Bnumber%20focus.user.js
 // ==/UserScript==
@@ -17,6 +17,9 @@
     var MSG_T = 'ws_focus_by_num';
     /** Same-origin; storage event is delivered to *other* tabs and often more reliable than broadcast for focus. */
     var LS_FOCUS_KEY = 'dc_ws_alt_focus_v1';
+    var CALLOUT_ID = 'dc-ws-alt-focus-callout';
+    var lastNotif = null;
+    var lastCalloutTid = null;
 
     var ch = null;
     var onKey = null;
@@ -96,6 +99,112 @@
         return '';
     }
 
+    function removeCallout() {
+        try {
+            var el = document.getElementById(CALLOUT_ID);
+            if (el && el.parentNode) {
+                el.parentNode.removeChild(el);
+            }
+        } catch (e) {}
+        if (lastCalloutTid) {
+            try {
+                clearTimeout(lastCalloutTid);
+            } catch (e) {}
+            lastCalloutTid = null;
+        }
+    }
+
+    function tryCloseNotification() {
+        try {
+            if (lastNotif && lastNotif.close) {
+                lastNotif.close();
+            }
+        } catch (e) {}
+        lastNotif = null;
+    }
+
+    function showFocusCallout(wantNum) {
+        if (getPref('wsAltNumJumperCallout', true) === false) {
+            return;
+        }
+        removeCallout();
+        if (!document.body) {
+            return;
+        }
+        var bar = document.createElement('div');
+        bar.id = CALLOUT_ID;
+        bar.setAttribute('role', 'status');
+        bar.style.cssText =
+            'position:fixed!important;left:0!important;right:0!important;bottom:0!important;z-index:2147483646!important;' +
+            'box-sizing:border-box!important;padding:12px 16px!important;background:linear-gradient(90deg,#2c3e50,#1a252f)!important;' +
+            'color:#ecf0f1!important;font:14px/1.35 system-ui,Segoe UI,sans-serif!important;' +
+            'text-align:center!important;cursor:pointer!important;box-shadow:0 -4px 24px rgba(0,0,0,.35)!important;border-top:2px solid #9b59b6!important;';
+        var t1 = document.createElement('div');
+        t1.textContent = 'Click to focus this window';
+        t1.style.cssText = 'font-weight:600!important;margin-bottom:4px!important;';
+        var t2 = document.createElement('div');
+        t2.textContent =
+            'Worksheet ' +
+            String(wantNum) +
+            ' — the browser will not auto-raise a background window; ' +
+            'one click here (or a desktop notification, if allowed) is the supported way to focus.';
+        t2.style.cssText = 'font-size:12px!important;opacity:.92!important;';
+        bar.appendChild(t1);
+        bar.appendChild(t2);
+        bar.setAttribute('title', 'User click allows window.focus() (browser policy).');
+        bar.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            tryCloseNotification();
+            try {
+                if (window.top && window.top !== window) {
+                    window.top.focus();
+                }
+            } catch (e) {}
+            try {
+                window.focus();
+            } catch (e2) {}
+            removeCallout();
+        }, true);
+        try {
+            document.body.appendChild(bar);
+        } catch (e) {
+            return;
+        }
+        lastCalloutTid = setTimeout(function () {
+            tryCloseNotification();
+            removeCallout();
+        }, 35000);
+    }
+
+    function maybeShowDesktopNotification(wantNum) {
+        if (getPref('wsAltNumJumperNotify', true) === false) {
+            return;
+        }
+        try {
+            if (
+                typeof Notification !== 'undefined' &&
+                Notification.permission === 'granted'
+            ) {
+                tryCloseNotification();
+                lastNotif = new Notification('Worksheet ' + wantNum, {
+                    body: 'Click to bring that tab/window forward (browser blocks auto-focus).',
+                    tag: 'dc-ws-alt-' + String(wantNum),
+                    requireInteraction: false
+                });
+                lastNotif.onclick = function () {
+                    try {
+                        window.focus();
+                    } catch (e) {}
+                    tryCloseNotification();
+                    removeCallout();
+                    try {
+                        lastNotif.close();
+                    } catch (e2) {}
+                };
+            }
+        } catch (e) {}
+    }
+
     function tryFocusThisWorksheetIfNumberMatches(wantNum) {
         if (!isWorksheetPath()) {
             return;
@@ -109,6 +218,11 @@
             return;
         }
         log('Match WS ' + w + ' — focus (hidden=' + !!document.hidden + ')');
+        var isBg = !!document.hidden;
+        if (isBg) {
+            showFocusCallout(wantNum);
+            maybeShowDesktopNotification(wantNum);
+        }
         function doFocus() {
             try {
                 if (document.body && document.body.focus) {
@@ -116,12 +230,26 @@
                 }
             } catch (e0) {}
             try {
+                if (window.top && window.top !== window) {
+                    window.top.focus();
+                }
+            } catch (et) {}
+            try {
                 window.focus();
             } catch (e) {}
+            try {
+                if (window.self !== window.parent) {
+                    window.parent.focus();
+                }
+            } catch (ep) {}
         }
-        doFocus();
-        setTimeout(doFocus, 0);
-        setTimeout(doFocus, 50);
+        if (!isBg) {
+            doFocus();
+            setTimeout(doFocus, 0);
+            setTimeout(doFocus, 50);
+        } else {
+            log('Tab is in background — use click bar or notification to focus this window.');
+        }
         try {
             var o = document.title;
             if (o) {
@@ -300,5 +428,7 @@
             ch = null;
         }
         onBcast = null;
+        removeCallout();
+        tryCloseNotification();
     };
 })();
