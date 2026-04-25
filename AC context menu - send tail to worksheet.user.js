@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         AC context menu — send tail to worksheet
 // @namespace    Wolf 2.0
-// @version      1.0.0
-// @description  Right-click aircraft block: "Send tail to worksheet →" with submenus for each open /widgets/worksheet tab. Uses BroadcastChannel dc_pax_late_to_ws_v1 + ws_apply_tail (Pax late script on worksheet loads target).
+// @version      1.1.0
+// @description  Send tail via burst BroadcastChannel + retries; flyout matches Semantic UI menu class. Pax 1.9.9 tail/flight input retry on worksheet.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"acTailToWsEnabled":{"type":"boolean","group":"AC → worksheet","label":"Enable context menu","default":true},"acTailToWsListWaitMs":{"type":"number","group":"AC → worksheet","label":"Worksheet list wait (ms)","default":600,"min":100,"max":5000,"step":50,"description":"Time to collect worksheet tab titles before opening the flyout."},"acTailToWsLog":{"type":"boolean","group":"AC → worksheet","label":"Debug log","default":false}}
+// @donkeycode-pref {"acTailToWsEnabled":{"type":"boolean","group":"AC → worksheet","label":"Enable context menu","default":true},"acTailToWsListWaitMs":{"type":"number","group":"AC → worksheet","label":"Worksheet list wait (ms)","default":2000,"min":100,"max":8000,"step":100,"description":"How long to wait for worksheet tabs to answer ws_list (raise if the list is often empty)."},"acTailToWsLog":{"type":"boolean","group":"AC → worksheet","label":"Debug log","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/AC%20context%20menu%20-%20send%20tail%20to%20worksheet.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/AC%20context%20menu%20-%20send%20tail%20to%20worksheet.user.js
 // ==/UserScript==
@@ -67,11 +67,11 @@
     }
 
     function listWaitMs() {
-        var n = Number(getPref('acTailToWsListWaitMs', 600));
+        var n = Number(getPref('acTailToWsListWaitMs', 2000));
         if (!Number.isFinite(n)) {
-            return 600;
+            return 2000;
         }
-        return Math.min(5000, Math.max(100, Math.floor(n)));
+        return Math.min(8000, Math.max(100, Math.floor(n)));
     }
 
     function listWorksheetTabsOnce() {
@@ -134,7 +134,7 @@
             return new Promise(function (r) {
                 setTimeout(function () {
                     listWorksheetTabsOnce().then(r);
-                }, 80);
+                }, 400);
             });
         });
     }
@@ -142,16 +142,23 @@
     function postApplyTailToWorksheet(tail, targetTabId) {
         var c = ensureChannel();
         if (!c) {
+            log('postApplyTail: no BroadcastChannel');
             return;
         }
-        try {
-            c.postMessage({
-                t: 'ws_apply_tail',
-                id: randomBcastId(),
-                tail: String(tail || '').trim().toUpperCase(),
-                targetTabId: targetTabId
-            });
-        } catch (e) {}
+        var id = randomBcastId();
+        var payload = {
+            t: 'ws_apply_tail',
+            id: id,
+            tail: String(tail || '').trim().toUpperCase(),
+            targetTabId: targetTabId
+        };
+        var k;
+        for (k = 0; k < 4; k++) {
+            try {
+                c.postMessage(payload);
+            } catch (e) {}
+        }
+        log('ws_apply_tail burst id=' + id + ' tail=' + payload.tail);
     }
 
     var RE_N_NUMBER = /N\d{1,5}[A-Z]?/i;
@@ -219,9 +226,9 @@
         if (!firstItem) {
             return;
         }
-        if (!RE_N_NUMBER.test(String(lastExtractedTail || ''))) {
+        if (!String(lastExtractedTail || '').trim()) {
             if (getPref('acTailToWsLog', false) !== false) {
-                log('No tail in last AC block, skip menu');
+                log('No tail parsed from AC block, skip menu');
             }
             return;
         }
@@ -242,14 +249,17 @@
 
         var sub = document.createElement('div');
         sub.setAttribute('data-dc-ac-tail-ws-sub', '1');
+        sub.className =
+            (menu.getAttribute('class') || 'ui vertical menu') +
+            ' dc-ac-tail-ws-flyout';
         sub.style.cssText =
             'display:none!important;position:absolute!important;left:100%!important;top:0!important;margin-left:2px!important;' +
-            'min-width:220px!important;z-index:3000!important;background:#1b1b1b!important;border:1px solid #4a4a4a!important;' +
-            'border-radius:4px!important;box-shadow:0 4px 16px rgba(0,0,0,.45)!important;padding:4px 0!important;max-height:50vh!important;overflow-y:auto!important;';
-        var loading = document.createElement('div');
-        loading.style.cssText =
-            'padding:8px 12px!important;color:#bdc3c7!important;font:12px system-ui,sans-serif!important;';
+            'min-width:220px!important;z-index:10000!important;max-height:50vh!important;overflow-y:auto!important;';
+        var loading = document.createElement('a');
+        loading.className = firstItem.className || 'item';
+        loading.href = '#';
         loading.textContent = 'Loading worksheets…';
+        loading.style.cssText = 'pointer-events:none!important;opacity:.7!important;';
         sub.appendChild(loading);
 
         wrap.appendChild(trigger);
@@ -283,42 +293,47 @@
                 }
                 sub.innerHTML = '';
                 if (!tabs || !tabs.length) {
-                    var d0 = document.createElement('div');
-                    d0.style.cssText =
-                        'padding:8px 12px!important;color:#e74c3c!important;max-width:280px!important;font:12px system-ui,sans-serif!important;';
+                    var d0 = document.createElement('a');
+                    d0.className = firstItem.className || 'item';
+                    d0.href = '#';
                     d0.textContent =
-                        'No worksheet tabs found. Open a /widgets/worksheet tab with Pax "late flights" (v1.9.8+).';
+                        'No worksheets found — open a worksheet with Pax v1.9.9+';
+                    d0.style.cssText = 'color:#e67e22!important;white-space:normal!important;';
                     sub.appendChild(d0);
                     return;
                 }
-                var h = document.createElement('div');
-                h.style.cssText =
-                    'padding:6px 12px 4px!important;font:11px system-ui,sans-serif!important;color:#7f8c8d!important;border-bottom:1px solid #333!important;';
-                h.textContent = 'AC ' + String(lastExtractedTail);
+                var h = document.createElement('a');
+                h.className = firstItem.className || 'item';
+                h.href = '#';
+                h.textContent = 'AC: ' + String(lastExtractedTail);
+                h.style.cssText = 'pointer-events:none!important;opacity:.85!important;font-size:.9em!important;';
                 sub.appendChild(h);
                 var j;
                 for (j = 0; j < tabs.length; j++) {
                     (function (tab) {
                         var row = document.createElement('a');
+                        row.className = firstItem.className || 'item';
                         row.href = '#';
                         row.textContent = tab.title || tab.tabId;
-                        row.style.cssText =
-                            'display:block!important;padding:8px 12px!important;color:#ecf0f1!important;font:13px system-ui,sans-serif!important;text-decoration:none!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;';
-                        row.addEventListener('click', function (e) {
+                        function sendEv(e) {
+                            if (e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                            }
+                            setTimeout(function () {
+                                postApplyTailToWorksheet(
+                                    lastExtractedTail,
+                                    tab.tabId
+                                );
+                            }, 0);
+                            log('Sent ' + lastExtractedTail + ' → ' + (tab.title || tab.tabId));
+                        }
+                        row.addEventListener('mousedown', function (e) {
                             e.preventDefault();
                             e.stopPropagation();
-                            postApplyTailToWorksheet(
-                                lastExtractedTail,
-                                tab.tabId
-                            );
-                            log('Sent ' + lastExtractedTail + ' to tab ' + (tab.title || tab.tabId));
-                        });
-                        row.addEventListener('mouseenter', function () {
-                            row.style.background = 'rgba(255,255,255,0.08)';
-                        });
-                        row.addEventListener('mouseleave', function () {
-                            row.style.background = 'transparent';
-                        });
+                            sendEv(e);
+                        }, true);
+                        row.addEventListener('click', sendEv, true);
                         sub.appendChild(row);
                     })(tabs[j]);
                 }

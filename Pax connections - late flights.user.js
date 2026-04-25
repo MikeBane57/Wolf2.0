@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.9.8
-// @description  Worksheet: accept ws_apply_tail (AC / schedule → other worksheet, partner script). Outbound, PAX badges, merge unchanged.
+// @version      1.9.9
+// @description  ws_apply_tail: find tail or flight search input; retry apply if DOM late. AC→worksheet partner unchanged otherwise.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","default":true},"paxLateToWsOpenPaxWindow":{"type":"boolean","group":"Pax late to worksheet","label":"Open Pax on Alt+click","default":true,"description":"Opens a separate browser window (not a tab) when the popup options below are used."},"paxLateToWsPaxAsPopupWindow":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Pax in popup (not new tab)","default":true,"description":"Uses window features (size/position) like Middle-click launcher, so the worksheet can stay the focused tab."},"paxLateToWsPaxRefocusOpener":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Refocus this window after open","default":true,"description":"Call window.focus() on the schedule/worksheet window after opening Pax (best-effort; browser may still show the popup on top)."},"paxLateToWsPaxWinW":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup width (px)","default":1000,"min":400,"max":2400,"step":10},"paxLateToWsPaxWinH":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup height (px)","default":800,"min":400,"max":2000,"step":10},"paxLateToWsPaxWinLeft":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup left offset from this window (px)","default":24,"min":-2000,"max":2000,"step":1},"paxLateToWsPaxWinTop":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup top offset (px)","default":24,"min":0,"max":2000,"step":1},"paxLateToWsPaxWindowName":{"type":"string","group":"Pax late to worksheet · open Pax","label":"Reusable window name","default":"__dcPaxLateFlightsPax__","description":"If another Pax from this control is already using this name, the same window may navigate (browser dependent). Use a new name to always get a new popup."},"paxLateToWsAfterOpenWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After open Pax, wait (ms)","default":2000,"min":0,"max":20000,"step":100},"paxLateToWsPaxInlineSend":{"type":"boolean","group":"Pax late to worksheet","label":"Pax: inline send by connection","default":true,"description":"Compact button between CONNECT and SCH ARR. With several worksheet tabs, you pick the target; one tab = send there; remembered per city after a successful send."},"paxLateToWsWorksheetPicker":{"type":"boolean","group":"Pax late to worksheet","label":"Ask which worksheet (2+ tabs)","default":true,"description":"When more than one worksheet tab is open, show a title list. Schedule pages are not listed (worksheet widget only)."},"paxLateToWsListWorksheetsMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet list wait (ms)","default":500,"min":100,"max":5000,"step":50,"description":"How long to wait for worksheet tab replies before opening the picker. Lower = faster; raise only if the list is often empty."},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match leg to Pax URL","default":true},"paxLateToWsTightByTime":{"type":"boolean","group":"Pax late to worksheet · time","label":"Tight = ETD within gap of ref ETA","default":true},"paxLateToWsTightMaxGapMin":{"type":"number","group":"Pax late to worksheet · time","label":"Max minutes (|ETD − ref ETA|)","default":20,"min":0,"max":300,"step":1},"paxLateToWsTightTimeOrColor":{"type":"boolean","group":"Pax late to worksheet · time","label":"OR include red/orange rows","default":true},"paxLateToWsDownlineColumn":{"type":"select","group":"Pax late to worksheet","label":"IATA filter column","default":"off","options":[{"value":"off","label":"No IATA filter"},{"value":"final","label":"FINAL only"},{"value":"next","label":"NEXT only"},{"value":"next_or_final","label":"NEXT or FINAL"}]},"paxLateToWsDownlineIata":{"type":"string","group":"Pax late to worksheet","label":"IATA list","default":"","placeholder":"e.g. MSP"},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound first","default":true},"paxLateToWsOutboundTabRetryMs":{"type":"number","group":"Pax late to worksheet","label":"Outbound: retry every (ms)","default":300,"min":100,"max":3000,"step":50,"description":"Poll for the Outbound tab while the page is still loading."},"paxLateToWsOutboundTabMaxWaitMs":{"type":"number","group":"Pax late to worksheet","label":"Outbound: max wait (ms)","default":12000,"min":0,"max":60000,"step":500,"description":"Stop looking for Outbound after this; collection still runs. 0 = one try only (old behavior)."},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound (ms)","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Broadcast from Pax to worksheet","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Pax reply wait (ms)","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Debug log (general)","default":false,"description":"General [PAX-LATE-WS] lines (e.g. Alt+click, broadcast)."},"paxLateToWsLogParse":{"type":"boolean","group":"Pax late to worksheet","label":"Log parse (tight conx table)","default":false,"description":"Console: ref ETA, each outbound row FLT, ETD, |gap|, time vs color, include/skip. Use with Send or Alt+click to see why 3702 vs 3862."},"paxLateToWsScopeOutboundToRefLeg":{"type":"boolean","group":"Pax late to worksheet","label":"Only ref-leg outbound (alt path)","default":true,"description":"On Pax, include tight flights from the clicked reference leg only, not from other h3/connection blocks. Turn off to scan all outbound blocks on the page."},"paxLateToWsWsPaxBadgeMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet: PAX count badge (ms)","default":60000,"min":0,"max":600000,"step":1000,"description":"How long each PAX chip stays by a flight puck (stacks; one per leg). 0 = off. Raise for long multi-flight runs."},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Enter delay (ms)","default":250,"min":0,"max":5000,"step":50}}
@@ -2819,38 +2819,51 @@
         }
     }
 
-    function findWorksheetFlightSearchInput() {
+    function findInputInNamedHost(hostNames) {
         if (!isWorksheetWidgetPage()) {
             return null;
         }
-        const host = document.querySelector('div[name="flight"]');
-        if (!host) {
-            return null;
+        var hi;
+        for (hi = 0; hi < hostNames.length; hi++) {
+            const sel = 'div[name="' + hostNames[hi] + '"]';
+            const host = document.querySelector(sel);
+            if (!host) {
+                continue;
+            }
+            const inp =
+                host.querySelector(
+                    'input.search, input[aria-autocomplete="list"], input[type="text"], input[type="search"]'
+                ) || host.querySelector('input');
+            if (inp) {
+                return inp;
+            }
         }
-        return (
-            host.querySelector('input.search, input[aria-autocomplete="list"]') ||
-            null
-        );
+        return null;
+    }
+
+    function findWorksheetFlightSearchInput() {
+        return findInputInNamedHost(['flight']);
     }
 
     function findWorksheetTailInput() {
-        if (!isWorksheetWidgetPage()) {
-            return null;
+        return findInputInNamedHost(['tail', 'tails', 'ac', 'aircraft']);
+    }
+
+    /**
+     * Tail broadcast: prefer AC/tail field; if missing (lazy DOM), use flight search (accepts N-number).
+     */
+    function findWorksheetTailOrFlightInputForApply() {
+        var t = findWorksheetTailInput();
+        if (t) {
+            return t;
         }
-        const host = document.querySelector('div[name="tail"]');
-        if (!host) {
-            return null;
-        }
-        return (
-            host.querySelector(
-                'input.search, input[aria-autocomplete="list"]'
-            ) || null
-        );
+        return findWorksheetFlightSearchInput();
     }
 
     function worksheetPageHasListableSearchUi() {
         return !!(
-            findWorksheetFlightSearchInput() || findWorksheetTailInput()
+            findWorksheetFlightSearchInput() ||
+            findWorksheetTailInput()
         );
     }
 
@@ -2871,6 +2884,18 @@
         } else {
             el.value = String(value);
         }
+        try {
+            if (typeof InputEvent !== 'undefined') {
+                el.dispatchEvent(
+                    new InputEvent('input', {
+                        bubbles: true,
+                        cancelable: true,
+                        data: String(value),
+                        inputType: 'insertFromPaste'
+                    })
+                );
+            }
+        } catch (eIn) {}
         el.dispatchEvent(
             new Event('input', { bubbles: true, cancelable: true })
         );
@@ -2909,17 +2934,28 @@
             }
             return;
         }
-        const input = findWorksheetTailInput();
-        if (!input) {
-            log(
-                'Worksheet AC/tail field not found (need div[name=tail] with search input).'
-            );
-            return;
+        const val = tail.trim().toUpperCase();
+        var tries = 0;
+        var maxTries = 12;
+        function attempt() {
+            const input = findWorksheetTailOrFlightInputForApply();
+            if (input) {
+                if (fromTag) {
+                    log('Applying tail ' + val + ' ("' + fromTag + '")…');
+                }
+                setWorksheetFieldValue(input, val);
+                return;
+            }
+            tries++;
+            if (tries < maxTries) {
+                setTimeout(attempt, 80);
+            } else {
+                log(
+                    'Worksheet tail/flight field not found after retries (AC → worksheet).'
+                );
+            }
         }
-        if (fromTag) {
-            log('Applying tail ' + tail + ' ("' + fromTag + '")…');
-        }
-        setWorksheetFieldValue(input, tail.trim().toUpperCase());
+        attempt();
     }
 
     function paxBadgeDurationMs() {
@@ -3287,9 +3323,6 @@
                 return;
             }
             if (d.targetTabId !== getOrCreateWorksheetTabId()) {
-                return;
-            }
-            if (!findWorksheetTailInput()) {
                 return;
             }
             try {
