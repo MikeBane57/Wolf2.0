@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.45
-// @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
+// @version      2.0.46
+// @description  Alert modal: notify/poll prefs + local save; global/per-IATA rules explained (CIG/vis thresholds).
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -37,6 +37,8 @@
     var LS_POLL_RESULTS = 'dc-metar-watch-poll-results-v1';
     /** In-modal “Alert rules” form overrides DonkeyCODE JSON string prefs when set. */
     var LS_NOTIFY_RULES_UI = 'dc-metar-watch-notify-rules-ui-v1';
+    /** In-modal notify + timing (overrides DonkeyCODE defaults for this browser when set). */
+    var LS_METAR_UI_SETTINGS = 'dc-metar-watch-ui-settings-v1';
     var lastAppliedPollResultsTs = 0;
     var SHARED_METAR_TAF_TTL_MS = 8 * 60 * 1000;
     var metarTafSharedChannel = null;
@@ -83,8 +85,65 @@
         return def;
     }
 
-    function sharedPollEnabled() {
+    function readMetarWatchUi() {
+        try {
+            var raw = localStorage.getItem(LS_METAR_UI_SETTINGS);
+            if (!raw) {
+                return null;
+            }
+            var o = JSON.parse(raw);
+            return o && typeof o === 'object' ? o : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function writeMetarWatchUi(obj) {
+        try {
+            localStorage.setItem(LS_METAR_UI_SETTINGS, JSON.stringify(obj));
+        } catch (e) {}
+    }
+
+    function metarWatchNotifyEnabled() {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui.metarWatchNotify === 'boolean') {
+            return ui.metarWatchNotify;
+        }
+        return boolPref('metarWatchNotify', true);
+    }
+
+    function metarPollMinutesEffective() {
+        var ui = readMetarWatchUi();
+        if (ui && ui.metarWatchPollMinutes != null) {
+            var n = Math.floor(Number(ui.metarWatchPollMinutes));
+            if (Number.isFinite(n)) {
+                return Math.min(120, Math.max(1, n));
+            }
+        }
+        return numPref('metarWatchPollMinutes', 5, 1, 120);
+    }
+
+    function metarConcurrentStationsEffective() {
+        var ui = readMetarWatchUi();
+        if (ui && ui.metarWatchConcurrentStations != null) {
+            var n = Math.floor(Number(ui.metarWatchConcurrentStations));
+            if (Number.isFinite(n)) {
+                return Math.min(20, Math.max(1, n));
+            }
+        }
+        return numPref('metarWatchConcurrentStations', 10, 1, 20);
+    }
+
+    function metarSharedPollEnabled() {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui.metarWatchSharedPoll === 'boolean') {
+            return ui.metarWatchSharedPoll;
+        }
         return boolPref('metarWatchSharedPoll', true);
+    }
+
+    function sharedPollEnabled() {
+        return metarSharedPollEnabled();
     }
 
     function readPollLeaderRecord() {
@@ -2401,7 +2460,22 @@
     }
 
     function pollMs() {
-        return numPref('metarWatchPollMinutes', 5, 1, 120) * 60 * 1000;
+        return metarPollMinutesEffective() * 60 * 1000;
+    }
+
+    function restartPollTimer() {
+        if (pollTimer) {
+            try {
+                clearInterval(pollTimer);
+            } catch (e) {}
+            pollTimer = null;
+        }
+        try {
+            runPoll();
+        } catch (e2) {}
+        try {
+            pollTimer = setInterval(runPoll, pollMs());
+        } catch (e3) {}
     }
 
     /** Same mapping as SW Airport METAR/TAF Tooltip (subset used for lookups). */
@@ -2786,6 +2860,10 @@
     var alertRulesPerHost = null;
     var alertRulesColorHighInp = null;
     var alertRulesColorAdvisoryInp = null;
+    var alertMetarSettingsNotify = null;
+    var alertMetarSettingsPoll = null;
+    var alertMetarSettingsConc = null;
+    var alertMetarSettingsShared = null;
     /** Last station we started the COD loop for (avoid restart on timer-only detail refresh). */
     var lastCodLoopIata = null;
     var cacheByIcao = {};
@@ -4179,7 +4257,7 @@
             return;
         }
         fetchOpts = fetchOpts || {};
-        var concurrency = numPref('metarWatchConcurrentStations', 10, 1, 20);
+        var concurrency = metarConcurrentStationsEffective();
         var results = new Array(list.length);
         var next = 0;
         var active = 0;
@@ -4263,7 +4341,7 @@
     }
 
     function maybeNotify(staleIcaoSet) {
-        if (!boolPref('metarWatchNotify', true)) {
+        if (!metarWatchNotifyEnabled()) {
             return;
         }
         if (!staleIcaoSet || !staleIcaoSet.length) {
@@ -5358,7 +5436,7 @@
         }
         btn.setAttribute('data-dc-wx-click-bound', '1');
         bindWorksheetToolbarButtonActivate(btn, function () {
-            if (Notification && Notification.permission === 'default' && boolPref('metarWatchNotify', true)) {
+            if (Notification && Notification.permission === 'default' && metarWatchNotifyEnabled()) {
                 try {
                     Notification.requestPermission();
                 } catch (e) {}
@@ -5607,6 +5685,47 @@
         }
     }
 
+    function populateMetarSettingsForm() {
+        if (!alertMetarSettingsNotify) {
+            return;
+        }
+        alertMetarSettingsNotify.checked = metarWatchNotifyEnabled();
+        if (alertMetarSettingsPoll) {
+            alertMetarSettingsPoll.value = String(metarPollMinutesEffective());
+        }
+        if (alertMetarSettingsConc) {
+            alertMetarSettingsConc.value = String(metarConcurrentStationsEffective());
+        }
+        if (alertMetarSettingsShared) {
+            alertMetarSettingsShared.checked = metarSharedPollEnabled();
+        }
+    }
+
+    function readMetarSettingsIntoStorage() {
+        if (!alertMetarSettingsNotify) {
+            return;
+        }
+        var o = readMetarWatchUi() || {};
+        o.metarWatchNotify = !!alertMetarSettingsNotify.checked;
+        if (alertMetarSettingsPoll) {
+            var pm = Math.floor(Number(alertMetarSettingsPoll.value));
+            o.metarWatchPollMinutes = Number.isFinite(pm) ? Math.min(120, Math.max(1, pm)) : metarPollMinutesEffective();
+        }
+        if (alertMetarSettingsConc) {
+            var cc = Math.floor(Number(alertMetarSettingsConc.value));
+            o.metarWatchConcurrentStations = Number.isFinite(cc)
+                ? Math.min(20, Math.max(1, cc))
+                : metarConcurrentStationsEffective();
+        }
+        if (alertMetarSettingsShared) {
+            o.metarWatchSharedPoll = !!alertMetarSettingsShared.checked;
+        }
+        writeMetarWatchUi(o);
+        try {
+            restartPollTimer();
+        } catch (e) {}
+    }
+
     function readAlertFormIntoStorage() {
         if (!alertRulesModeSelect) {
             return;
@@ -5648,6 +5767,7 @@
             }
         }
         writeNotifyRulesUi({ mode: mode, global: g, perIata: perIata, colorHigh: ch, colorAdvisory: ca });
+        readMetarSettingsIntoStorage();
     }
 
     function addGlobalRuleRow() {
@@ -5844,10 +5964,110 @@
         var sub = document.createElement('div');
         sub.style.cssText = 'font-size:11px;font-weight:400;color:#95a5a6;margin-top:4px;line-height:1.4;';
         sub.textContent =
-            'Each row = one OR rule. High/Advisory set default highlight colors; optional custom swatch overrides. Saved in this browser. Detail pane underlines matching token(s) only (full vis/ceiling tokens, not lone fraction digits).';
+            'Saves in this browser (overrides DonkeyCODE defaults for these fields). Global rules apply to every station; Per IATA adds more OR-matched rule rows for that airport. Each global row is an alternative: if any row matches, that station is eligible. Within one row, if you set both METAR and TAF columns, both sides must pass; only METAR or only TAF = only that product is checked. "M/T ceil max" and "M/T vis max" mean: alert if ceiling is at or below that value (ft AGL) and/or if visibility (statute miles) is at or below that value — e.g. METAR CIG 1000 alerts for ceilings ≤ 1000 ft. Empty = ignore that column. High/Advisory and custom swatch = highlight level in the list and detail text.';
 
         var sc = document.createElement('div');
         sc.style.cssText = 'padding:12px 16px;overflow:auto;flex:1;min-height:0;';
+
+        var settingsWrap = document.createElement('div');
+        settingsWrap.style.cssText =
+            'margin-bottom:14px;padding:10px 12px;background:#1a1d28;border:1px solid #333;border-radius:8px;';
+        var setTitle = document.createElement('div');
+        setTitle.textContent = 'Alerting & background refresh';
+        setTitle.style.cssText = 'font-size:12px;font-weight:600;margin-bottom:8px;color:#5dade2;';
+        var setGrid = document.createElement('div');
+        setGrid.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px 12px;align-items:end;';
+        function mkLabel(txt, hint) {
+            var lb = document.createElement('label');
+            lb.textContent = txt;
+            lb.style.cssText = 'font-size:11px;color:#bdc3c7;display:block;margin-bottom:2px;';
+            if (hint) {
+                lb.title = hint;
+            }
+            return lb;
+        }
+        function mkNumIn(ph, w) {
+            var n = document.createElement('input');
+            n.type = 'number';
+            n.min = '1';
+            n.step = '1';
+            n.placeholder = ph;
+            n.style.cssText =
+                'width:' +
+                (w || '100%') +
+                ';box-sizing:border-box;padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+            return n;
+        }
+        var cell1 = document.createElement('div');
+        cell1.style.minWidth = '200px';
+        cell1.style.flex = '1 1 200px';
+        cell1.appendChild(mkLabel('Browser notifications', 'Notify when a tracked station’s METAR/TAF changes (subject to rules below).'));
+        var rowN = document.createElement('div');
+        rowN.style.display = 'flex';
+        rowN.style.alignItems = 'center';
+        rowN.style.gap = '6px';
+        alertMetarSettingsNotify = document.createElement('input');
+        alertMetarSettingsNotify.type = 'checkbox';
+        alertMetarSettingsNotify.title = 'Turn off to disable desktop notifications (WX badge can still use rules).';
+        var labN = document.createElement('span');
+        labN.textContent = 'Enabled';
+        labN.style.fontSize = '12px';
+        rowN.appendChild(alertMetarSettingsNotify);
+        rowN.appendChild(labN);
+        cell1.appendChild(rowN);
+
+        var cell2 = document.createElement('div');
+        cell2.style.minWidth = '140px';
+        cell2.style.flex = '0 0 120px';
+        cell2.appendChild(mkLabel('Poll every (minutes)', 'Background refresh interval for METAR/TAF. Applies after Save.'));
+        alertMetarSettingsPoll = mkNumIn('5', '80px');
+        alertMetarSettingsPoll.min = '1';
+        alertMetarSettingsPoll.max = '120';
+        cell2.appendChild(alertMetarSettingsPoll);
+
+        var cell3 = document.createElement('div');
+        cell3.style.minWidth = '120px';
+        cell3.style.flex = '0 0 100px';
+        cell3.appendChild(
+            mkLabel('Parallel fetches', 'Stations to load at once during each refresh (1–20).')
+        );
+        alertMetarSettingsConc = mkNumIn('10', '80px');
+        alertMetarSettingsConc.min = '1';
+        alertMetarSettingsConc.max = '20';
+        cell3.appendChild(alertMetarSettingsConc);
+
+        var cell4 = document.createElement('div');
+        cell4.style.minWidth = '200px';
+        cell4.style.flex = '1 1 200px';
+        cell4.appendChild(
+            mkLabel('Share poll across tabs', 'One tab can lead background polls to reduce duplicate traffic.')
+        );
+        var rowS = document.createElement('div');
+        rowS.style.display = 'flex';
+        rowS.style.alignItems = 'center';
+        rowS.style.gap = '6px';
+        alertMetarSettingsShared = document.createElement('input');
+        alertMetarSettingsShared.type = 'checkbox';
+        var labS = document.createElement('span');
+        labS.textContent = 'On';
+        labS.style.fontSize = '12px';
+        rowS.appendChild(alertMetarSettingsShared);
+        rowS.appendChild(labS);
+        cell4.appendChild(rowS);
+
+        setGrid.appendChild(cell1);
+        setGrid.appendChild(cell2);
+        setGrid.appendChild(cell3);
+        setGrid.appendChild(cell4);
+        settingsWrap.appendChild(setTitle);
+        settingsWrap.appendChild(setGrid);
+        var setHint = document.createElement('div');
+        setHint.textContent =
+            'Saved in this browser when you click Save (below). Changing poll time restarts the background refresh timer on this page.';
+        setHint.style.cssText = 'font-size:10px;color:#7f8c8d;margin-top:8px;line-height:1.35;';
+        settingsWrap.appendChild(setHint);
+        sc.appendChild(settingsWrap);
+
         var modeRow = document.createElement('div');
         modeRow.style.marginBottom = '12px';
         var modeLab = document.createElement('label');
@@ -5920,7 +6140,7 @@
 
         alertRulesGlobalBlock = document.createElement('div');
         var gLab = document.createElement('div');
-        gLab.textContent = 'Global rules (OR across rows)';
+        gLab.textContent = 'Global rules (any row can match; OR across rows)';
         gLab.style.cssText = 'font-size:12px;font-weight:600;margin-bottom:6px;color:#3498db;';
         gLab.setAttribute('data-dc-glab', '1');
         alertRulesGlobalHost = document.createElement('div');
@@ -5940,13 +6160,13 @@
         var h0c = document.createElement('span');
         h0c.textContent = ' ';
         var h1 = document.createElement('span');
-        h1.textContent = 'M ceil max';
+        h1.textContent = 'M CIG ≤ ft';
         var h2 = document.createElement('span');
-        h2.textContent = 'M vis max';
+        h2.textContent = 'M vis ≤ sm';
         var h3 = document.createElement('span');
-        h3.textContent = 'T ceil max';
+        h3.textContent = 'T CIG ≤ ft';
         var h4 = document.createElement('span');
-        h4.textContent = 'T vis max';
+        h4.textContent = 'T vis ≤ sm';
         gColH.appendChild(h0a);
         gColH.appendChild(h0b);
         gColH.appendChild(h0c);
@@ -6001,8 +6221,18 @@
         });
         cancelB.addEventListener('click', closeAlertRulesDialog);
         useExtB.addEventListener('click', function () {
-            if (window.confirm('Clear in-browser alert rules and use DonkeyCODE JSON field preferences?')) {
+            if (
+                window.confirm(
+                    'Clear in-browser rules and notify/refresh settings (this browser) and use DonkeyCODE JSON + extension defaults?'
+                )
+            ) {
                 clearNotifyRulesUi();
+                try {
+                    localStorage.removeItem(LS_METAR_UI_SETTINGS);
+                } catch (e) {}
+                try {
+                    restartPollTimer();
+                } catch (e2) {}
                 updateAlertState();
                 closeAlertRulesDialog();
             }
@@ -6024,6 +6254,7 @@
         if (!alertRulesModal) {
             buildAlertRulesDialog();
         }
+        populateMetarSettingsForm();
         populateAlertRulesForm();
         syncAlertModeUi();
         if (alertRulesModeSelect && alertRulesModeSelect.value === 'per_iata' && alertRulesPerHost && !alertRulesPerHost.children.length) {
@@ -6469,8 +6700,7 @@
         initCrossTabPollSync();
         initMetarTafSharedSync();
         initViewedSync();
-        runPoll();
-        pollTimer = setInterval(runPoll, pollMs());
+        restartPollTimer();
         domObserver = new MutationObserver(function () {
             scheduleMountButton();
         });
