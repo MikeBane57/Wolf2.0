@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.9.1
-// @description  FLT: strip div/table from inner span, then first digits (3702 not 3862). Optional "Log parse" for console. Tight ±gap, fast worksheet list.
+// @version      1.9.2
+// @description  Skip only outbound rows with direct <th> (not swap table <th> in FLT cell). FLT strip + log parse. Tight ±gap.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","default":true},"paxLateToWsOpenPaxWindow":{"type":"boolean","group":"Pax late to worksheet","label":"Open Pax on Alt+click","default":true,"description":"Opens a separate browser window (not a tab) when the popup options below are used."},"paxLateToWsPaxAsPopupWindow":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Pax in popup (not new tab)","default":true,"description":"Uses window features (size/position) like Middle-click launcher, so the worksheet can stay the focused tab."},"paxLateToWsPaxRefocusOpener":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Refocus this window after open","default":true,"description":"Call window.focus() on the schedule/worksheet window after opening Pax (best-effort; browser may still show the popup on top)."},"paxLateToWsPaxWinW":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup width (px)","default":1000,"min":400,"max":2400,"step":10},"paxLateToWsPaxWinH":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup height (px)","default":800,"min":400,"max":2000,"step":10},"paxLateToWsPaxWinLeft":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup left offset from this window (px)","default":24,"min":-2000,"max":2000,"step":1},"paxLateToWsPaxWinTop":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup top offset (px)","default":24,"min":0,"max":2000,"step":1},"paxLateToWsPaxWindowName":{"type":"string","group":"Pax late to worksheet · open Pax","label":"Reusable window name","default":"__dcPaxLateFlightsPax__","description":"If another Pax from this control is already using this name, the same window may navigate (browser dependent). Use a new name to always get a new popup."},"paxLateToWsAfterOpenWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After open Pax, wait (ms)","default":2000,"min":0,"max":20000,"step":100},"paxLateToWsPaxInlineSend":{"type":"boolean","group":"Pax late to worksheet","label":"Pax: inline send by connection","default":true,"description":"Compact button between CONNECT and SCH ARR. With several worksheet tabs, you pick the target; one tab = send there; remembered per city after a successful send."},"paxLateToWsWorksheetPicker":{"type":"boolean","group":"Pax late to worksheet","label":"Ask which worksheet (2+ tabs)","default":true,"description":"When more than one worksheet tab is open, show a title list. Schedule pages are not listed (worksheet widget only)."},"paxLateToWsListWorksheetsMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet list wait (ms)","default":500,"min":100,"max":5000,"step":50,"description":"How long to wait for worksheet tab replies before opening the picker. Lower = faster; raise only if the list is often empty."},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match leg to Pax URL","default":true},"paxLateToWsTightByTime":{"type":"boolean","group":"Pax late to worksheet · time","label":"Tight = ETD within gap of ref ETA","default":true},"paxLateToWsTightMaxGapMin":{"type":"number","group":"Pax late to worksheet · time","label":"Max minutes (|ETD − ref ETA|)","default":20,"min":0,"max":300,"step":1},"paxLateToWsTightTimeOrColor":{"type":"boolean","group":"Pax late to worksheet · time","label":"OR include red/orange rows","default":true},"paxLateToWsDownlineColumn":{"type":"select","group":"Pax late to worksheet","label":"IATA filter column","default":"off","options":[{"value":"off","label":"No IATA filter"},{"value":"final","label":"FINAL only"},{"value":"next","label":"NEXT only"},{"value":"next_or_final","label":"NEXT or FINAL"}]},"paxLateToWsDownlineIata":{"type":"string","group":"Pax late to worksheet","label":"IATA list","default":"","placeholder":"e.g. MSP"},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound first","default":true},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound (ms)","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Broadcast from Pax to worksheet","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Pax reply wait (ms)","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Debug log (general)","default":false,"description":"General [PAX-LATE-WS] lines (e.g. Alt+click, broadcast)."},"paxLateToWsLogParse":{"type":"boolean","group":"Pax late to worksheet","label":"Log parse (tight conx table)","default":false,"description":"Console: ref ETA, each outbound row FLT, ETD, |gap|, time vs color, include/skip. Use with Send or Alt+click to see why 3702 vs 3862."},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Enter delay (ms)","default":250,"min":0,"max":5000,"step":50}}
@@ -975,6 +975,21 @@
             : '';
     }
 
+    /** Real column header row only — not <th> inside nested swap tooltips in a data cell. */
+    function trHasDirectChildTh(tr) {
+        if (!tr || !tr.children) {
+            return false;
+        }
+        var c = tr.children;
+        var i;
+        for (i = 0; i < c.length; i++) {
+            if (c[i] && c[i].nodeName === 'TH') {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function isOutboundPaxTable(table) {
         if (!table) {
             return false;
@@ -1006,7 +1021,7 @@
     function findHeaderTr(table) {
         const rows = table.querySelectorAll('tr');
         for (var r = 0; r < rows.length; r++) {
-            if (!rows[r].querySelector('th')) {
+            if (!trHasDirectChildTh(rows[r])) {
                 continue;
             }
             const ths = rows[r].querySelectorAll('th');
@@ -1414,7 +1429,7 @@
         var r;
         for (r = 0; r < trs.length; r++) {
             const tr = trs[r];
-            if (tr === headerTr || tr.querySelector('th')) {
+            if (tr === headerTr || trHasDirectChildTh(tr)) {
                 continue;
             }
             const cells = tr.querySelectorAll('td');
@@ -1751,7 +1766,7 @@
             const trs = table.querySelectorAll('tr');
             for (var r = 0; r < trs.length; r++) {
                 const tr = trs[r];
-                if (tr === headerTr || tr.querySelector('th')) {
+                if (tr === headerTr || trHasDirectChildTh(tr)) {
                     continue;
                 }
                 if (
