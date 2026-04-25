@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         AC context menu — send tail to worksheet
+// @name         Send AC to WS (send late FLT required)
 // @namespace    Wolf 2.0
-// @version      1.1.0
-// @description  Send tail via burst BroadcastChannel + retries; flyout matches Semantic UI menu class. Pax 1.9.9 tail/flight input retry on worksheet.
+// @version      1.1.1
+// @description  Right-click AC: send tail to another worksheet. Requires Send late flights to WS Pax Conx on worksheet tabs (BroadcastChannel ws_apply_tail).
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"acTailToWsEnabled":{"type":"boolean","group":"AC → worksheet","label":"Enable context menu","default":true},"acTailToWsListWaitMs":{"type":"number","group":"AC → worksheet","label":"Worksheet list wait (ms)","default":2000,"min":100,"max":8000,"step":100,"description":"How long to wait for worksheet tabs to answer ws_list (raise if the list is often empty)."},"acTailToWsLog":{"type":"boolean","group":"AC → worksheet","label":"Debug log","default":false}}
@@ -297,7 +297,7 @@
                     d0.className = firstItem.className || 'item';
                     d0.href = '#';
                     d0.textContent =
-                        'No worksheets found — open a worksheet with Pax v1.9.9+';
+                        'No worksheets found — open a worksheet with "Send late flights to WS Pax Conx" (v1.9.9+).';
                     d0.style.cssText = 'color:#e67e22!important;white-space:normal!important;';
                     sub.appendChild(d0);
                     return;
