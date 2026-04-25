@@ -20,6 +20,7 @@
     var SS_QUICK_STATE = 'dc_ws_state_reload_quick_state_v1';
     var SS_QUICK_RESTORE = 'dc_ws_state_reload_restore_after_reload_v1';
     var WX_BTN_SELECTOR = '[data-dc-metar-watch-btn="1"]';
+    var STATE_TTL_MS = 4 * 60 * 60 * 1000;
 
     var mountObserver = null;
     var mountRaf = 0;
@@ -58,6 +59,53 @@
         }
     }
 
+    function expiresAtFor(ts) {
+        var base = Date.parse(ts || '');
+        if (!Number.isFinite(base)) {
+            base = Date.now();
+        }
+        return new Date(base + STATE_TTL_MS).toISOString();
+    }
+
+    function isExpiredState(state) {
+        if (!state || typeof state !== 'object') {
+            return true;
+        }
+        var exp = Date.parse(state.expiresAt || '');
+        if (!Number.isFinite(exp)) {
+            var saved = Date.parse(state.updatedAt || state.capturedAt || '');
+            if (!Number.isFinite(saved)) {
+                return false;
+            }
+            exp = saved + STATE_TTL_MS;
+        }
+        return Date.now() >= exp;
+    }
+
+    function pruneStateStore(store) {
+        if (!store || !Array.isArray(store.states)) {
+            return { version: 1, states: [] };
+        }
+        var next = [];
+        var changed = false;
+        var i;
+        for (i = 0; i < store.states.length; i++) {
+            var st = store.states[i];
+            if (isExpiredState(st)) {
+                changed = true;
+                continue;
+            }
+            if (!st.expiresAt) {
+                st.expiresAt = expiresAtFor(st.updatedAt || st.capturedAt);
+                changed = true;
+            }
+            next.push(st);
+        }
+        store.states = next;
+        store._prunedExpired = changed;
+        return store;
+    }
+
     function readStateStore() {
         var raw = '';
         try {
@@ -66,6 +114,11 @@
         var store = safeJsonParse(raw, null);
         if (!store || !Array.isArray(store.states)) {
             return { version: 1, states: [] };
+        }
+        store = pruneStateStore(store);
+        if (store._prunedExpired) {
+            delete store._prunedExpired;
+            writeStateStore(store);
         }
         return store;
     }
@@ -89,6 +142,24 @@
         } catch (e) {
             return ts || '';
         }
+    }
+
+    function formatExpiresLabel(ts) {
+        var exp = Date.parse(ts || '');
+        if (!Number.isFinite(exp)) {
+            return 'expires within 4 hours';
+        }
+        var ms = exp - Date.now();
+        if (ms <= 0) {
+            return 'expired';
+        }
+        var mins = Math.max(1, Math.ceil(ms / 60000));
+        if (mins >= 60) {
+            var hrs = Math.floor(mins / 60);
+            var rem = mins % 60;
+            return 'expires in ' + hrs + 'h' + (rem ? ' ' + rem + 'm' : '');
+        }
+        return 'expires in ' + mins + 'm';
     }
 
     function itemSummary(items) {
@@ -462,6 +533,7 @@
         state.id = existingIndex >= 0 ? store.states[existingIndex].id || stateId() : stateId();
         state.name = name;
         state.updatedAt = nowIso();
+        state.expiresAt = expiresAtFor(state.updatedAt);
         if (existingIndex >= 0) {
             if (!window.confirm('Replace saved state "' + name + '"?')) {
                 return;
@@ -471,7 +543,7 @@
             store.states.unshift(state);
         }
         if (writeStateStore(store)) {
-            toast('Saved "' + name + '" (' + itemSummary(state.items) + ').', false);
+            toast('Saved "' + name + '" (' + itemSummary(state.items) + '), expires in 4 hours.', false);
         } else {
             toast('Could not save state. Browser storage may be full or blocked.', true);
         }
@@ -542,7 +614,12 @@
         name.textContent = state.name || '(unnamed)';
         var meta = document.createElement('div');
         meta.className = 'dc-wss-meta';
-        meta.textContent = itemSummary(state.items) + ' - saved ' + formatDate(state.updatedAt || state.capturedAt);
+        meta.textContent =
+            itemSummary(state.items) +
+            ' - saved ' +
+            formatDate(state.updatedAt || state.capturedAt) +
+            ' - ' +
+            formatExpiresLabel(state.expiresAt);
         info.appendChild(name);
         info.appendChild(meta);
 
@@ -740,6 +817,7 @@
         if (!isWorksheetPage()) {
             return;
         }
+        readStateStore();
         mountControls();
         restoreAfterQuickReloadIfNeeded();
         mountObserver = new MutationObserver(scheduleMount);
