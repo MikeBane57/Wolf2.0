@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.1.7
+// @version      0.1.8
 // @description  Worksheet: save named AC tail/line states, recall them later, quick reload/restore, and optionally share cloud states.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
@@ -1050,6 +1050,9 @@
             '[data-dc-worksheet-helper-buttons="1"],#' +
             HOST_ID +
             ',#dc-brief-ai-ws-host,button[data-dc-metar-watch-btn="1"]{' +
+            'position:relative!important;z-index:2147482000!important;pointer-events:auto!important;}' +
+            'button[data-testid="transaction-toggle-button"],' +
+            '.one.wide.column:has(> .ui.form button[data-testid="transaction-toggle-button"]){' +
             'position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}' +
             '#' +
             HOST_ID +
@@ -1149,7 +1152,7 @@
             );
             host.appendChild(
                 makeButton(
-                    'Load worksheet',
+                    'Load WS',
                     'Recall a local or cloud worksheet state',
                     'load'
                 )
@@ -1463,7 +1466,7 @@
         var head = document.createElement('div');
         head.className = 'dc-wss-head';
         var title = document.createElement('div');
-        title.textContent = 'Load worksheet';
+        title.textContent = 'Load WS';
         var close = document.createElement('button');
         close.type = 'button';
         close.textContent = 'Close';

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.42
+// @version      2.0.43
 // @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -5200,11 +5200,11 @@
             '[data-dc-worksheet-helper-buttons="1"],button[' +
             WX_BTN_ATTR +
             '="1"]{' +
-            'position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}' +
+            'position:relative!important;z-index:2147482000!important;pointer-events:auto!important;}' +
             'span#dc-ws-state-reload-host,span#dc-brief-ai-ws-host,#' +
             'dc-ws-state-reload-host,#' +
             'dc-brief-ai-ws-host' +
-            '{position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}';
+            '{position:relative!important;z-index:2147482000!important;pointer-events:auto!important;}';
         try {
             document.head.appendChild(st);
         } catch (e) {}
