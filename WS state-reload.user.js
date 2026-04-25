@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.1.2
+// @version      0.1.3
 // @description  Worksheet: save named AC tail/line states, recall them later, quick reload/restore, and optionally share cloud states.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
@@ -860,19 +860,8 @@
             helper.style.display = 'inline-flex';
             helper.style.alignItems = 'stretch';
             helper.style.gap = '4px';
-            helper.style.marginLeft = 'auto';
-            helper.style.flexShrink = '0';
+            helper.style.marginLeft = '';
         } catch (e2) {}
-        try {
-            if (
-                window.getComputedStyle(fields).display !== 'flex' &&
-                window.getComputedStyle(fields).display !== 'inline-flex'
-            ) {
-                fields.style.display = 'flex';
-                fields.style.flexWrap = 'wrap';
-                fields.style.alignItems = 'center';
-            }
-        } catch (e3) {}
     }
 
     function getOrCreateWorksheetHelperField() {
@@ -1063,7 +1052,7 @@
             host.style.right = '';
             host.style.top = '';
             host.style.zIndex = '';
-            host.style.marginLeft = 'auto';
+            host.style.marginLeft = '';
             if (host.parentNode !== parent) {
                 try {
                     parent.appendChild(host);

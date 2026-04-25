@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.37
+// @version      2.0.38
 // @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -5095,19 +5095,8 @@
             helper.style.display = 'inline-flex';
             helper.style.alignItems = 'stretch';
             helper.style.gap = '4px';
-            helper.style.marginLeft = 'auto';
-            helper.style.flexShrink = '0';
+            helper.style.marginLeft = '';
         } catch (e2) {}
-        try {
-            if (
-                window.getComputedStyle(fields).display !== 'flex' &&
-                window.getComputedStyle(fields).display !== 'inline-flex'
-            ) {
-                fields.style.display = 'flex';
-                fields.style.flexWrap = 'wrap';
-                fields.style.alignItems = 'center';
-            }
-        } catch (e3) {}
     }
 
     function getOrCreateWorksheetHelperField() {
@@ -5286,7 +5275,7 @@
             orderWsbInHelper(worksheetHelper);
         } else if (anchor && anchor.parentNode) {
             var hPar = anchor.parentNode;
-            btn.style.marginLeft = 'auto';
+            btn.style.marginLeft = '8px';
             if (btn.parentNode !== hPar) {
                 try {
                     hPar.appendChild(btn);
@@ -5322,7 +5311,6 @@
                 try {
                     row.style.display = 'flex';
                     row.style.alignItems = 'stretch';
-                    row.style.flexWrap = 'wrap';
                 } catch (e3) {}
             }
         } else {

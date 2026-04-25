@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.1.5
+// @version      0.1.6
 // @description  Worksheet: regional weather brief (METAR-based) — optional LLM (Groq, Gemini, Ollama, etc.); button by WX/WS state.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/*
@@ -904,19 +904,8 @@
             helper.style.display = 'inline-flex';
             helper.style.alignItems = 'stretch';
             helper.style.gap = '4px';
-            helper.style.marginLeft = 'auto';
-            helper.style.flexShrink = '0';
+            helper.style.marginLeft = '';
         } catch (e2) {}
-        try {
-            if (
-                window.getComputedStyle(fields).display !== 'flex' &&
-                window.getComputedStyle(fields).display !== 'inline-flex'
-            ) {
-                fields.style.display = 'flex';
-                fields.style.flexWrap = 'wrap';
-                fields.style.alignItems = 'center';
-            }
-        } catch (e3) {}
     }
 
     function getOrCreateWorksheetHelperField() {
