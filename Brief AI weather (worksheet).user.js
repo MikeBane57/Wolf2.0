@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.3.0
-// @description  Worksheet: regional weather brief (METAR-based) — broad LLM brief; compose modal, stations-of-interest, optional LLM.
+// @version      0.3.1
+// @description  Worksheet: regional weather brief (METAR-based) — broad, conversational LLM brief; compose modal, stations-of-interest, optional LLM.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -12,7 +12,7 @@
 // @connect      openrouter.ai
 // @connect      localhost
 // @connect      127.0.0.1
-// @donkeycode-pref {"worksheetToolbarClickDebug":{"type":"boolean","group":"Brief AI","label":"Log click target (debug)","description":"Same as WS state: log pointerdown/click on worksheet helper.","default":false},"briefAiProvider":{"type":"select","group":"Brief AI","label":"LLM provider","description":"GitHub Copilot has no public HTTP API for this use. Groq: free key at https://console.groq.com — set Base URL to https://api.groq.com/openai/v1. Ollama: free local (open-source models), set URL to http://127.0.0.1:11434/v1. OpenRouter: https://openrouter.ai","default":"openai_compat","options":[{"val":"openai_compat","label":"OpenAI-compatible (Groq, OpenRouter, many others)"},{"val":"gemini","label":"Google Gemini (AI Studio key)"},{"val":"ollama","label":"Ollama local (http://127.0.0.1:11434/v1)"}]},"briefAiOpenaiBaseUrl":{"type":"string","group":"Brief AI","label":"OpenAI-compat: Base URL","default":"https://api.groq.com/openai/v1","placeholder":"https://api.groq.com/openai/v1"},"briefAiOpenaiKey":{"type":"string","group":"Brief AI","label":"OpenAI-compat: API key","default":"","password":true,"description":"e.g. Groq gs_... or OpenRouter sk-..."},"briefAiOpenaiModel":{"type":"string","group":"Brief AI","label":"OpenAI-compat: model id","default":"llama-3.3-70b-versatile","placeholder":"llama-3.3-70b-versatile"},"briefAiOllamaUrl":{"type":"string","group":"Brief AI","label":"Ollama: base URL (OpenAI path)","default":"http://127.0.0.1:11434/v1","placeholder":"http://127.0.0.1:11434/v1"},"briefAiOllamaModel":{"type":"string","group":"Brief AI","label":"Ollama: model name","default":"llama3.2","placeholder":"llama3.2"},"briefAiGeminiKey":{"type":"string","group":"Brief AI","label":"Gemini: API key","description":"https://aistudio.google.com/apikey","default":"","password":true},"briefAiGeminiModel":{"type":"string","group":"Brief AI","label":"Gemini: model","default":"gemini-2.0-flash","placeholder":"gemini-2.0-flash"},"briefAiExtraStations":{"type":"string","group":"Brief AI","label":"Default extra stations (pref)","description":"Also merged into METAR scope and pre-fills the compose dialog. Use the dialog to list what to call out; leave blank in the dialog to use the full WN default lists.","default":"","placeholder":"e.g. OAK ABQ"},"briefAiTemperature":{"type":"number","group":"Brief AI","label":"LLM temperature","description":"Higher = more conversational (0.15–0.8).","default":0.45,"min":0.1,"max":0.95,"step":0.05}}
+// @donkeycode-pref {"worksheetToolbarClickDebug":{"type":"boolean","group":"Brief AI","label":"Log click target (debug)","description":"Same as WS state: log pointerdown/click on worksheet helper.","default":false},"briefAiProvider":{"type":"select","group":"Brief AI","label":"LLM provider","description":"GitHub Copilot has no public HTTP API for this use. Groq: free key at https://console.groq.com — set Base URL to https://api.groq.com/openai/v1. Ollama: free local (open-source models), set URL to http://127.0.0.1:11434/v1. OpenRouter: https://openrouter.ai","default":"openai_compat","options":[{"val":"openai_compat","label":"OpenAI-compatible (Groq, OpenRouter, many others)"},{"val":"gemini","label":"Google Gemini (AI Studio key)"},{"val":"ollama","label":"Ollama local (http://127.0.0.1:11434/v1)"}]},"briefAiOpenaiBaseUrl":{"type":"string","group":"Brief AI","label":"OpenAI-compat: Base URL","default":"https://api.groq.com/openai/v1","placeholder":"https://api.groq.com/openai/v1"},"briefAiOpenaiKey":{"type":"string","group":"Brief AI","label":"OpenAI-compat: API key","default":"","password":true,"description":"e.g. Groq gs_... or OpenRouter sk-..."},"briefAiOpenaiModel":{"type":"string","group":"Brief AI","label":"OpenAI-compat: model id","default":"llama-3.3-70b-versatile","placeholder":"llama-3.3-70b-versatile"},"briefAiOllamaUrl":{"type":"string","group":"Brief AI","label":"Ollama: base URL (OpenAI path)","default":"http://127.0.0.1:11434/v1","placeholder":"http://127.0.0.1:11434/v1"},"briefAiOllamaModel":{"type":"string","group":"Brief AI","label":"Ollama: model name","default":"llama3.2","placeholder":"llama3.2"},"briefAiGeminiKey":{"type":"string","group":"Brief AI","label":"Gemini: API key","description":"https://aistudio.google.com/apikey","default":"","password":true},"briefAiGeminiModel":{"type":"string","group":"Brief AI","label":"Gemini: model","default":"gemini-2.0-flash","placeholder":"gemini-2.0-flash"},"briefAiExtraStations":{"type":"string","group":"Brief AI","label":"Default extra stations (pref)","description":"Also merged into METAR scope and pre-fills the compose dialog. Use the dialog to list what to call out; leave blank in the dialog to use the full WN default lists.","default":"","placeholder":"e.g. OAK ABQ"},"briefAiTemperature":{"type":"number","group":"Brief AI","label":"LLM temperature","description":"Higher = more chatty and varied (0.15–0.8). Suggest ~0.5–0.65 for a looser voice.","default":0.55,"min":0.1,"max":0.95,"step":0.05}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Brief%20AI%20weather%20(worksheet).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Brief%20AI%20weather%20(worksheet).user.js
 // ==/UserScript==
@@ -467,21 +467,27 @@
             var title = name === 'Intl/ETOPS' ? 'Intl / ETOPS' : name;
             if (!s || s.total < 1) {
                 parts.push('**' + title + '**');
-                parts.push('Nothing in the watch set for this band; broad picture only.');
+                parts.push(
+                    "Nothing in our watch list for this slice—if you are not looking at a specific market here, you can move on."
+                );
                 continue;
             }
             if (!s.sample) {
                 parts.push('**' + title + '**');
-                parts.push('Broad picture: no recent METAR snapshot in the fetch—treat as unknown until refreshed.');
+                parts.push(
+                    "We are thin on a fresh look in the snapshot, so I would not lean on a story here—refresh the picture before you read too much into it."
+                );
             } else {
                 var sev = (s.ifr || 0) + (s.mvfr || 0);
                 parts.push('**' + title + '**');
                 if (sev < 1 && (s.withFlags || 0) < 1) {
-                    parts.push('Broad picture: nothing stands out in this sample—routine ops barring new developments.');
+                    parts.push(
+                        "Feels pretty routine from what we are seeing in this pass—nothing that jumps out for network flow."
+                    );
                 } else {
                     parts.push(
-                        'Broad picture: a mix of lower categories or weather flags in the sample. Stay situationally aware; ' +
-                        'we are not listing individual stations unless you added them in the form.'
+                        "There is a little more 'weather' texture in the mix in this pass—keep an eye on flow if things bunch up, " +
+                        "but we are not name-dropping airfields here unless you listed them in the form."
                     );
                 }
             }
@@ -490,9 +496,9 @@
     }
 
     function llmTemperature() {
-        var n = Number(getPref('briefAiTemperature', 0.45));
+        var n = Number(getPref('briefAiTemperature', 0.55));
         if (!Number.isFinite(n)) {
-            return 0.45;
+            return 0.55;
         }
         return Math.min(0.95, Math.max(0.1, n));
     }
@@ -504,27 +510,27 @@
             ? 'The user asked to call out these station codes (IATA) by name when relevant: ' + stList + '. Otherwise do not name specific airports, cities, or navaids—stay regional and thematic.'
             : 'Do not name any specific airport, city, or station code. Speak in broad regional terms only (e.g. "parts of the Southeast", "Gulf side", "upper Midwest").';
         var sys = [
-            'You are a Southwest Airlines duty / dispatch-style briefer. Tone: professional, high-level, conversational—like a 30-second desk-to-desk read, not a met brief or a fact sheet.',
-            'OUTPUT FORMAT: Plain text. Start each of these four regions on its own line with a bold label using **double asterisks**, then a newline, then 2–3 short lines for that region. In this order exactly:',
-            '  **East**',
-            '  **Central**',
-            '  **West**',
-            '  **Intl / ETOPS**  (Hawaii, Alaska, Mexico & Caribbean, other intl as one bucket)',
-            'Do not use # headings or numbered lists. No tables.',
-            'CONTENT: Stay broad and strategic. Do not quote visibilities, exact winds, TAF times, or METAR text. The JSON is only a soft snapshot of themes and rough counts (IFR/LIFR density, MVFR, hazard signals)—use it to infer "heavier / lighter / more convective flavour / quieter" at a network level, not to enumerate facts.',
+            'You are a Southwest line ops / dispatch colleague giving a quick desk-side read—not a written METAR summary and not a checklist.',
+            'Vibe: warm, easy, a little conversational. Use "we", short sentences, natural handoffs between regions. It is fine to use one casual bridge ("Anyway…", "Same story in the…", "Nothing weird jumping out in…", "if anything…") as long as it stays professional.',
+            'Keep everything HIGH LEVEL: themes, "where the energy is" or "where it is quieter", and what might matter for flow—never inventory stats, never read IFR/LIFR/MVFR counts, never quote RVR, wind numbers, TAF time groups, or METAR text. Do not sound like a robot reciting the JSON.',
+            'OUTPUT — plain text only. In this order, each on its own line: **East** then 2–4 short conversational sentences; blank line; **Central** then 2–4 sentences; blank line; **West** then 2–4 sentences; blank line; **Intl / ETOPS** (Hawaii, Alaska, Mexico & Caribbean, other intl in one bucket) then 2–4 sentences. Put nothing on the same line as the **Region** title—title line only, then body under it. No # markdown headings, no tables, no bullet lists unless it reads totally natural in speech.',
             stationRule,
             focus
-                ? 'The user also wrote this focus or concern (weigh it gently; do not contradict the JSON, but you may connect themes): ' + focus
+                ? 'The user also noted this (weave in lightly if it helps; do not override the data snapshot): ' + focus
                 : '',
-            'If a region has effectively nothing going on, say that in one short relaxed sentence—no "no operational concerns" boilerplate unless you want a single casual line.',
-            'The aggregated snapshot JSON (no per-airport identities unless your instructions say the user named stations):',
+            'The JSON is background texture only: rough counts and hazard flavour so you are not making things up. If a region is quiet, say that in a relaxed, human one-liner—skip stiff boilerplate.',
+            'Aggregated snapshot (no per-airport identities in this object unless the user named stations in your other instructions):',
             dataJson
         ]
             .filter(function (x) {
                 return String(x).length > 0;
             })
             .join('\n\n');
-        return { system: sys, user: 'Write the four-region brief now, following the **Region** line format exactly.' };
+        return {
+            system: sys,
+            user:
+                'Write the four-region voice brief now. **East**, **Central**, **West**, **Intl / ETOPS** each get their own line as the section title, then the chatty paragraph under it—no stats dump.'
+        };
     }
 
     function gmXhrOpenAiChat(url, bodyObj, headers) {
@@ -853,10 +859,16 @@
             '] .dc-bai-body--brief{font:15px/1.55 system-ui,Segoe UI,sans-serif;color:#e2e8f0;white-space:normal;}' +
             '[' +
             MODAL_ATTR +
-            '] .dc-bai-brief-para{margin:0 0 10px;}' +
+            '] .dc-bai-brief-para{margin:0 0 0.5em;}' +
             '[' +
             MODAL_ATTR +
-            '] .dc-bai-brief-title{margin:0 0 2px 0;padding-top:4px;}' +
+            '] .dc-bai-body--brief h4.dc-bai-brief-title{margin:1.1em 0 0.35em;padding:0;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-body--brief h4.dc-bai-brief-title:first-child{margin-top:0;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-brief-title{margin:0;}' +
             '[' +
             MODAL_ATTR +
             '] .dc-bai-brief-title em{font-style:normal;font-weight:700;font-size:0.95em;letter-spacing:.01em;}' +
@@ -938,8 +950,22 @@
             .replace(/>/g, '&gt;');
     }
 
+    var REGION_TITLE_RE = /\*\*(East|Central|West|Intl\s*\/\s*ETOPS)\*\*/gi;
+
+    function normalizeBriefTextForDisplay(plain) {
+        var t = String(plain == null ? '' : plain)
+            .replace(/\r\n/g, '\n')
+            .replace(/\r/g, '\n');
+        t = t.replace(REGION_TITLE_RE, function (m) {
+            return '\n\n' + m + '\n';
+        });
+        t = t.replace(/^\s+|\s+$/g, '');
+        t = t.replace(/\n{3,}/g, '\n\n');
+        return t;
+    }
+
     function formatBriefBodyHtml(plain) {
-        var t = String(plain == null ? '' : plain).replace(/\r\n/g, '\n');
+        var t = normalizeBriefTextForDisplay(plain);
         t = t.replace(/^\s+|\s+$/g, '');
         if (!t) {
             return '<div class="dc-bai-body--brief" data-brief="1"></div>';
