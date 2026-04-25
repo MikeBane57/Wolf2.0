@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.9.6
-// @description  Worksheet PAX badge: looser PAX column match, text-based puck match, fixed-position badge, longer retries. Alt+open Pax unchanged.
+// @version      1.9.7
+// @description  Only outbound table for the clicked ref leg; route fields on PAX (cxn/nxt/fin) for multileg puck; composite merge key; PAX badges stack, longer default. Alt+open unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","default":true},"paxLateToWsOpenPaxWindow":{"type":"boolean","group":"Pax late to worksheet","label":"Open Pax on Alt+click","default":true,"description":"Opens a separate browser window (not a tab) when the popup options below are used."},"paxLateToWsPaxAsPopupWindow":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Pax in popup (not new tab)","default":true,"description":"Uses window features (size/position) like Middle-click launcher, so the worksheet can stay the focused tab."},"paxLateToWsPaxRefocusOpener":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Refocus this window after open","default":true,"description":"Call window.focus() on the schedule/worksheet window after opening Pax (best-effort; browser may still show the popup on top)."},"paxLateToWsPaxWinW":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup width (px)","default":1000,"min":400,"max":2400,"step":10},"paxLateToWsPaxWinH":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup height (px)","default":800,"min":400,"max":2000,"step":10},"paxLateToWsPaxWinLeft":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup left offset from this window (px)","default":24,"min":-2000,"max":2000,"step":1},"paxLateToWsPaxWinTop":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup top offset (px)","default":24,"min":0,"max":2000,"step":1},"paxLateToWsPaxWindowName":{"type":"string","group":"Pax late to worksheet · open Pax","label":"Reusable window name","default":"__dcPaxLateFlightsPax__","description":"If another Pax from this control is already using this name, the same window may navigate (browser dependent). Use a new name to always get a new popup."},"paxLateToWsAfterOpenWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After open Pax, wait (ms)","default":2000,"min":0,"max":20000,"step":100},"paxLateToWsPaxInlineSend":{"type":"boolean","group":"Pax late to worksheet","label":"Pax: inline send by connection","default":true,"description":"Compact button between CONNECT and SCH ARR. With several worksheet tabs, you pick the target; one tab = send there; remembered per city after a successful send."},"paxLateToWsWorksheetPicker":{"type":"boolean","group":"Pax late to worksheet","label":"Ask which worksheet (2+ tabs)","default":true,"description":"When more than one worksheet tab is open, show a title list. Schedule pages are not listed (worksheet widget only)."},"paxLateToWsListWorksheetsMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet list wait (ms)","default":500,"min":100,"max":5000,"step":50,"description":"How long to wait for worksheet tab replies before opening the picker. Lower = faster; raise only if the list is often empty."},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match leg to Pax URL","default":true},"paxLateToWsTightByTime":{"type":"boolean","group":"Pax late to worksheet · time","label":"Tight = ETD within gap of ref ETA","default":true},"paxLateToWsTightMaxGapMin":{"type":"number","group":"Pax late to worksheet · time","label":"Max minutes (|ETD − ref ETA|)","default":20,"min":0,"max":300,"step":1},"paxLateToWsTightTimeOrColor":{"type":"boolean","group":"Pax late to worksheet · time","label":"OR include red/orange rows","default":true},"paxLateToWsDownlineColumn":{"type":"select","group":"Pax late to worksheet","label":"IATA filter column","default":"off","options":[{"value":"off","label":"No IATA filter"},{"value":"final","label":"FINAL only"},{"value":"next","label":"NEXT only"},{"value":"next_or_final","label":"NEXT or FINAL"}]},"paxLateToWsDownlineIata":{"type":"string","group":"Pax late to worksheet","label":"IATA list","default":"","placeholder":"e.g. MSP"},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound first","default":true},"paxLateToWsOutboundTabRetryMs":{"type":"number","group":"Pax late to worksheet","label":"Outbound: retry every (ms)","default":300,"min":100,"max":3000,"step":50,"description":"Poll for the Outbound tab while the page is still loading."},"paxLateToWsOutboundTabMaxWaitMs":{"type":"number","group":"Pax late to worksheet","label":"Outbound: max wait (ms)","default":12000,"min":0,"max":60000,"step":500,"description":"Stop looking for Outbound after this; collection still runs. 0 = one try only (old behavior)."},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound (ms)","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Broadcast from Pax to worksheet","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Pax reply wait (ms)","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Debug log (general)","default":false,"description":"General [PAX-LATE-WS] lines (e.g. Alt+click, broadcast)."},"paxLateToWsLogParse":{"type":"boolean","group":"Pax late to worksheet","label":"Log parse (tight conx table)","default":false,"description":"Console: ref ETA, each outbound row FLT, ETD, |gap|, time vs color, include/skip. Use with Send or Alt+click to see why 3702 vs 3862."},"paxLateToWsWsPaxBadgeMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet: PAX count badge (ms)","default":12000,"min":0,"max":120000,"step":500,"description":"After each flight is entered, show the Pax count from the outbound table next to that flight puck. 0 = off."},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Enter delay (ms)","default":250,"min":0,"max":5000,"step":50}}
+// @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","default":true},"paxLateToWsOpenPaxWindow":{"type":"boolean","group":"Pax late to worksheet","label":"Open Pax on Alt+click","default":true,"description":"Opens a separate browser window (not a tab) when the popup options below are used."},"paxLateToWsPaxAsPopupWindow":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Pax in popup (not new tab)","default":true,"description":"Uses window features (size/position) like Middle-click launcher, so the worksheet can stay the focused tab."},"paxLateToWsPaxRefocusOpener":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Refocus this window after open","default":true,"description":"Call window.focus() on the schedule/worksheet window after opening Pax (best-effort; browser may still show the popup on top)."},"paxLateToWsPaxWinW":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup width (px)","default":1000,"min":400,"max":2400,"step":10},"paxLateToWsPaxWinH":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup height (px)","default":800,"min":400,"max":2000,"step":10},"paxLateToWsPaxWinLeft":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup left offset from this window (px)","default":24,"min":-2000,"max":2000,"step":1},"paxLateToWsPaxWinTop":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup top offset (px)","default":24,"min":0,"max":2000,"step":1},"paxLateToWsPaxWindowName":{"type":"string","group":"Pax late to worksheet · open Pax","label":"Reusable window name","default":"__dcPaxLateFlightsPax__","description":"If another Pax from this control is already using this name, the same window may navigate (browser dependent). Use a new name to always get a new popup."},"paxLateToWsAfterOpenWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After open Pax, wait (ms)","default":2000,"min":0,"max":20000,"step":100},"paxLateToWsPaxInlineSend":{"type":"boolean","group":"Pax late to worksheet","label":"Pax: inline send by connection","default":true,"description":"Compact button between CONNECT and SCH ARR. With several worksheet tabs, you pick the target; one tab = send there; remembered per city after a successful send."},"paxLateToWsWorksheetPicker":{"type":"boolean","group":"Pax late to worksheet","label":"Ask which worksheet (2+ tabs)","default":true,"description":"When more than one worksheet tab is open, show a title list. Schedule pages are not listed (worksheet widget only)."},"paxLateToWsListWorksheetsMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet list wait (ms)","default":500,"min":100,"max":5000,"step":50,"description":"How long to wait for worksheet tab replies before opening the picker. Lower = faster; raise only if the list is often empty."},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match leg to Pax URL","default":true},"paxLateToWsTightByTime":{"type":"boolean","group":"Pax late to worksheet · time","label":"Tight = ETD within gap of ref ETA","default":true},"paxLateToWsTightMaxGapMin":{"type":"number","group":"Pax late to worksheet · time","label":"Max minutes (|ETD − ref ETA|)","default":20,"min":0,"max":300,"step":1},"paxLateToWsTightTimeOrColor":{"type":"boolean","group":"Pax late to worksheet · time","label":"OR include red/orange rows","default":true},"paxLateToWsDownlineColumn":{"type":"select","group":"Pax late to worksheet","label":"IATA filter column","default":"off","options":[{"value":"off","label":"No IATA filter"},{"value":"final","label":"FINAL only"},{"value":"next","label":"NEXT only"},{"value":"next_or_final","label":"NEXT or FINAL"}]},"paxLateToWsDownlineIata":{"type":"string","group":"Pax late to worksheet","label":"IATA list","default":"","placeholder":"e.g. MSP"},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound first","default":true},"paxLateToWsOutboundTabRetryMs":{"type":"number","group":"Pax late to worksheet","label":"Outbound: retry every (ms)","default":300,"min":100,"max":3000,"step":50,"description":"Poll for the Outbound tab while the page is still loading."},"paxLateToWsOutboundTabMaxWaitMs":{"type":"number","group":"Pax late to worksheet","label":"Outbound: max wait (ms)","default":12000,"min":0,"max":60000,"step":500,"description":"Stop looking for Outbound after this; collection still runs. 0 = one try only (old behavior)."},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound (ms)","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Broadcast from Pax to worksheet","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Pax reply wait (ms)","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Debug log (general)","default":false,"description":"General [PAX-LATE-WS] lines (e.g. Alt+click, broadcast)."},"paxLateToWsLogParse":{"type":"boolean","group":"Pax late to worksheet","label":"Log parse (tight conx table)","default":false,"description":"Console: ref ETA, each outbound row FLT, ETD, |gap|, time vs color, include/skip. Use with Send or Alt+click to see why 3702 vs 3862."},"paxLateToWsScopeOutboundToRefLeg":{"type":"boolean","group":"Pax late to worksheet","label":"Only ref-leg outbound (alt path)","default":true,"description":"On Pax, include tight flights from the clicked reference leg only, not from other h3/connection blocks. Turn off to scan all outbound blocks on the page."},"paxLateToWsWsPaxBadgeMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet: PAX count badge (ms)","default":60000,"min":0,"max":600000,"step":1000,"description":"How long each PAX chip stays by a flight puck (stacks; one per leg). 0 = off. Raise for long multi-flight runs."},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Enter delay (ms)","default":250,"min":0,"max":5000,"step":50}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Pax%20connections%20-%20late%20flights.user.js
 // ==/UserScript==
@@ -315,7 +315,11 @@
                 tightMaxGapMin: defTightMaxGapMin(),
                 tightTimeOrColor: defTightTimeOrColor(),
                 refFlt: null,
-                refDepIata: null
+                refDepIata: null,
+                refPaxPathKey: null,
+                scopeOutboundToRefLeg:
+                    getPref('paxLateToWsScopeOutboundToRefLeg', true) !==
+                    false
             };
         }
         const mode =
@@ -352,6 +356,23 @@
                 rdi = z;
             }
         }
+        var rpk = null;
+        if (
+            obj.refPaxPathKey !== undefined &&
+            obj.refPaxPathKey !== null &&
+            obj.refPaxPathKey !== ''
+        ) {
+            const rp = String(obj.refPaxPathKey).replace(/^\s+|\s+$/g, '');
+            if (rp) {
+                rpk = rp;
+            }
+        }
+        var srl =
+            obj.scopeOutboundToRefLeg !== undefined &&
+            obj.scopeOutboundToRefLeg !== null
+                ? obj.scopeOutboundToRefLeg
+                : getPref('paxLateToWsScopeOutboundToRefLeg', true) !==
+                      false;
         return {
             downlineMode: mode,
             downlineIataList: list,
@@ -359,7 +380,9 @@
             tightMaxGapMin: Number.isFinite(tgm) ? tgm : defTightMaxGapMin(),
             tightTimeOrColor: !!ttc,
             refFlt: rrf,
-            refDepIata: rdi
+            refDepIata: rdi,
+            refPaxPathKey: rpk,
+            scopeOutboundToRefLeg: !!srl
         };
     }
 
@@ -390,6 +413,26 @@
         return /^[A-Z]{3}$/.test(dep) ? dep : '';
     }
 
+    function paxKeyFromBlockAndPaxPathKey(block, paxPathKey) {
+        if (!block || !paxPathKey) {
+            return '';
+        }
+        const pm = String(paxPathKey).match(/^(\d{8})-([A-Z]{3})/i);
+        if (!pm) {
+            return '';
+        }
+        const h3t = h3TextFromRefBlock(block);
+        const hm = h3t.match(
+            /(\d{1,4})\s+([A-Z]{3})\s*[-–/]\s*([A-Z]{3})/i
+        );
+        if (!hm) {
+            return '';
+        }
+        return (
+            pm[1] + '-' + hm[2].toUpperCase() + '-' + String(hm[1])
+        );
+    }
+
     function collectOptsKey(co) {
         if (!co) {
             return '';
@@ -401,7 +444,9 @@
             String(co.tightMaxGapMin),
             co.tightTimeOrColor ? '1' : '0',
             String(co.refFlt || ''),
-            String((co && co.refDepIata) || '')
+            String((co && co.refDepIata) || ''),
+            String((co && co.refPaxPathKey) || ''),
+            co && co.scopeOutboundToRefLeg ? '1' : '0'
         ].join('|');
     }
 
@@ -1365,6 +1410,16 @@
         return (tds[colIdx].textContent || '').replace(/\s+/g, ' ').toUpperCase();
     }
 
+    function firstIata3InUpper(s) {
+        const u = String(s || '').toUpperCase();
+        const m = u.match(/\b([A-Z]{3})\b/);
+        return m ? m[1] : '';
+    }
+
+    function rowIata3AtColumnIndex(tr, colIdx) {
+        return firstIata3InUpper(rowTextAtCellIndex(tr, colIdx));
+    }
+
     function textContainsAnyIata(uppercasedCellText, iataList) {
         if (!iataList || !iataList.length) {
             return true;
@@ -1580,7 +1635,7 @@
         return d;
     }
 
-    function makeFlightItem(fltDigits, pax) {
+    function makeFlightItem(fltDigits, pax, route) {
         const f = String(fltDigits == null ? '' : fltDigits).replace(
             /^\s+|\s+$/g,
             ''
@@ -1592,7 +1647,40 @@
         if (pax != null && Number.isFinite(pax) && pax >= 0) {
             o.pax = pax;
         }
+        if (route && typeof route === 'object') {
+            if (route.connIata) {
+                o.connIata = String(route.connIata).toUpperCase();
+            }
+            if (route.nextIata) {
+                o.nextIata = String(route.nextIata).toUpperCase();
+            }
+            if (route.finalIata) {
+                o.finalIata = String(route.finalIata).toUpperCase();
+            }
+            if (route.refPaxKey) {
+                o.refPaxKey = String(route.refPaxKey);
+            }
+        }
         return o;
+    }
+
+    function flightItemMergeKey(x) {
+        if (!x) {
+            return '';
+        }
+        if (typeof x === 'string') {
+            return x;
+        }
+        if (typeof x === 'object' && x.flight != null) {
+            return [
+                String(x.flight),
+                x.connIata || '',
+                x.nextIata || '',
+                x.finalIata || '',
+                x.refPaxKey || ''
+            ].join('\t');
+        }
+        return String(x);
     }
 
     function getFlightNumber(x) {
@@ -1647,6 +1735,124 @@
         return firstFlightDigitsInString(t);
     }
 
+    function pucksWithFlightDigits(flightDigits) {
+        const d = String(flightDigits == null ? '' : flightDigits).replace(
+            /^\s+|\s+$/g,
+            ''
+        );
+        const out = [];
+        if (!d) {
+            return out;
+        }
+        var list;
+        try {
+            list = document.querySelectorAll(PUCK_SELECTOR);
+        } catch (e) {
+            return out;
+        }
+        var i;
+        for (i = 0; i < list.length; i++) {
+            const p = list[i];
+            if (!p) {
+                continue;
+            }
+            if (flightDigitsFromPuckDom(p) === d) {
+                out.push(p);
+            }
+        }
+        return out;
+    }
+
+    function paxRankForPuck(puck, item) {
+        if (!puck) {
+            return 0;
+        }
+        const want = getFlightNumber(item);
+        if (!want) {
+            return 0;
+        }
+        const fd = findFlightDataFromPuck(puck, null);
+        var s = 0;
+        if (fd) {
+            if (String(fd.legFlight || '') === want) {
+                s += 6;
+            }
+            if (String(fd.opFlight || '') === want) {
+                s += 3;
+            }
+            if (String(fd.flight || '') === want) {
+                s += 1;
+            }
+        }
+        if (item && item.nextIata) {
+            const nxt = String(item.nextIata).toUpperCase();
+            if (nxt) {
+                if (fd && String(fd.arrAirport || '').toUpperCase() === nxt) {
+                    s += 4;
+                }
+                if (fd && String(fd.depAirport || '').toUpperCase() === nxt) {
+                    s += 2;
+                }
+            }
+        }
+        if (item && item.finalIata) {
+            const fin = String(item.finalIata).toUpperCase();
+            if (fin) {
+                if (fd && String(fd.arrAirport || '').toUpperCase() === fin) {
+                    s += 3;
+                }
+            }
+        }
+        if (item && item.connIata) {
+            const cx = String(item.connIata).toUpperCase();
+            if (cx && fd) {
+                if (String(fd.depAirport || '').toUpperCase() === cx) {
+                    s += 2;
+                }
+                if (String(fd.arrAirport || '').toUpperCase() === cx) {
+                    s += 2;
+                }
+            }
+        }
+        if (item && item.refPaxKey && fd) {
+            const b = buildPaxPathKeyFromFlightData(fd);
+            if (b && b === String(item.refPaxKey)) {
+                s += 10;
+            }
+        }
+        return s;
+    }
+
+    function findFlightPuckForFlightItem(flightItem) {
+        const d = getFlightNumber(flightItem);
+        if (!d) {
+            return null;
+        }
+        const cands = pucksWithFlightDigits(d);
+        if (!cands.length) {
+            return null;
+        }
+        if (cands.length === 1) {
+            return cands[0];
+        }
+        var j;
+        var best = cands[0];
+        var bestS = paxRankForPuck(best, flightItem);
+        for (j = 1; j < cands.length; j++) {
+            const sc = paxRankForPuck(cands[j], flightItem);
+            if (sc > bestS) {
+                bestS = sc;
+                best = cands[j];
+            }
+        }
+        if (getPref('paxLateToWsVerboseLog', false) !== false) {
+            log(
+                'PAX badge: flight ' + d + ' on ' + cands.length + ' pucks, picked score ' + bestS
+            );
+        }
+        return best;
+    }
+
     function formatFlightsListForLog(arr) {
         if (!arr || !arr.length) {
             return '';
@@ -1661,7 +1867,15 @@
                     Number.isFinite(x.pax)
                         ? ' (PAX ' + x.pax + ')'
                         : '';
-                return fn + p;
+                const r =
+                    x && typeof x === 'object' && (x.nextIata || x.finalIata)
+                        ? ' [→' +
+                          (x.nextIata || '—') +
+                          '/' +
+                          (x.finalIata || '—') +
+                          ']'
+                        : '';
+                return fn + p + r;
             })
             .join(', ');
     }
@@ -1909,6 +2123,71 @@
         return null;
     }
 
+    function h3TextFromRefBlock(block) {
+        if (!block || !block.querySelector) {
+            return '';
+        }
+        const h3 = block.querySelector('h3');
+        if (!h3) {
+            return '';
+        }
+        return (h3.textContent || '')
+            .replace(/[\r\n\u00a0]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .replace(/^\s+|\s+$/g, '');
+    }
+
+    function findRefBlockH3ForPaxPathKey(root, paxPathKey) {
+        if (!root || !paxPathKey) {
+            return null;
+        }
+        const k = String(paxPathKey).toUpperCase();
+        const m = k.match(
+            /^(\d{8})-([A-Z]{3})-(\d{1,4})$/i
+        );
+        if (!m) {
+            return null;
+        }
+        const wantFlt = m[3];
+        const wantDep = m[2].toUpperCase();
+        const list = root.querySelectorAll
+            ? root.querySelectorAll('h3')
+            : [];
+        var i;
+        for (i = 0; i < list.length; i++) {
+            const t = (list[i].textContent || '')
+                .replace(/[\r\n\u00a0]+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .replace(/^\s+|\s+$/g, '');
+            const p = t.match(
+                /(\d{1,4})\s+([A-Z]{3})\s*[-–/]\s*([A-Z]{3})/i
+            );
+            if (
+                p &&
+                p[1] === wantFlt &&
+                p[2].toUpperCase() === wantDep
+            ) {
+                return list[i];
+            }
+        }
+        return null;
+    }
+
+    function findRefLegBlockElementForPathKeyInRoot(root, paxPathKey) {
+        if (!paxPathKey) {
+            return null;
+        }
+        const h3e = findRefBlockH3ForPaxPathKey(root, paxPathKey);
+        if (!h3e) {
+            return null;
+        }
+        const block = h3e.parentElement;
+        if (!block || !block.querySelector) {
+            return null;
+        }
+        return block;
+    }
+
     function connectIataFromRefBlock(block) {
         if (!block || !block.querySelectorAll) {
             return '';
@@ -2001,15 +2280,37 @@
             return [];
         }
         const scanOpts = normalizeCollectOpts(opts);
+        var scopeRoot = root;
+        if (
+            scanOpts.scopeOutboundToRefLeg &&
+            scanOpts.refPaxPathKey &&
+            root.querySelector
+        ) {
+            const b = findRefLegBlockElementForPathKeyInRoot(
+                root,
+                scanOpts.refPaxPathKey
+            );
+            if (b) {
+                scopeRoot = b;
+            } else {
+                if (getPref('paxLateToWsVerboseLog', false) !== false) {
+                    log(
+                        'Scoped outbound: could not find ref block h3 for ' +
+                            scanOpts.refPaxPathKey +
+                            ' — scanning full page.'
+                    );
+                }
+            }
+        }
         var tables;
-        if (root.nodeName === 'TABLE') {
-            if (!isNestedInCell(root) && isOutboundPaxTable(root)) {
-                tables = [root];
+        if (scopeRoot.nodeName === 'TABLE') {
+            if (!isNestedInCell(scopeRoot) && isOutboundPaxTable(scopeRoot)) {
+                tables = [scopeRoot];
             } else {
                 tables = [];
             }
-        } else if (root.querySelectorAll) {
-            tables = root.querySelectorAll('table');
+        } else if (scopeRoot.querySelectorAll) {
+            tables = scopeRoot.querySelectorAll('table');
         } else {
             return [];
         }
@@ -2028,8 +2329,19 @@
                 continue;
             }
             const paxColIdx = findPaxColumnIndex(headerTr);
+            const nextColForRow = findHeaderColumnIndexByText(
+                headerTr,
+                'NEXT'
+            );
+            const finalColForRow = findHeaderColumnIndexByText(
+                headerTr,
+                'FINAL'
+            );
             const refFlt = scanOpts.refFlt || null;
             const block = findRefLegBlockForOutboundTable(table);
+            const connIForTable = block
+                ? connectIataFromRefBlock(block)
+                : '';
             var refEta = null;
             if (refFlt) {
                 if (block) {
@@ -2088,7 +2400,25 @@
                     if (paxColIdx >= 0 && cells.length > paxColIdx) {
                         paxC = parsePaxCountFromCell(cells[paxColIdx]);
                     }
-                    const it = makeFlightItem(flt, paxC);
+                    const route = {
+                        connIata: connIForTable,
+                        nextIata: rowIata3AtColumnIndex(
+                            tr,
+                            nextColForRow
+                        ),
+                        finalIata: rowIata3AtColumnIndex(
+                            tr,
+                            finalColForRow
+                        ),
+                        refPaxKey:
+                            block && scanOpts.refPaxPathKey
+                                ? paxKeyFromBlockAndPaxPathKey(
+                                    block,
+                                    scanOpts.refPaxPathKey
+                                )
+                                : scanOpts.refPaxPathKey || ''
+                    };
+                    const it = makeFlightItem(flt, paxC, route);
                     if (it) {
                         out.push(it);
                     }
@@ -2119,6 +2449,9 @@
                 co.refDepIata = depI;
             }
         }
+        if (paxPathKey && !co.refPaxPathKey) {
+            co.refPaxPathKey = paxPathKey;
+        }
         const seen = Object.create(null);
         const unique = [];
         function mergePart(part) {
@@ -2127,7 +2460,7 @@
             }
             var i;
             for (i = 0; i < part.length; i++) {
-                const k = getFlightNumber(part[i]);
+                const k = flightItemMergeKey(part[i]);
                 if (!k) {
                     continue;
                 }
@@ -2143,13 +2476,26 @@
                         part[i].pax != null &&
                         Number.isFinite(part[i].pax)
                     ) {
-                        const nu = makeFlightItem(ex, part[i].pax);
+                        const nu = makeFlightItem(
+                            ex,
+                            part[i].pax,
+                            {
+                                connIata: part[i].connIata,
+                                nextIata: part[i].nextIata,
+                                finalIata: part[i].finalIata,
+                                refPaxKey: part[i].refPaxKey
+                            }
+                        );
                         if (nu) {
                             const ix = unique.indexOf(ex);
                             if (ix >= 0) {
                                 unique[ix] = nu;
                             }
-                            seen[k] = nu;
+                            const newK = flightItemMergeKey(nu);
+                            seen[newK] = nu;
+                            if (k !== newK) {
+                                delete seen[k];
+                            }
                         }
                     } else if (
                         ex &&
@@ -2190,13 +2536,13 @@
         }
         const byFlt = Object.create(null);
         for (var i = 0; i < uniq.length; i++) {
-            const k = getFlightNumber(uniq[i]);
+            const k = flightItemMergeKey(uniq[i]);
             if (k) {
                 byFlt[k] = uniq[i];
             }
         }
         for (i = 0; i < part.length; i++) {
-            const k2 = getFlightNumber(part[i]);
+            const k2 = flightItemMergeKey(part[i]);
             if (!k2) {
                 continue;
             }
@@ -2212,13 +2558,26 @@
                     part[i].pax != null &&
                     Number.isFinite(part[i].pax)
                 ) {
-                    const nu2 = makeFlightItem(ex2, part[i].pax);
+                    const nu2 = makeFlightItem(
+                        ex2,
+                        part[i].pax,
+                        {
+                            connIata: part[i].connIata,
+                            nextIata: part[i].nextIata,
+                            finalIata: part[i].finalIata,
+                            refPaxKey: part[i].refPaxKey
+                        }
+                    );
                     if (nu2) {
                         const iu = uniq.indexOf(ex2);
                         if (iu >= 0) {
                             uniq[iu] = nu2;
                         }
-                        byFlt[k2] = nu2;
+                        const nk2 = flightItemMergeKey(nu2);
+                        byFlt[nk2] = nu2;
+                        if (k2 !== nk2) {
+                            delete byFlt[k2];
+                        }
                     }
                 } else if (
                     ex2 &&
@@ -2475,39 +2834,11 @@
     }
 
     function paxBadgeDurationMs() {
-        const n = Number(getPref('paxLateToWsWsPaxBadgeMs', 12000));
+        const n = Number(getPref('paxLateToWsWsPaxBadgeMs', 60000));
         if (!Number.isFinite(n)) {
-            return 12000;
+            return 60000;
         }
-        return Math.min(120000, Math.max(0, Math.floor(n)));
-    }
-
-    function findFlightPuckForFlightDigits(flightDigits) {
-        const d = String(flightDigits == null ? '' : flightDigits).replace(
-            /^\s+|\s+$/g,
-            ''
-        );
-        if (!d) {
-            return null;
-        }
-        var list;
-        try {
-            list = document.querySelectorAll(PUCK_SELECTOR);
-        } catch (e) {
-            return null;
-        }
-        var i;
-        for (i = 0; i < list.length; i++) {
-            const puck = list[i];
-            if (!puck) {
-                continue;
-            }
-            const fromDom = flightDigitsFromPuckDom(puck);
-            if (fromDom && fromDom === d) {
-                return puck;
-            }
-        }
-        return null;
+        return Math.min(600000, Math.max(0, Math.floor(n)));
     }
 
     function showPaxBadgeOnFlightPuck(puck, paxCount) {
@@ -2524,23 +2855,12 @@
                     '[data-qe-id="as-flight-leg-pop-target"]'
                 )) ||
             puck;
-        const oldL = document.querySelectorAll(
-            '[data-dc-pax-late-ws-pax-badge-wrap]'
-        );
-        var oi;
-        for (oi = 0; oi < oldL.length; oi++) {
-            try {
-                if (oldL[oi] && oldL[oi].parentNode) {
-                    oldL[oi].parentNode.removeChild(oldL[oi]);
-                }
-            } catch (e) {}
-        }
         const wrap = document.createElement('div');
         wrap.setAttribute('data-dc-pax-late-ws-pax-badge-wrap', '1');
         const b = document.createElement('span');
         b.setAttribute('data-dc-pax-late-ws-pax-badge', '1');
         b.textContent = 'PAX ' + String(paxCount);
-        b.setAttribute('title', 'Pax on board (from Pax connections row)');
+        b.setAttribute('title', 'Pax on board (from outbound row)');
         b.style.cssText =
             'font:10px/1.15 system-ui,Segoe UI,sans-serif!important;padding:2px 5px!important;border-radius:3px!important;' +
             'background:rgba(0,0,0,.82)!important;color:#ecf0f1!important;pointer-events:none!important;' +
@@ -2595,7 +2915,7 @@
         var maxTries = 12;
         function oneTry() {
             tries++;
-            const puck = findFlightPuckForFlightDigits(d);
+            const puck = findFlightPuckForFlightItem(flightItem);
             if (puck) {
                 showPaxBadgeOnFlightPuck(puck, flightItem.pax);
                 return;
@@ -3120,6 +3440,7 @@
         }
         var cOpts = normalizeCollectOpts(null);
         if (paxPathKey) {
+            cOpts.refPaxPathKey = paxPathKey;
             const rfd = refFlightDigitsFromPaxPathKey(paxPathKey);
             if (rfd) {
                 cOpts.refFlt = rfd;
@@ -3279,6 +3600,7 @@
             return;
         }
         const cOpts = normalizeCollectOpts(null);
+        cOpts.refPaxPathKey = key;
         const rfd = refFlightDigitsFromPaxPathKey(key);
         if (rfd) {
             cOpts.refFlt = rfd;
@@ -3309,6 +3631,8 @@
                 continue;
             }
             const connectI = connectIataFromRefBlock(block) || 'UNK';
+            const refKeyForBlock =
+                paxKeyFromBlockAndPaxPathKey(block, key) || key;
             block.setAttribute('data-dc-pax-late-block-wired', '1');
             const bar = document.createElement('div');
             bar.setAttribute('data-dc-pax-late-bar', '1');
@@ -3332,11 +3656,14 @@
                 if (!getPref('paxLateToWsEnabled', true)) {
                     return;
                 }
+                const cClick = Object.assign({}, cOpts, {
+                    refPaxPathKey: refKeyForBlock
+                });
                 tryClickPaxOutboundTab(
                     function () {
                         const part = collectLateFlightsFromRoot(
                             outTable,
-                            cOpts
+                            cClick
                         );
                         if (!part || !part.length) {
                             notifyUser(
@@ -3351,7 +3678,7 @@
                         });
                     },
                     document,
-                    key
+                    refKeyForBlock
                 );
             });
             bar.appendChild(btn);
