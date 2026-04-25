@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.32
-// @description  Button near GMT clock: METAR/TAF, D-ATIS, RVR, radar, hourly chart (NOAA or Open-Meteo), COD loop (sector prefetch + cache + HTTP fallback), cross-tab poll (BC + storage) + alert/view sync, optional notify rules + SW-style IFR/MVFR/weather token colors in detail, WX yellow/red + badge, NEW until you leave station, collapsible AFD
+// @version      2.0.33
+// @description  Vis parsing/highlight: mixed 1 1/2SM, M1/4; full vis token span; rule + SW-style use same SM regex (no 1/2 without leading whole).
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -414,45 +414,82 @@
         return minH === Infinity ? null : minH;
     }
 
-    /** Parse a visibility token to statute miles (number), or null if unknown. */
+    /**
+     * Same token shape in raw METAR/TAF (use on original string for indices; /gi).
+     * Order: P…, M…, mixed 2 1/2, simple fraction, whole miles. Avoids turning 1 1/2 into 11/2.
+     */
+    var RE_VISIBILITY_SM = /\b(P\d+(?:\/\d+)?|M(?:\d+\s+)?\d+\/\d+|M\d+\/\d+|\d+\s+\d+\/\d+|\d+\/\d+|\d+)\s*SM\b/gi;
+
+    /**
+     * Parse one visibility run including optional SM. Mixed numbers: "1 1/2" → 1.5 (not 11/2).
+     * P* = above; M* = below (NWS convention).
+     */
     function parseOneVisToken(tok) {
         var t = String(tok || '')
             .toUpperCase()
-            .replace(/\s+/g, '')
-            .trim();
+            .replace(/\s+/g, ' ')
+            .replace(/^\s+|\s+$/g, '');
         if (!t) {
             return null;
         }
-        if (t.indexOf('SM') === -1) {
+        t = t.replace(/SM$/i, '');
+        t = t.replace(/^\s+|\s+$/g, '');
+        if (!t) {
             return null;
         }
-        t = t.replace(/SM$/i, '');
-        if (/^P\d+$/i.test(t)) {
-            return parseInt(t.slice(1), 10);
+        if (t.charAt(0) === 'P') {
+            t = t.substring(1);
+            if (t.indexOf('/') >= 0) {
+                var pfr = t.match(/^(\d+)\/(\d+)$/);
+                if (pfr) {
+                    return (
+                        parseInt(pfr[1], 10) / parseInt(pfr[2], 10) + 0.01
+                    );
+                }
+            }
+            var pw = t.match(/^(\d+)$/);
+            if (pw) {
+                return parseInt(pw[1], 10) + 0.01;
+            }
+            return null;
         }
-        if (/^P\d+(\/\d+)?$/.test(t)) {
-            var pm = t.match(/^P(\d+)(?:\/(\d+))?$/);
-            if (pm) {
-                return parseInt(pm[1], 10) + (pm[2] ? parseInt(pm[2], 10) / (pm[2].length ? 10 : 1) : 0);
+        if (t.charAt(0) === 'M') {
+            t = t.substring(1);
+            if (t.indexOf(' ') >= 0) {
+                var mmx = t.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+                if (mmx) {
+                    return (
+                        parseInt(mmx[1], 10) +
+                        parseInt(mmx[2], 10) / parseInt(mmx[3], 10) -
+                        0.01
+                    );
+                }
+            }
+            var mf = t.match(/^(\d+)\/(\d+)$/);
+            if (mf) {
+                return (
+                    parseInt(mf[1], 10) / parseInt(mf[2], 10) - 0.01
+                );
+            }
+            return null;
+        }
+        if (t.indexOf(' ') > 0) {
+            var mix = t.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+            if (mix) {
+                return (
+                    parseInt(mix[1], 10) + parseInt(mix[2], 10) / parseInt(mix[3], 10)
+                );
             }
         }
-        if (/^M\d+\/\d+$/.test(t)) {
-            var fm = t.match(/^M(\d+)\/(\d+)$/);
-            if (fm) {
-                return parseInt(fm[1], 10) / parseInt(fm[2], 10);
+        if (t.indexOf('/') >= 0) {
+            var f = t.match(/^(\d+)\/(\d+)$/);
+            if (f) {
+                return parseInt(f[1], 10) / parseInt(f[2], 10);
             }
         }
-        var frac = t.match(/^(\d+)\/(\d+)$/);
-        if (frac) {
-            return parseInt(frac[1], 10) / parseInt(frac[2], 10);
-        }
-        var mixed = t.match(/^(\d+)(\d)\/(\d)$/);
-        if (mixed) {
-            return parseInt(mixed[1], 10) + parseInt(mixed[2], 10) / parseInt(mixed[3], 10);
-        }
-        var whole = t.match(/^(\d+)$/);
-        if (whole) {
-            var n = parseInt(whole[1], 10);
+        var w = t.match(/^(\d+)$/);
+        if (w) {
+            var n = parseInt(w[1], 10);
             if (n >= 1 && n <= 50) {
                 return n;
             }
@@ -462,18 +499,15 @@
 
     /**
      * Minimum reported visibility in statute miles found in TAF/METAR text (best-effort).
-     * Handles e.g. 1/2SM, 2SM, P6SM, 2 1/2SM, M1/4SM.
+     * Handles e.g. 1/2SM, 2SM, P6SM, 1 1/2SM, M1/4SM.
      */
     function minVisibilitySmInText(txt) {
         var s = String(txt || '');
         var minV = Infinity;
-        var u = s.toUpperCase().replace(/\s+/g, ' ');
-        var re =
-            /\b(P\d+(?:\/\d+)?|M?\d+\s+\d\/\d|M?\d+\/\d+|\d+)\s*SM\b/gi;
+        var re = new RegExp(RE_VISIBILITY_SM.source, 'gi');
         var m;
-        while ((m = re.exec(u)) !== null) {
-            var tok = m[0].replace(/\s+/g, '');
-            var v = parseOneVisToken(tok);
+        while ((m = re.exec(s)) !== null) {
+            var v = parseOneVisToken(m[0]);
             if (v !== null && Number.isFinite(v) && v >= 0 && v < 100) {
                 minV = Math.min(minV, v);
             }
@@ -519,11 +553,10 @@
     function findVisibilityTokenRanges(text) {
         var s = String(text || '');
         var out = [];
-        var re = /\b(P\d+(?:\/\d+)?|M?\d+\s+\d\/\d|M?\d+\/\d+|\d+)\s*SM\b/gi;
+        var re = new RegExp(RE_VISIBILITY_SM.source, 'gi');
         var m;
         while ((m = re.exec(s)) !== null) {
-            var tok = m[0].replace(/\s+/g, '');
-            var p = parseOneVisToken(tok);
+            var p = parseOneVisToken(m[0]);
             if (p === null || !Number.isFinite(p) || p < 0 || p >= 100) {
                 continue;
             }
@@ -862,6 +895,47 @@
         return swStyleClassifyTokenMetar(word, fullLine);
     }
 
+    function findSwStyleVisibilitySpansMetar(s) {
+        var out = [];
+        if (!s) {
+            return out;
+        }
+        var re = new RegExp(RE_VISIBILITY_SM.source, 'gi');
+        var m;
+        while ((m = re.exec(s)) !== null) {
+            var vis = parseOneVisToken(m[0]);
+            if (vis === null || !Number.isFinite(vis)) {
+                continue;
+            }
+            var cls = null;
+            if (vis < 3) {
+                cls = allowSwStyleHighlightClass('ifr');
+            } else if (vis <= 5) {
+                cls = allowSwStyleHighlightClass('mvfr');
+            }
+            if (cls && SW_STYLE_ALERT_COLORS[cls]) {
+                out.push({
+                    start: m.index,
+                    end: m.index + m[0].length,
+                    color: SW_STYLE_ALERT_COLORS[cls],
+                    pri: 0
+                });
+            }
+        }
+        return out;
+    }
+
+    function charInsideVisibilitySpan(idx, visSpans) {
+        var v;
+        for (v = 0; v < visSpans.length; v++) {
+            var spv = visSpans[v];
+            if (idx >= spv.start && idx < spv.end) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function findSwStyleHighlightSpans(plain, which) {
         if (!boolPref('metarWatchTextHighlightSwStyle', true)) {
             return [];
@@ -871,14 +945,19 @@
             return [];
         }
         var tafMode = which === 'taf';
+        var visSpMetar = !tafMode ? findSwStyleVisibilitySpansMetar(s) : [];
         var re = /([^\s\u00a0\n\r]+)/g;
         var m;
-        var spans = [];
+        var spans = visSpMetar.length ? visSpMetar.slice() : [];
         m = re.exec(s);
         while (m) {
             var w = m[1];
             var start = m.index;
             var end = start + w.length;
+            if (!tafMode && charInsideVisibilitySpan(start, visSpMetar)) {
+                m = re.exec(s);
+                continue;
+            }
             var lineStart;
             if (tafMode) {
                 lineStart = s.lastIndexOf('\n', start);
@@ -900,11 +979,21 @@
                 ? swStyleClassifyTokenTaf(w, fullLine)
                 : swStyleClassifyTokenMetar(w, s);
             if (cls && SW_STYLE_ALERT_COLORS[cls]) {
-                spans.push({
-                    start: start,
-                    end: end,
-                    color: SW_STYLE_ALERT_COLORS[cls]
-                });
+                if (tafMode) {
+                    spans.push({
+                        start: start,
+                        end: end,
+                        color: SW_STYLE_ALERT_COLORS[cls]
+                    });
+                } else {
+                    if (!parseVisibilityTokenForSwStyle(w)) {
+                        spans.push({
+                            start: start,
+                            end: end,
+                            color: SW_STYLE_ALERT_COLORS[cls]
+                        });
+                    }
+                }
             }
             m = re.exec(s);
         }
