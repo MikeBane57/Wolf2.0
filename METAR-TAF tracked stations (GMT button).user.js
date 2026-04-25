@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.35
-// @description  Tooltips on colored METAR/TAF tokens: notify rules + SW-style (IFR/MVFR, etc.) on hover.
+// @version      2.0.36
+// @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -779,14 +779,14 @@
         ts: '#ffff00'
     };
 
-    /** One-line description for `title` on underlined token (SW-style classification). */
+    /** One-line `title` for SW-style token underlines (no "SW style" prefix). */
     var SW_STYLE_HOVER = {
-        ifr: 'SW style: IFR (ceiling/visibility)',
-        mvfr: 'SW style: MVFR',
-        crosswind: 'SW style: strong gust (crosswind)',
-        llws: 'SW style: low-level wind shear (LLWS/WS)',
-        icing: 'SW style: freezing precip / ice',
-        ts: 'SW style: thunderstorm (TS/TSRA/VCTS)'
+        ifr: 'IFR (ceiling/visibility)',
+        mvfr: 'MVFR',
+        crosswind: 'Strong gust (crosswind)',
+        llws: 'Low-level wind shear (LLWS/WS)',
+        icing: 'Freezing precip / ice',
+        ts: 'Thunderstorm (TS/TSRA/VCTS)'
     };
 
     function swStyleTooltipForClass(cls) {
