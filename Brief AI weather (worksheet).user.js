@@ -1,14 +1,18 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.1.4
-// @description  Worksheet: regional weather brief (METAR-based) with optional free-tier Gemini; button left of WS state, right of WX.
+// @version      0.1.5
+// @description  Worksheet: regional weather brief (METAR-based) — optional LLM (Groq, Gemini, Ollama, etc.); button by WX/WS state.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      aviationweather.gov
 // @connect      generativelanguage.googleapis.com
-// @donkeycode-pref {"briefAiGeminiKey":{"type":"string","group":"Brief AI","label":"Gemini API key (optional)","description":"Get a free key at https://aistudio.google.com/apikey — if blank, a template brief is used (no LLM).","default":"","placeholder":"AIza...","password":true},"briefAiExtraStations":{"type":"string","group":"Brief AI","label":"Extra stations of concern","description":"Space- or comma-separated IATA codes merged into the fetch (all regions).","default":"","placeholder":"e.g. OAK ABQ"},"briefAiGeminiModel":{"type":"string","group":"Brief AI","label":"Gemini model","default":"gemini-2.0-flash","placeholder":"gemini-2.0-flash"}}
+// @connect      api.groq.com
+// @connect      openrouter.ai
+// @connect      localhost
+// @connect      127.0.0.1
+// @donkeycode-pref {"briefAiProvider":{"type":"select","group":"Brief AI","label":"LLM provider","description":"GitHub Copilot has no public HTTP API for this use. Groq: free key at https://console.groq.com — set Base URL to https://api.groq.com/openai/v1. Ollama: free local (open-source models), set URL to http://127.0.0.1:11434/v1. OpenRouter: https://openrouter.ai","default":"openai_compat","options":[{"val":"openai_compat","label":"OpenAI-compatible (Groq, OpenRouter, many others)"},{"val":"gemini","label":"Google Gemini (AI Studio key)"},{"val":"ollama","label":"Ollama local (http://127.0.0.1:11434/v1)"}]},"briefAiOpenaiBaseUrl":{"type":"string","group":"Brief AI","label":"OpenAI-compat: Base URL","default":"https://api.groq.com/openai/v1","placeholder":"https://api.groq.com/openai/v1"},"briefAiOpenaiKey":{"type":"string","group":"Brief AI","label":"OpenAI-compat: API key","default":"","password":true,"description":"e.g. Groq gs_... or OpenRouter sk-..."},"briefAiOpenaiModel":{"type":"string","group":"Brief AI","label":"OpenAI-compat: model id","default":"llama-3.3-70b-versatile","placeholder":"llama-3.3-70b-versatile"},"briefAiOllamaUrl":{"type":"string","group":"Brief AI","label":"Ollama: base URL (OpenAI path)","default":"http://127.0.0.1:11434/v1","placeholder":"http://127.0.0.1:11434/v1"},"briefAiOllamaModel":{"type":"string","group":"Brief AI","label":"Ollama: model name","default":"llama3.2","placeholder":"llama3.2"},"briefAiGeminiKey":{"type":"string","group":"Brief AI","label":"Gemini: API key","description":"https://aistudio.google.com/apikey","default":"","password":true},"briefAiGeminiModel":{"type":"string","group":"Brief AI","label":"Gemini: model","default":"gemini-2.0-flash","placeholder":"gemini-2.0-flash"},"briefAiExtraStations":{"type":"string","group":"Brief AI","label":"Extra stations of concern","description":"Space- or comma-separated IATA; merged into fetch.","default":"","placeholder":"e.g. OAK ABQ"},"briefAiTemperature":{"type":"number","group":"Brief AI","label":"LLM temperature","description":"Higher = more conversational (0.15–0.8).","default":0.45,"min":0.1,"max":0.95,"step":0.05}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Brief%20AI%20weather%20(worksheet).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Brief%20AI%20weather%20(worksheet).user.js
 // ==/UserScript==
@@ -396,7 +400,133 @@
         return parts.join('\n\n');
     }
 
-    function callGemini(prompt) {
+    function llmTemperature() {
+        var n = Number(getPref('briefAiTemperature', 0.45));
+        if (!Number.isFinite(n)) {
+            return 0.45;
+        }
+        return Math.min(0.95, Math.max(0.1, n));
+    }
+
+    function buildBriefPrompts(dataJson) {
+        var sys = [
+            'You are a Southwest Airlines line operations briefer speaking to a dispatcher or duty manager.',
+            'Be conversational and readable: a short lead-in, then by region, like you are giving a quick verbal brief (not a bullet list of raw stats unless helpful).',
+            'Cover these regions in order with short section labels on their own line: East, Central, West, and Intl-ETOPS (Hawaii, Alaska, Mexico/Caribbean, and other intl in the data).',
+            'Each region: 2-4 short sentences, or if nothing of note, one line like: "East: Nothing jumping out in the current snapshot."',
+            'Tie any concern to the JSON: flight categories, wind, convective or wintry flags implied there. If the JSON is thin for a region, say so in plain language.',
+            'No markdown headings (no #). No numbered lists unless natural. No claims of authority or TFR-level detail. Plain text only.',
+            'The JSON is your only source of "current conditions" — do not invent specific hazards at airports not implied by the data.',
+            'Here is the structured summary JSON:',
+            dataJson
+        ].join('\n\n');
+        return { system: sys, user: 'Give the brief now.' };
+    }
+
+    function gmXhrOpenAiChat(url, bodyObj, headers) {
+        headers = headers || {};
+        var h = { 'Content-Type': 'application/json' };
+        var k;
+        for (k in headers) {
+            if (Object.prototype.hasOwnProperty.call(headers, k) && headers[k] != null) {
+                h[k] = headers[k];
+            }
+        }
+        return new Promise(function (resolve) {
+            try {
+                GM_xmlhttpRequest({
+                    method: 'POST',
+                    url: url,
+                    headers: h,
+                    data: JSON.stringify(bodyObj),
+                    onload: function (r) {
+                        var code = (r && r.status) || 0;
+                        var raw = (r && r.responseText) || '';
+                        if (code < 200 || code > 299) {
+                            resolve({
+                                err: 'HTTP ' + code + (raw ? ': ' + String(raw).slice(0, 300) : '')
+                            });
+                            return;
+                        }
+                        try {
+                            var o = JSON.parse(raw || '{}');
+                            var t =
+                                o.choices &&
+                                o.choices[0] &&
+                                o.choices[0].message &&
+                                o.choices[0].message.content;
+                            t = t != null ? String(t) : '';
+                            t = t.replace(/^\s+|\s+$/g, '');
+                            if (t) {
+                                resolve({ text: t });
+                            } else {
+                                resolve({ err: 'empty model response' });
+                            }
+                        } catch (e) {
+                            resolve({ err: 'parse: ' + e });
+                        }
+                    },
+                    onerror: function () {
+                        resolve({ err: 'network' });
+                    },
+                    ontimeout: function () {
+                        resolve({ err: 'timeout' });
+                    }
+                });
+            } catch (e) {
+                resolve({ err: String(e) });
+            }
+        });
+    }
+
+    function callOpenAiCompatible(pr) {
+        var prov = getPref('briefAiProvider', 'openai_compat');
+        var base = trim(
+            getPref('briefAiOpenaiBaseUrl', 'https://api.groq.com/openai/v1')
+        );
+        if (prov === 'ollama') {
+            base = trim(
+                getPref('briefAiOllamaUrl', 'http://127.0.0.1:11434/v1')
+            );
+        }
+        if (!base) {
+            return Promise.resolve({ skip: 'no base url' });
+        }
+        if (base.slice(-1) === '/') {
+            base = base.replace(/\/+$/, '');
+        }
+        var key = trim(getPref('briefAiOpenaiKey', ''));
+        if (prov === 'ollama') {
+            key = '';
+        }
+        if (prov === 'openai_compat' && !key) {
+            return Promise.resolve({ skip: 'no openai key' });
+        }
+        var model = trim(
+            getPref('briefAiOpenaiModel', 'llama-3.3-70b-versatile')
+        );
+        if (prov === 'ollama') {
+            model = trim(getPref('briefAiOllamaModel', 'llama3.2')) || 'llama3.2';
+        }
+        if (!model) {
+            return Promise.resolve({ err: 'no model' });
+        }
+        var url = base + '/chat/completions';
+        var hdrs = key ? { Authorization: 'Bearer ' + key } : {};
+        var body = {
+            model: model,
+            messages: [
+                { role: 'system', content: pr.system },
+                { role: 'user', content: pr.user }
+            ],
+            max_tokens: 800,
+            temperature: llmTemperature()
+        };
+        return gmXhrOpenAiChat(url, body, hdrs);
+    }
+
+    function callGemini(systemAndUser) {
+        var asOne = typeof systemAndUser === 'string' ? systemAndUser : (systemAndUser && systemAndUser.system ? systemAndUser.system + '\n\n' + systemAndUser.user : '');
         var key = trim(getPref('briefAiGeminiKey', ''));
         if (!key) {
             return Promise.resolve({ skip: 'no key' });
@@ -412,12 +542,12 @@
         var body = JSON.stringify({
             contents: [
                 {
-                    parts: [{ text: prompt }]
+                    parts: [{ text: asOne }]
                 }
             ],
             generationConfig: {
-                maxOutputTokens: 512,
-                temperature: 0.25
+                maxOutputTokens: 800,
+                temperature: llmTemperature()
             }
         });
         return new Promise(function (resolve) {
@@ -509,27 +639,66 @@
             }
             var st = buildStructuredBrief(reg, byIc);
             var dataJson = JSON.stringify(st, null, 0);
-            var sys = [
-                'You are a Southwest Airlines operations-aware assistant.',
-                'Write a concise professional weather brief: operational impacts of current and near-term (next ~6 hours implied by METAR/TAF context) conditions.',
-                'Four regions, each 2-4 sentences MAX, or a single short sentence "No operational concerns are foreseen for this region based on the supplied summary" when appropriate.',
-                'Region names: East, Central, West, Intl-ETOPS (Hawaii, Alaska, Mexico/Caribbean, international/ETOPS stations in the data).',
-                'Do not invent specific airport hazards not implied by the JSON. Do not claim FAA or dispatch authority. Neutral professional tone.',
-                'Output plain text only (no markdown, no bullet symbols).',
-                'Structured JSON (counts and worst station per region):',
-                dataJson
-            ].join('\n');
-            return callGemini(sys).then(function (g) {
+            var pr = buildBriefPrompts(dataJson);
+            var prov = getPref('briefAiProvider', 'openai_compat');
+
+            function doFallback(why) {
+                if (why) {
+                    return '[Template — ' + why + ']\n\n' + templateParagraphs(st);
+                }
+                return templateParagraphs(st);
+            }
+
+            if (prov === 'gemini') {
+                return callGemini(
+                    pr.system + '\n\n' + pr.user
+                ).then(function (g) {
+                    if (g.text) {
+                        return g.text;
+                    }
+                    if (g.skip) {
+                        return doFallback('Gemini: no API key. Set in Brief AI prefs.');
+                    }
+                    if (g.err) {
+                        return doFallback('Gemini: ' + g.err);
+                    }
+                    return doFallback('');
+                });
+            }
+
+            if (prov === 'openai_compat' && !trim(getPref('briefAiOpenaiKey', '')) && trim(getPref('briefAiGeminiKey', ''))) {
+                return callGemini(pr.system + '\n\n' + pr.user).then(function (g) {
+                    if (g.text) {
+                        return g.text;
+                    }
+                    if (g.err) {
+                        return doFallback('Gemini: ' + g.err);
+                    }
+                    return doFallback('Gemini unavailable.');
+                });
+            }
+
+            return callOpenAiCompatible(pr).then(function (g) {
                 if (g.text) {
                     return g.text;
                 }
-                if (g.skip || g.err) {
-                    return (
-                        (g.err ? '[Template — Gemini unavailable: ' + g.err + ']\n\n' : '') +
-                        templateParagraphs(st)
+                if (g.skip) {
+                    if (prov === 'ollama') {
+                        return doFallback(
+                            'Ollama: is it running? URL ' +
+                            trim(
+                                getPref('briefAiOllamaUrl', 'http://127.0.0.1:11434/v1')
+                            )
+                        );
+                    }
+                    return doFallback(
+                        'OpenAI-style API: add key and Base URL (e.g. Groq, OpenRouter).'
                     );
                 }
-                return templateParagraphs(st);
+                if (g.err) {
+                    return doFallback('LLM: ' + g.err);
+                }
+                return doFallback('');
             });
         });
     }
@@ -676,7 +845,7 @@
         b.type = 'button';
         b.setAttribute(BTN_ATTR, '1');
         b.textContent = 'Brief AI';
-        b.title = 'AI-assisted regional weather brief (METAR-based; optional Gemini key)';
+        b.title = 'Regional weather brief (METAR + LLM: Groq/Gemini/Ollama in DonkeyCODE prefs)';
         b.addEventListener('click', function (e) {
             e.preventDefault();
             e.stopPropagation();
