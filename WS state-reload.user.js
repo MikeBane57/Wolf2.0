@@ -348,25 +348,15 @@
         });
     }
 
-    function saveCurrentStateToCloud() {
-        var state = collectWorksheetState();
-        if (!state.items.length) {
+    function saveStateToCloud(state, name, cb) {
+        if (!state || !state.items || !state.items.length) {
             toast('No visible tails or N/A line numbers found to save to cloud.', true);
+            if (cb) {
+                cb(false);
+            }
             return;
         }
         var folder = activeDonkeyCodeFolder();
-        var name = window.prompt('Name this cloud worksheet state:', defaultStateName());
-        if (name == null) {
-            return;
-        }
-        name = trimText(name);
-        if (!name) {
-            toast('Cloud state name is required.', true);
-            return;
-        }
-        if (!window.confirm('Save "' + name + '" to shared cloud states for folder "' + folder + '"?')) {
-            return;
-        }
         state.id = stateId();
         state.name = name;
         state.folder = folder;
@@ -377,6 +367,9 @@
         fetchCloudStates(function (doc) {
             if (!doc) {
                 toast('Could not load cloud states. Check GitHub permissions/host access.', true);
+                if (cb) {
+                    cb(false);
+                }
                 return;
             }
             var states = (doc.states || []).filter(function (st) {
@@ -386,12 +379,39 @@
             dispatchCloudDoc(cloudDocFor(states), function (ok, err) {
                 if (!ok) {
                     toast(err || 'Cloud save failed.', true);
+                    if (cb) {
+                        cb(false);
+                    }
                     return;
                 }
                 toast('Cloud save requested for "' + name + '". It may take a moment to appear.', false);
                 refreshCloudRows();
+                if (cb) {
+                    cb(true);
+                }
             });
         });
+    }
+
+    function saveCurrentStateToCloud() {
+        var state = collectWorksheetState();
+        if (!state.items.length) {
+            toast('No visible tails or N/A line numbers found to save to cloud.', true);
+            return;
+        }
+        var name = window.prompt('Name this cloud worksheet state:', defaultStateName());
+        if (name == null) {
+            return;
+        }
+        name = trimText(name);
+        if (!name) {
+            toast('Cloud state name is required.', true);
+            return;
+        }
+        if (!window.confirm('Save "' + name + '" to shared cloud states for folder "' + activeDonkeyCodeFolder() + '"?')) {
+            return;
+        }
+        saveStateToCloud(state, name);
     }
 
     function refreshCloudRows() {
@@ -443,9 +463,9 @@
         var meta = document.createElement('div');
         meta.className = 'dc-wss-meta';
         meta.textContent =
-            'Folder ' +
+            'saved by ' +
             (state.folder || 'Default') +
-            (state.folder === activeFolder ? ' (current)' : '') +
+            (state.folder === activeFolder ? ' (current folder)' : '') +
             ' - ' +
             itemSummary(state.items) +
             ' - saved ' +
@@ -856,7 +876,7 @@
             ' button[data-dc-ws-quick]{background:#6b4a1f;}' +
             '#' +
             HOST_ID +
-            ' button[data-dc-ws-state]{background:#244b63;}' +
+            ' button[data-dc-ws-load]{background:#244b63;}' +
             '[' +
             MODAL_ATTR +
             ']{position:fixed;inset:0;z-index:10000040;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;}' +
@@ -922,7 +942,8 @@
         if (!host) {
             host = document.createElement('span');
             host.id = HOST_ID;
-            host.appendChild(makeButton('WS state', 'Save or recall local/cloud worksheet states', 'data-dc-ws-state', openStateDialog));
+            host.appendChild(makeButton('SAVE WS', 'Save visible AC tails and N/A line fallbacks', '', saveCurrentState));
+            host.appendChild(makeButton('Load worksheet', 'Recall a local or cloud worksheet state', 'data-dc-ws-load', openLoadDialog));
             host.appendChild(makeButton('Quick reload', 'Temporarily save current state, hard reload this page, then restore it', 'data-dc-ws-quick', quickReload));
         }
         var anchor = findMountAnchor();
@@ -1023,7 +1044,10 @@
             store.states.unshift(state);
         }
         if (writeStateStore(store)) {
-            toast('Saved "' + name + '" (' + itemSummary(state.items) + '), expires in 4 hours.', false);
+            toast('Saved "' + name + '" locally (' + itemSummary(state.items) + '), expires in 4 hours.', false);
+            if (window.confirm('Also save "' + name + '" to cloud for folder "' + activeDonkeyCodeFolder() + '"?')) {
+                saveStateToCloud(collectWorksheetState(), name);
+            }
         } else {
             toast('Could not save state. Browser storage may be full or blocked.', true);
         }
@@ -1168,7 +1192,7 @@
         host.appendChild(title);
     }
 
-    function openStateDialog() {
+    function openLoadDialog() {
         closeModal();
         var overlay = document.createElement('div');
         overlay.setAttribute(MODAL_ATTR, '1');
@@ -1187,7 +1211,7 @@
         var head = document.createElement('div');
         head.className = 'dc-wss-head';
         var title = document.createElement('div');
-        title.textContent = 'Worksheet states';
+        title.textContent = 'Load worksheet';
         var close = document.createElement('button');
         close.type = 'button';
         close.textContent = 'Close';
@@ -1198,44 +1222,26 @@
         var body = document.createElement('div');
         body.className = 'dc-wss-body';
 
-        addSectionTitle(body, 'Local states');
+        addSectionTitle(body, 'Local saves');
         var localNote = document.createElement('div');
         localNote.className = 'dc-wss-note';
-        localNote.textContent = 'Local states stay in this browser only and expire after 4 hours.';
-        var localActions = document.createElement('div');
-        localActions.className = 'dc-wss-actions';
-        var saveLocal = document.createElement('button');
-        saveLocal.type = 'button';
-        saveLocal.textContent = 'Save current locally';
-        saveLocal.addEventListener('click', function () {
-            saveCurrentState();
-            refreshLocalRows();
-        });
-        localActions.appendChild(saveLocal);
+        localNote.textContent = 'Local saves are listed first and stay in this browser only.';
         localRowsHost = document.createElement('div');
         localRowsHost.className = 'dc-wss-local-rows';
         body.appendChild(localNote);
-        body.appendChild(localActions);
         body.appendChild(localRowsHost);
 
-        addSectionTitle(body, 'Cloud states');
+        addSectionTitle(body, 'Cloud saves');
         var cloudNote = document.createElement('div');
         cloudNote.className = 'dc-wss-note';
         cloudNote.textContent =
-            'Current DonkeyCODE folder: ' +
-            activeDonkeyCodeFolder() +
-            '. Cloud states are shared with all users and expire after 4 hours.';
+            'Cloud saves are shared with all users. The DonkeyCODE folder active when saved is shown as "saved by".';
         var cloudActions = document.createElement('div');
         cloudActions.className = 'dc-wss-actions';
-        var saveCloud = document.createElement('button');
-        saveCloud.type = 'button';
-        saveCloud.textContent = 'Save current to cloud';
-        saveCloud.addEventListener('click', saveCurrentStateToCloud);
         var refreshCloud = document.createElement('button');
         refreshCloud.type = 'button';
         refreshCloud.textContent = 'Refresh cloud list';
         refreshCloud.addEventListener('click', refreshCloudRows);
-        cloudActions.appendChild(saveCloud);
         cloudActions.appendChild(refreshCloud);
         cloudRowsHost = document.createElement('div');
         cloudRowsHost.className = 'dc-wss-cloud-rows';
