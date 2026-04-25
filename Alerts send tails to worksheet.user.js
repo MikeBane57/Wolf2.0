@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Alerts: send tails to worksheet
 // @namespace    Wolf 2.0
-// @version      0.2.2
-// @description  /alerts: rule-based tail or flight # send to chosen worksheets (BroadcastChannel). Edit all options in the modal; optional DonkeyCODE pref defaults.
+// @version      0.4.1
+// @description  /alerts: rules (AND/OR), tail or flight, auto on table change or timer. BroadcastChannel to worksheet. localStorage + modal; optional DonkeyCODE defaults.
 // @match        https://opssuitemain.swacorp.com/alerts*
 // @match        https://opssuitemain.swacorp.com/*/alerts*
 // @grant        none
-// @donkeycode-pref {"alertsTailsToWsLog":{"type":"boolean","group":"Alerts → WS (defaults)","label":"Debug log","default":false,"description":"These prefs seed the modal on first use; after that, the modal’s Save uses local storage."},"alertsTailsToWsListWaitMs":{"type":"number","group":"Alerts → WS (defaults)","label":"Worksheet list wait (ms)","default":2000,"min":100,"max":8000,"step":100},"alertsTailsToWsSendMode":{"type":"select","group":"Alerts → WS (defaults)","label":"Which rows (default)","default":"all_visible","options":[{"val":"all_visible","label":"All visible rows"},{"val":"checked_only","label":"Checked rows only"}]},"alertsTailsToWsDeduplicate":{"type":"boolean","group":"Alerts → WS (defaults)","label":"Deduplicate (default)","default":true},"alertsTailsToWsStaggerMs":{"type":"number","group":"Alerts → WS (defaults)","label":"Stagger ms (default)","default":150,"min":0,"max":2000,"step":50}}
+// @donkeycode-pref {"alertsTailsToWsLog":{"type":"boolean","group":"Alerts → WS (defaults)","label":"Debug log","default":false,"description":"These prefs seed the modal on first use; after that, the modal’s Save uses local storage."},"alertsTailsToWsListWaitMs":{"type":"number","group":"Alerts → WS (defaults)","label":"Worksheet list wait (ms)","default":2000,"min":100,"max":8000,"step":100},"alertsTailsToWsSendMode":{"type":"select","group":"Alerts → WS (defaults)","label":"Which rows (default)","default":"all_visible","options":[{"val":"all_visible","label":"All visible rows"},{"val":"checked_only","label":"Checked rows only"}]},"alertsTailsToWsDeduplicate":{"type":"boolean","group":"Alerts → WS (defaults)","label":"Deduplicate (default)","default":true},"alertsTailsToWsStaggerMs":{"type":"number","group":"Alerts → WS (defaults)","label":"Stagger ms (default)","default":150,"min":0,"max":2000,"step":50},"alertsTailsToWsAutoTable":{"type":"boolean","group":"Alerts → WS (defaults)","label":"Autorun on table change (default)","default":false,"description":"Seeds the modal. Saved config in local storage wins after first use."},"alertsTailsToWsAutoInterval":{"type":"number","group":"Alerts → WS (defaults)","label":"Autorun interval sec (0=off, default)","default":0,"min":0,"max":3600,"step":5,"description":"0 = no timer. Seeds the modal; local storage overrides after save."}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Alerts%20send%20tails%20to%20worksheet.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Alerts%20send%20tails%20to%20worksheet.user.js
 // ==/UserScript==
@@ -19,10 +19,16 @@
     var PICKER_ID = 'dc-alerts-ws-config';
 
     var LS_KEY = 'dc_alerts_ws_ui_config_v1';
+    var CONFIG_V = 2;
 
     var ch = null;
     var mountTimer = 0;
     var mountObserver = null;
+    var tableAutoObserver = null;
+    var tableDebounceTid = 0;
+    var intervalTid = 0;
+    var lastTableSnap = '';
+    var lastPlanHash = '';
     var cachedConfig = null;
 
     function getPref(k, d) {
@@ -38,10 +44,13 @@
 
     function defaultConfigFromPrefs() {
         return {
+            configVersion: CONFIG_V,
             sendMode: getPref('alertsTailsToWsSendMode', 'all_visible'),
             dedupe: getPref('alertsTailsToWsDeduplicate', true) !== false,
             staggerMs: Number(getPref('alertsTailsToWsStaggerMs', 150)) || 150,
             listWaitMs: Number(getPref('alertsTailsToWsListWaitMs', 2000)) || 2000,
+            autoRunOnTableChange: getPref('alertsTailsToWsAutoTable', false) === true,
+            autoRunIntervalSec: Math.max(0, Number(getPref('alertsTailsToWsAutoInterval', 0)) || 0),
             rules: []
         };
     }
@@ -68,6 +77,15 @@
                     if (o.listWaitMs != null) {
                         base.listWaitMs = Number(o.listWaitMs);
                     }
+                    if (o.configVersion) {
+                        base.configVersion = o.configVersion;
+                    }
+                    if (typeof o.autoRunOnTableChange === 'boolean') {
+                        base.autoRunOnTableChange = o.autoRunOnTableChange;
+                    }
+                    if (o.autoRunIntervalSec != null) {
+                        base.autoRunIntervalSec = Math.max(0, Number(o.autoRunIntervalSec)) || 0;
+                    }
                     if (Array.isArray(o.rules)) {
                         base.rules = o.rules;
                     }
@@ -80,7 +98,58 @@
         } catch (e) {
         }
         cachedConfig = base;
+        for (var mr = 0; mr < base.rules.length; mr++) {
+            base.rules[mr] = migrateRuleV2(base.rules[mr]);
+        }
         return base;
+    }
+
+    function newCondition() {
+        return {
+            id: 'c' + String(Date.now()) + String(Math.random()).slice(2, 6),
+            matchField: 'alertType',
+            matchText: '',
+            matchMode: 'contains'
+        };
+    }
+
+    function normalizeCondition(c) {
+        if (!c || typeof c !== 'object') {
+            c = {};
+        }
+        var mode = c.matchMode;
+        if (mode !== 'contains' && mode !== 'regex' && mode !== 'exact') {
+            mode = 'contains';
+        }
+        return {
+            id: c.id || 'c' + String(Date.now()) + String(Math.random()).slice(2, 6),
+            matchField: c.matchField || 'alertType',
+            matchText: c.matchText != null ? String(c.matchText) : '',
+            matchMode: mode
+        };
+    }
+
+    function migrateRuleV2(r) {
+        if (!r || typeof r !== 'object') {
+            return r;
+        }
+        if (Array.isArray(r.conds) && r.conds.length) {
+            r.combine = r.combine === 'or' ? 'or' : 'and';
+            var j;
+            for (j = 0; j < r.conds.length; j++) {
+                r.conds[j] = normalizeCondition(r.conds[j]);
+            }
+            return r;
+        }
+        r.combine = 'and';
+        r.conds = [
+            normalizeCondition({
+                matchField: r.matchField,
+                matchText: r.matchText,
+                matchMode: r.matchMode
+            })
+        ];
+        return r;
     }
 
     function cloneForStorage(c) {
@@ -88,10 +157,13 @@
             return c;
         }
         var o = {
+            configVersion: c.configVersion || CONFIG_V,
             sendMode: c.sendMode,
             dedupe: c.dedupe,
             staggerMs: c.staggerMs,
             listWaitMs: c.listWaitMs,
+            autoRunOnTableChange: c.autoRunOnTableChange,
+            autoRunIntervalSec: c.autoRunIntervalSec,
             rules: []
         };
         if (c.rules && c.rules.length) {
@@ -100,16 +172,22 @@
                 if (!r) {
                     continue;
                 }
-                o.rules.push({
-                    id: r.id,
-                    matchField: r.matchField,
-                    matchText: r.matchText,
-                    matchMode: r.matchMode,
-                    action: r.action,
-                    targetTabId: r.targetTabId,
-                    targetTitle: r.targetTitle,
-                    enabled: r.enabled
-                });
+                r = migrateRuleV2(r);
+                var st = { id: r.id, action: r.action, targetTabId: r.targetTabId, targetTitle: r.targetTitle, enabled: r.enabled, combine: r.combine === 'or' ? 'or' : 'and', conds: [] };
+                var cc;
+                for (cc = 0; cc < (r.conds || []).length; cc++) {
+                    var cnd = r.conds[cc];
+                    if (!cnd) {
+                        continue;
+                    }
+                    st.conds.push({
+                        id: cnd.id,
+                        matchField: cnd.matchField,
+                        matchText: cnd.matchText,
+                        matchMode: cnd.matchMode
+                    });
+                }
+                o.rules.push(st);
             }
         }
         return o;
@@ -385,28 +463,60 @@
         return Row.alertType;
     }
 
-    function matchRule(Row, rule) {
-        if (!rule || !rule.matchText) {
+    function matchOneCondition(Row, cnd) {
+        if (!cnd || !String(cnd.matchText || '').trim()) {
             return false;
         }
-        var hay = String(ruleMatchField(Row, rule.matchField) || '');
-        var needle = String(rule.matchText || '');
-        if (rule.matchMode === 'regex') {
+        cnd = normalizeCondition(cnd);
+        var hay = String(ruleMatchField(Row, cnd.matchField) || '');
+        var needle = String(cnd.matchText || '');
+        if (cnd.matchMode === 'regex') {
             try {
                 return new RegExp(needle, 'i').test(hay);
             } catch (e) {
                 return false;
             }
         }
+        if (cnd.matchMode === 'exact') {
+            return hay.toLowerCase() === needle.toLowerCase();
+        }
         return hay.toLowerCase().indexOf(needle.toLowerCase()) >= 0;
+    }
+
+    function matchRule(Row, rule) {
+        rule = migrateRuleV2(rule);
+        if (!rule || !rule.conds || !rule.conds.length) {
+            return false;
+        }
+        var active = (rule.conds || []).filter(function (c) {
+            return c && String(normalizeCondition(c).matchText || '').trim();
+        });
+        if (!active.length) {
+            return false;
+        }
+        var v;
+        var u;
+        var n = active.length;
+        for (u = 0; u < n; u++) {
+            v = matchOneCondition(Row, active[u]);
+            if (rule.combine === 'or') {
+                if (v) {
+                    return true;
+                }
+            } else {
+                if (!v) {
+                    return false;
+                }
+            }
+        }
+        return rule.combine === 'or' ? false : true;
     }
 
     function newRule() {
         return {
             id: 'r' + String(Date.now()) + String(Math.random()).slice(2, 8),
-            matchField: 'alertType',
-            matchText: '',
-            matchMode: 'contains',
+            combine: 'and',
+            conds: [ newCondition() ],
             action: 'tail',
             targetTabId: '',
             targetTitle: '',
@@ -530,11 +640,28 @@
         nextBucket();
     }
 
+    function ruleIsReady(r) {
+        r = migrateRuleV2(r);
+        if (!r || r.enabled === false) {
+            return false;
+        }
+        if (!String(r.targetTabId || '').trim()) {
+            return false;
+        }
+        if (!r.conds || !r.conds.length) {
+            return false;
+        }
+        for (var i = 0; i < r.conds.length; i++) {
+            if (String(normalizeCondition(r.conds[i]).matchText || '').trim()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function buildPlanFromTable(cfg) {
         var rows = getRowsForMode(cfg.sendMode);
-        var rules = (cfg.rules || []).filter(function (r) {
-            return r && r.enabled && String(r.targetTabId || '').trim() && String(r.matchText || '').trim();
-        });
+        var rules = (cfg.rules || []).filter(function (r) { return ruleIsReady(r); });
         var plan = Object.create(null);
         var r;
         var i;
@@ -543,7 +670,7 @@
         for (i = 0; i < rows.length; i++) {
             var R = rowText(rows[i]);
             for (j = 0; j < rules.length; j++) {
-                r = rules[j];
+                r = migrateRuleV2(rules[j]);
                 if (!matchRule(R, r)) {
                     continue;
                 }
@@ -619,6 +746,145 @@
             }
         }
         return nT + nF;
+    }
+
+    function planCanonicalHash(plan) {
+        var keys = Object.keys(plan || {}).sort();
+        var parts = [];
+        var ki;
+        for (ki = 0; ki < keys.length; ki++) {
+            var tabId = keys[ki];
+            var b = plan[tabId];
+            if (!b) {
+                continue;
+            }
+            var ts = (b.tails || []).slice().sort().join(',');
+            var fs = (b.flights || []).slice().sort().join(',');
+            parts.push(tabId + ':T[' + ts + ']F[' + fs + ']');
+        }
+        return parts.join('|');
+    }
+
+    function maybeAutoRun(reason) {
+        var cfg = loadConfig();
+        var hasWatch =
+            cfg.autoRunOnTableChange === true ||
+            (Number(cfg.autoRunIntervalSec) > 0);
+        if (!hasWatch) {
+            return;
+        }
+        if (!ensureChannel()) {
+            return;
+        }
+        if (!cfg.rules || !cfg.rules.length) {
+            return;
+        }
+        if (!cfg.rules.some(function (r) { return r && r.enabled && String(r.targetTabId || '').trim(); })) {
+            return;
+        }
+        var plan = buildPlanFromTable(cfg);
+        var h = planCanonicalHash(plan);
+        if (h === lastPlanHash) {
+            log('auto skip (no plan change) ' + (reason || ''));
+            return;
+        }
+        if (!countPlan(plan)) {
+            lastPlanHash = h;
+            log('auto skip (empty plan) ' + (reason || ''));
+            return;
+        }
+        lastPlanHash = h;
+        log('auto run ' + (reason || '') + ' → ' + h);
+        runSendPlan(plan);
+    }
+
+    var TABLE_OBS_DEBOUNCE_MS = 400;
+
+    function clearTableAutoWatch() {
+        if (tableDebounceTid) {
+            try {
+                clearTimeout(tableDebounceTid);
+            } catch (e) {}
+            tableDebounceTid = 0;
+        }
+        if (tableAutoObserver) {
+            try {
+                tableAutoObserver.disconnect();
+            } catch (e2) {}
+            tableAutoObserver = null;
+        }
+    }
+
+    function clearIntervalAutoWatch() {
+        if (intervalTid) {
+            try {
+                clearInterval(intervalTid);
+            } catch (e) {}
+            intervalTid = 0;
+        }
+    }
+
+    function scheduleTableSnapshotMaybe() {
+        var tbody = getTableBody();
+        if (!tbody) {
+            return;
+        }
+        var s = '';
+        try {
+            s = tbody.innerText || '';
+        } catch (e) {
+            s = '';
+        }
+        if (s === lastTableSnap) {
+            return;
+        }
+        lastTableSnap = s;
+        maybeAutoRun('table');
+    }
+
+    function scheduleAutoRunRefresh() {
+        var cfg = loadConfig();
+        clearTableAutoWatch();
+        clearIntervalAutoWatch();
+        lastTableSnap = '';
+        lastPlanHash = '';
+
+        if (cfg.autoRunOnTableChange) {
+            var tb = getTableBody();
+            if (tb) {
+                try {
+                    lastTableSnap = tb.innerText || '';
+                } catch (e) {}
+            }
+            try {
+                tableAutoObserver = new MutationObserver(function () {
+                    if (tableDebounceTid) {
+                        try {
+                            clearTimeout(tableDebounceTid);
+                        } catch (e2) {}
+                    }
+                    tableDebounceTid = setTimeout(function () {
+                        tableDebounceTid = 0;
+                        try {
+                            scheduleTableSnapshotMaybe();
+                        } catch (e3) {}
+                    }, TABLE_OBS_DEBOUNCE_MS);
+                });
+                var root = getTableBody() || document.body;
+                tableAutoObserver.observe(root, { childList: true, subtree: true, characterData: true });
+            } catch (e4) {
+                tableAutoObserver = null;
+            }
+        }
+
+        var sec = Math.max(0, Math.floor(Number(cfg.autoRunIntervalSec) || 0));
+        if (sec > 0) {
+            intervalTid = setInterval(function () {
+                try {
+                    maybeAutoRun('timer');
+                } catch (e5) {}
+            }, sec * 1000);
+        }
     }
 
     function closePicker() {
@@ -716,7 +982,14 @@
                         return c;
                     })()
                 );
-                w.appendChild(el('span', 'Dedupe', null));
+                w.appendChild(
+                    el(
+                        'span',
+                        'Dedupe',
+                        null
+                    )
+                );
+                w.title = 'In one “Run” or auto pass, each tail and each flight # is only sent once per destination worksheet (no duplicate lines for the same value).';
                 return w;
             })()
         );
@@ -751,13 +1024,84 @@
             })()
         );
         sc.appendChild(row2);
-        sc.appendChild(
+        var autoRow = el('div', null, 'display:flex;flex-wrap:wrap;gap:12px;align-items:center;');
+        var cbTable = document.createElement('input');
+        cbTable.type = 'checkbox';
+        cbTable.checked = cfg.autoRunOnTableChange === true;
+        sc._fAutoTable = cbTable;
+        var lTab = el('label', null, 'display:flex;align-items:center;gap:6px;cursor:pointer;');
+        lTab.appendChild(cbTable);
+        lTab.appendChild(
             el(
-                'p',
-                'Rules do not run until you click Run now (no auto-refresh on table changes). First matching rule wins per row. “Tail” = Tail # cell; “Flight #” = numbers from description.',
-                'font:12px!important;color:#7d8a97!important;margin:0!important;'
+                'span',
+                'When the alerts table updates',
+                'font:12px;color:#e2e8f0;'
             )
         );
+        lTab.title = 'Uses a short debounce after the table DOM or text changes.';
+        autoRow.appendChild(lTab);
+        autoRow.appendChild(
+            (function () {
+                var w = el('label', 'or every ', 'display:flex;align-items:center;gap:4px;');
+                var inI = document.createElement('input');
+                inI.type = 'number';
+                inI.min = 0;
+                inI.max = 3600;
+                inI.value = String(
+                    cfg.autoRunIntervalSec != null
+                        ? Math.max(0, Math.floor(cfg.autoRunIntervalSec))
+                        : 0
+                );
+                inI.style.cssText = 'width:56px;padding:4px;';
+                sc._fAutoInterval = inI;
+                w.appendChild(inI);
+                w.appendChild(el('span', 's', 'font:12px;'));
+                w.appendChild(
+                    el(
+                        'span',
+                        '(0 = off)',
+                        'font:11px!important;color:#64748b!important;margin-left:4px;'
+                    )
+                );
+                w.title = 'Re-evaluates rules on this interval. Independent of table updates.';
+                return w;
+            })()
+        );
+        sc.appendChild(autoRow);
+        var helpAuto = el(
+            'div',
+            null,
+            'font:12px!important;color:#7d8a97!important;margin:0!important;line-height:1.5!important;'
+        );
+        helpAuto.appendChild(
+            el(
+                'p',
+                'Autorun (table + timer): the script builds a send plan from the visible table. For each row, the first enabled rule that matches decides whether to send that row’s tail or flight numbers to that rule’s worksheet. Autorun runs when the table’s content changes (debounced) and/or on the interval you set.',
+                'margin:0 0 8px 0!important;'
+            )
+        );
+        helpAuto.appendChild(
+            el(
+                'p',
+                'No repeat sends on a steady table: after a send, the same set of tails and flights per worksheet is not posted again until the plan actually changes (rows update, filters change, or rules match differently). Run now also updates that state.',
+                'margin:0 0 8px 0!important;'
+            )
+        );
+        helpAuto.appendChild(
+            el(
+                'p',
+                'Match lines: add one or more; combine with all of (AND) or any of (OR). Contains = substring. Exact = whole field, case-insensitive. Regex = pattern (e.g. Misrouted.*HGR); invalid patterns never match.',
+                'margin:0 0 8px 0!important;'
+            )
+        );
+        helpAuto.appendChild(
+            el(
+                'p',
+                'Dedupe: in one run, each tail and each flight # is only queued once per destination worksheet. Stagger delays separate posts. Save writes this browser’s copy (local storage) and restarts autorun if enabled.',
+                'margin:0!important;'
+            )
+        );
+        sc.appendChild(helpAuto);
 
         var hRules = el(
             'div',
@@ -836,39 +1180,14 @@
             cfg.staggerMs = Number.isFinite(st) ? Math.min(2000, Math.max(0, st)) : 150;
             var lw = sc._fListWait ? Number(sc._fListWait.value) : 2000;
             cfg.listWaitMs = Number.isFinite(lw) ? Math.min(8000, Math.max(100, lw)) : 2000;
+            cfg.configVersion = CONFIG_V;
+            cfg.autoRunOnTableChange = !!(sc._fAutoTable && sc._fAutoTable.checked);
+            var asec = sc._fAutoInterval ? Math.floor(Number(sc._fAutoInterval.value)) : 0;
+            cfg.autoRunIntervalSec = Number.isFinite(asec) && asec > 0 ? Math.min(3600, asec) : 0;
             return cfg;
         }
 
-        function renderRuleRow(rule, tabOptions) {
-            var wrap = el('div', null, 'border:1px solid #3d4a56;border-radius:6px;padding:8px;background:#12171c;');
-            var top = el('div', null, 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px;');
-            var en = document.createElement('input');
-            en.type = 'checkbox';
-            en.checked = rule.enabled !== false;
-            en.title = 'Enabled';
-            var labEn = el('span', 'On', 'font:12px;color:#94a3b8;');
-            top.appendChild(en);
-            top.appendChild(labEn);
-            var fMatch = document.createElement('select');
-            fMatch.style.cssText = 'max-width:130px;font:12px system-ui;';
-            fMatch.innerHTML =
-                '<option value="alertType">Alert type</option><option value="description">Description</option><option value="city">City</option>';
-            fMatch.value = rule.matchField || 'alertType';
-            var inp = document.createElement('input');
-            inp.type = 'text';
-            inp.placeholder = 'contains…';
-            inp.value = String(rule.matchText || '');
-            inp.style.cssText = 'flex:1;min-width:120px;padding:4px 8px;font:12px system-ui;border-radius:4px;';
-            var fMode = document.createElement('select');
-            fMode.style.cssText = 'font:12px;';
-            fMode.innerHTML =
-                '<option value="contains">contains</option><option value="regex">regex</option>';
-            fMode.value = rule.matchMode || 'contains';
-            var fAct = document.createElement('select');
-            fAct.style.cssText = 'font:12px;';
-            fAct.innerHTML =
-                '<option value="tail">Send tail</option><option value="flight">Send flight #</option>';
-            fAct.value = rule.action === 'flight' ? 'flight' : 'tail';
+        function renderWorksheetSelect(rule, tabOptions) {
             var fTgt = document.createElement('select');
             fTgt.style.cssText = 'min-width:200px;max-width:100%;font:12px;';
             var o0 = document.createElement('option');
@@ -898,17 +1217,130 @@
                     })()
                 );
             }
+            return fTgt;
+        }
+
+        function renderRuleRow(rule, tabOptions) {
+            rule = migrateRuleV2(rule);
+            if (!Array.isArray(rule.conds) || !rule.conds.length) {
+                rule.conds = [ newCondition() ];
+            }
+            var wrap = el('div', null, 'border:1px solid #3d4a56;border-radius:6px;padding:8px;background:#12171c;');
+            var top = el('div', null, 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;');
+            var en = document.createElement('input');
+            en.type = 'checkbox';
+            en.checked = rule.enabled !== false;
+            en.title = 'Enabled';
+            var labEn = el('span', 'On', 'font:12px;color:#94a3b8;');
+            top.appendChild(en);
+            top.appendChild(labEn);
+            var fAct = document.createElement('select');
+            fAct.style.cssText = 'font:12px;';
+            fAct.innerHTML =
+                '<option value="tail">Send tail</option><option value="flight">Send flight #</option>';
+            fAct.value = rule.action === 'flight' ? 'flight' : 'tail';
+            var fTgt = renderWorksheetSelect(rule, tabOptions);
             var btnDel = el('button', '×', 'padding:2px 8px;font:14px;cursor:pointer;');
             btnDel.type = 'button';
             btnDel.title = 'Remove rule';
-            top.appendChild(fMatch);
-            top.appendChild(fMode);
-            top.appendChild(inp);
             top.appendChild(fAct);
             top.appendChild(fTgt);
             top.appendChild(btnDel);
             wrap.appendChild(top);
-            rule._u = { en: en, fMatch: fMatch, fMode: fMode, inp: inp, fAct: fAct, fTgt: fTgt };
+
+            var cRow = el('div', null, 'display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:6px;');
+            cRow.appendChild(
+                el(
+                    'span',
+                    'If',
+                    'font:12px;color:#94a3b8;'
+                )
+            );
+            var fComb = document.createElement('select');
+            fComb.style.cssText = 'font:12px;';
+            fComb.title = 'How to combine the conditions on this row';
+            fComb.innerHTML =
+                '<option value="and">all of (AND)</option><option value="or">any of (OR)</option>';
+            fComb.value = rule.combine === 'or' ? 'or' : 'and';
+            cRow.appendChild(fComb);
+            cRow.appendChild(
+                el(
+                    'span',
+                    'of the following are true…',
+                    'font:12px;color:#7d8a97;'
+                )
+            );
+            var btnAddC = el('button', '+ line', 'font:11px;padding:2px 6px;cursor:pointer;margin-left:auto;');
+            btnAddC.type = 'button';
+            btnAddC.title = 'Add another match line';
+            cRow.appendChild(btnAddC);
+            wrap.appendChild(cRow);
+
+            var condBox = el('div', null, 'display:flex;flex-direction:column;gap:4px;');
+            wrap.appendChild(condBox);
+
+            var condEls = [];
+
+            function makeCondRow(cnd) {
+                cnd = normalizeCondition(cnd);
+                var row2 = el('div', null, 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;');
+                var fMatch = document.createElement('select');
+                fMatch.style.cssText = 'max-width:130px;font:12px system-ui;';
+                fMatch.innerHTML =
+                    '<option value="alertType">Alert type</option><option value="description">Description+info</option><option value="city">City</option>';
+                fMatch.value = cnd.matchField || 'alertType';
+                var fMode = document.createElement('select');
+                fMode.style.cssText = 'font:12px;min-width:88px;';
+                fMode.title =
+                    'Contains = text anywhere; exact = full field; regex = pattern (e.g. Misrouted.*HGR).';
+                fMode.innerHTML =
+                    '<option value="contains">contains</option><option value="exact">exact</option><option value="regex">regex</option>';
+                fMode.value = cnd.matchMode === 'regex' || cnd.matchMode === 'exact' ? cnd.matchMode : 'contains';
+                var inp = document.createElement('input');
+                inp.type = 'text';
+                inp.placeholder = cnd.matchMode === 'regex' ? 'pattern…' : (cnd.matchMode === 'exact' ? 'exact value…' : 'contains…');
+                inp.value = String(cnd.matchText || '');
+                inp.style.cssText = 'flex:1;min-width:100px;padding:4px 8px;font:12px system-ui;border-radius:4px;';
+                var rBtn = el('button', '–', 'padding:2px 6px;font:12px;cursor:pointer;min-width:28px;');
+                rBtn.type = 'button';
+                rBtn.title = 'Remove this line';
+                row2.appendChild(fMatch);
+                row2.appendChild(fMode);
+                row2.appendChild(inp);
+                row2.appendChild(rBtn);
+                fMode.addEventListener('change', function () {
+                    inp.placeholder =
+                        fMode.value === 'regex' ? 'pattern…' : (fMode.value === 'exact' ? 'exact value…' : 'contains…');
+                });
+                rBtn.addEventListener('click', function () {
+                    if (rule.conds.length < 2) {
+                        return;
+                    }
+                    rule.conds = rule.conds.filter(function (x) { return x && x.id !== cnd.id; });
+                    try {
+                        row2.remove();
+                    } catch (e) {}
+                    condEls = condEls.filter(function (ce) { return ce.cndId !== cnd.id; });
+                });
+                return { row2: row2, fMatch: fMatch, fMode: fMode, inp: inp, cndId: cnd.id };
+            }
+
+            var c;
+            for (c = 0; c < rule.conds.length; c++) {
+                var rline = makeCondRow(rule.conds[c]);
+                condEls.push(rline);
+                condBox.appendChild(rline.row2);
+            }
+
+            btnAddC.addEventListener('click', function () {
+                var nc = newCondition();
+                rule.conds.push(nc);
+                var nr = makeCondRow(nc);
+                condEls.push(nr);
+                condBox.appendChild(nr.row2);
+            });
+
+            rule._u = { en: en, fAct: fAct, fTgt: fTgt, fComb: fComb, condEls: condEls, rule: rule };
             btnDel.addEventListener('click', function () {
                 cfg.rules = cfg.rules.filter(function (r) { return r.id !== rule.id; });
                 try {
@@ -926,14 +1358,39 @@
             for (var z = 0; z < cfg.rules.length; z++) {
                 var u = cfg.rules[z]._u;
                 if (!u) {
-                    next.push(cfg.rules[z]);
+                    next.push(migrateRuleV2(cfg.rules[z]));
                     continue;
                 }
+                var rr = u.rule || cfg.rules[z];
+                var conds = [];
+                var e;
+                for (e = 0; e < (u.condEls || []).length; e++) {
+                    var elx = u.condEls[e];
+                    if (!elx) {
+                        continue;
+                    }
+                    var cm = elx.fMode && elx.fMode.value;
+                    if (cm !== 'contains' && cm !== 'regex' && cm !== 'exact') {
+                        cm = 'contains';
+                    }
+                    conds.push(
+                        normalizeCondition({
+                            id: elx.cndId,
+                            matchField: elx.fMatch && elx.fMatch.value
+                                ? elx.fMatch.value
+                                : 'alertType',
+                            matchText: (elx.inp && elx.inp.value) || '',
+                            matchMode: cm
+                        })
+                    );
+                }
+                if (!conds.length) {
+                    conds.push(newCondition());
+                }
                 next.push({
-                    id: cfg.rules[z].id,
-                    matchField: u.fMatch && u.fMatch.value ? u.fMatch.value : 'alertType',
-                    matchText: (u.inp && u.inp.value) || '',
-                    matchMode: u.fMode && u.fMode.value ? u.fMode.value : 'contains',
+                    id: rr.id,
+                    combine: u.fComb && u.fComb.value === 'or' ? 'or' : 'and',
+                    conds: conds,
                     action: u.fAct && u.fAct.value === 'flight' ? 'flight' : 'tail',
                     targetTabId: u.fTgt && u.fTgt.value ? u.fTgt.value : '',
                     targetTitle: u.fTgt && u.fTgt.selectedIndex >= 0
@@ -989,7 +1446,7 @@
                 redrawRules(sc._wsTabs);
                 if (sc._summary) {
                     sc._summary.textContent =
-                        'Rules: ' + cfg.rules.length + ' · ' + sc._wsTabs.length + ' worksheet(s) in browser — click Run now to apply to the current table.';
+                        'Rules: ' + cfg.rules.length + ' · ' + sc._wsTabs.length + ' worksheet(s). Use Run now, or turn on autorun above.';
                 }
                 return;
             }
@@ -1000,7 +1457,7 @@
                     redrawRules(sc._wsTabs);
                     if (sc._summary) {
                         sc._summary.textContent =
-                            'Rules: ' + cfg.rules.length + ' · ' + (sc._wsTabs.length ? (sc._wsTabs.length + ' worksheet(s) in browser') : 'No worksheet tabs') + ' — click Run now to apply.';
+                            'Rules: ' + cfg.rules.length + ' · ' + (sc._wsTabs.length ? (sc._wsTabs.length + ' worksheet(s) in browser') : 'No worksheet tabs') + ' — Run now or use autorun if enabled.';
                     }
                 })
                 .catch(function () {
@@ -1017,9 +1474,9 @@
             }
             if (!cfg.rules.length) {
                 sc._summary.textContent =
-                    'No rules yet. Add a rule, pick a worksheet, and match e.g. alert type “Misrouted”. Rules run only when you click Run now.';
+                    'No rules yet. Add a rule, pick a worksheet, and e.g. match alert type. Use Run now, or enable “When the alerts table updates” / a timer above.';
             } else {
-                sc._summary.textContent = 'Rules: ' + cfg.rules.length + ' · ' + (sc._wsTabs && sc._wsTabs.length ? (sc._wsTabs.length + ' worksheet(s) in browser') : 'No worksheet tabs (open a worksheet in this browser).') + ' — Run now uses the table as it looks now.';
+                sc._summary.textContent = 'Rules: ' + cfg.rules.length + ' · ' + (sc._wsTabs && sc._wsTabs.length ? (sc._wsTabs.length + ' worksheet(s) in this browser') : 'No worksheet tabs (open a worksheet in this browser).') + ' — Run now or autorun.';
             }
         });
 
@@ -1030,6 +1487,9 @@
             } catch (e) {
             }
             saveConfig(cfg);
+            try {
+                scheduleAutoRunRefresh();
+            } catch (e) {}
             if (getPref('alertsTailsToWsLog', false)) {
                 try {
                     console.log('[Alerts→WS] saved', cfg);
@@ -1044,17 +1504,18 @@
             } catch (e) {
             }
             saveConfig(cfg);
+            try {
+                scheduleAutoRunRefresh();
+            } catch (e2) {}
             if (!cfg.rules || !cfg.rules.length) {
                 try {
-                    window.alert('Add at least one rule with a worksheet and match text.');
+                    window.alert('Add at least one rule with a worksheet and at least one match line with text.');
                 } catch (e) {}
                 return;
             }
-            if (!cfg.rules.some(function (r) {
-                return r && r.enabled && r.targetTabId;
-            })) {
+            if (!cfg.rules.some(function (r) { return ruleIsReady(r); })) {
                 try {
-                    window.alert('Enable at least one rule and choose a target worksheet.');
+                    window.alert('Enable at least one rule, choose a worksheet, and enter match text on at least one line.');
                 } catch (e) {}
                 return;
             }
@@ -1072,6 +1533,7 @@
                 } catch (e) {}
                 return;
             }
+            lastPlanHash = planCanonicalHash(plan);
             log('plan: ' + JSON.stringify(plan));
             runSendPlan(plan);
             try {
@@ -1224,6 +1686,9 @@
     function start() {
         loadConfig();
         ensureChannel();
+        try {
+            scheduleAutoRunRefresh();
+        } catch (e) {}
         scheduleMount();
         if (mountObserver) {
             return;
@@ -1261,6 +1726,14 @@
             } catch (e) {}
             mountTimer = 0;
         }
+        try {
+            clearTableAutoWatch();
+        } catch (e1) {}
+        try {
+            clearIntervalAutoWatch();
+        } catch (e2) {}
+        lastTableSnap = '';
+        lastPlanHash = '';
         var u = document.getElementById(MOUNT_ID);
         if (u) {
             try {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.3.5
+// @version      1.3.6
 // @description  Worksheet: compact collapsible auto filter actions; watch AC/LN/FLT; Replace/Append/Remove on change or interval.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -22,6 +22,7 @@
     var LS_ACTION_INTERVAL = 'dc_worksheet_auto_replace_action_interval';
     var LS_METRICS = 'dc_worksheet_auto_replace_metrics';
     var LS_COLLAPSED = 'dc_worksheet_auto_replace_collapsed';
+    var LS_OP_TIME_AUTO = 'dc_worksheet_auto_op_time_24h';
 
     var pollTimer = null;
     var intervalTimer = null;
@@ -31,6 +32,7 @@
     var lastSig = '';
     var hostEl = null;
     var toggleInput = null;
+    var opTimeTid = null;
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -617,7 +619,12 @@
             ' .dc-war-num{width:44px;padding:2px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:11px;}' +
             '#' +
             HOST_ID +
-            '[data-dc-war-placed="0"]{visibility:hidden!important;opacity:0!important;pointer-events:none!important;}';
+            '[data-dc-war-placed="0"]{visibility:hidden!important;opacity:0!important;pointer-events:none!important;}' +
+            '#dc-war-op-time-wrap{' +
+            'display:inline-flex!important;align-items:center!important;gap:6px!important;flex-wrap:wrap!important;margin:4px 0 0 0!important;vertical-align:baseline!important;' +
+            'font:11px/1.2 system-ui,Segoe UI,sans-serif!important;color:#95a5a6!important;}' +
+            '#dc-war-op-time-wrap input[type=checkbox]{accent-color:#5dade2;width:14px!important;height:14px!important;flex-shrink:0;margin:0!important;cursor:pointer;}' +
+            '#dc-war-op-time-wrap > span{white-space:normal;max-width:100%;}';
         document.head.appendChild(st);
     }
 
@@ -695,6 +702,179 @@
             relocateRaf = 0;
             relocateHost();
         });
+    }
+
+    var OP_TIME_ID = 'dc-war-op-time-wrap';
+    var OP_TIME_TICK_MS = 10 * 60 * 1000;
+
+    function readOpTimeAuto() {
+        try {
+            return localStorage.getItem(LS_OP_TIME_AUTO) === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function writeOpTimeAuto(on) {
+        try {
+            localStorage.setItem(LS_OP_TIME_AUTO, on ? '1' : '0');
+        } catch (e) {}
+    }
+
+    function findOperationalTimeField() {
+        var wrap = document.querySelector('[data-testid="operational-time"]');
+        if (!wrap) {
+            return { field: null, afterEl: null, input: null, questionIcon: null };
+        }
+        var inp = wrap.querySelector('input[name="flight.operationalTime"]') ||
+            wrap.querySelector('input[type="text"]');
+        var field = wrap.closest('div.field') || null;
+        var qIcon = field
+            ? field.querySelector('i[data-testid="question-icon"]')
+            : null;
+        return { field: field, afterEl: qIcon, input: inp, questionIcon: qIcon, inputWrap: wrap };
+    }
+
+    function formatTime24hLocal() {
+        var d = new Date();
+        return pad2(d.getHours()) + pad2(d.getMinutes());
+    }
+
+    function setOperationalTimeInputValue(inp, value) {
+        if (!inp) {
+            return;
+        }
+        var s = String(value);
+        var setter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype,
+            'value'
+        );
+        if (setter && setter.set) {
+            setter.set.call(inp, s);
+        } else {
+            inp.value = s;
+        }
+        try {
+            if (typeof InputEvent !== 'undefined') {
+                inp.dispatchEvent(
+                    new InputEvent('input', {
+                        bubbles: true,
+                        cancelable: true,
+                        data: s,
+                        inputType: 'insertFromPaste'
+                    })
+                );
+            }
+        } catch (e) {}
+        try {
+            inp.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+            inp.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+        } catch (e2) {}
+    }
+
+    function applyOperationalTimeNow() {
+        if (!readOpTimeAuto()) {
+            return;
+        }
+        if (!document.getElementById(OP_TIME_ID)) {
+            return;
+        }
+        var inf = findOperationalTimeField();
+        if (!inf.input) {
+            return;
+        }
+        setOperationalTimeInputValue(inf.input, formatTime24hLocal());
+    }
+
+    function startOpTimeTick() {
+        stopOpTimeTick();
+        if (!readOpTimeAuto()) {
+            return;
+        }
+        applyOperationalTimeNow();
+        opTimeTid = setInterval(applyOperationalTimeNow, OP_TIME_TICK_MS);
+    }
+
+    function stopOpTimeTick() {
+        if (opTimeTid) {
+            clearInterval(opTimeTid);
+            opTimeTid = null;
+        }
+    }
+
+    function unmountOpTime() {
+        stopOpTimeTick();
+        var w = document.getElementById(OP_TIME_ID);
+        if (w) {
+            try {
+                w.remove();
+            } catch (e) {}
+        }
+    }
+
+    function mountOperationalTimeIfNeeded() {
+        var existing = document.getElementById(OP_TIME_ID);
+        if (existing && !document.body.contains(existing)) {
+            unmountOpTime();
+            existing = null;
+        }
+        var inf = findOperationalTimeField();
+        if (existing && (!inf.input || !inf.field || (inf.field && !inf.field.contains(existing)))) {
+            unmountOpTime();
+            existing = null;
+        }
+        if (document.getElementById(OP_TIME_ID)) {
+            if (readOpTimeAuto() && !opTimeTid) {
+                startOpTimeTick();
+            }
+            return;
+        }
+        if (!inf.field || !inf.input) {
+            return;
+        }
+        if (!inf.inputWrap || !inf.inputWrap.parentNode) {
+            return;
+        }
+        unmountOpTime();
+
+        var line = document.createElement('div');
+        line.id = OP_TIME_ID;
+        line.className = 'dc-war-op-time';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.setAttribute('data-dc-op-time-cb', '1');
+        cb.title = 'Fill OPERATIONAL TIME with the current time (24h, HHmm) and refresh every 10 minutes';
+        cb.checked = readOpTimeAuto();
+        var hint = document.createElement('span');
+        hint.textContent = 'auto current time (24h, updates every 10 min)';
+        line.appendChild(cb);
+        line.appendChild(hint);
+
+        cb.addEventListener('change', function () {
+            writeOpTimeAuto(!!cb.checked);
+            if (cb.checked) {
+                startOpTimeTick();
+            } else {
+                stopOpTimeTick();
+            }
+        });
+
+        if (inf.afterEl && inf.afterEl.parentNode) {
+            inf.afterEl.insertAdjacentElement('afterend', line);
+        } else {
+            if (inf.inputWrap && inf.inputWrap.parentNode) {
+                try {
+                    inf.inputWrap.parentNode.insertBefore(line, inf.inputWrap);
+                } catch (e) {
+                    inf.field.appendChild(line);
+                }
+            } else {
+                inf.field.appendChild(line);
+            }
+        }
+        if (readOpTimeAuto()) {
+            startOpTimeTick();
+        }
     }
 
     var HOST_HTML =
@@ -959,6 +1139,9 @@
 
     function tryMount() {
         mountHost();
+        try {
+            mountOperationalTimeIfNeeded();
+        } catch (e) {}
     }
 
     function init() {
@@ -969,6 +1152,9 @@
             } else {
                 scheduleRelocateHost();
             }
+            try {
+                mountOperationalTimeIfNeeded();
+            } catch (e) {}
         });
         mo.observe(document.documentElement, { childList: true, subtree: true });
     }
@@ -980,6 +1166,7 @@
     }
 
     window.__myScriptCleanup = function () {
+        unmountOpTime();
         stopPoll();
         stopIntervalReplace();
         if (relocateRetryTimer) {
