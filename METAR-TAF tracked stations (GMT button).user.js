@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.34
-// @description  Hide WX button on pax-connections (clock match false positive). Vis: mixed 1 1/2SM; full vis span; same SM regex for rules + SW style.
+// @version      2.0.35
+// @description  Tooltips on colored METAR/TAF tokens: notify rules + SW-style (IFR/MVFR, etc.) on hover.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -694,7 +694,13 @@
                 var ci;
                 for (ci = 0; ci < cra.length; ci++) {
                     if (cra[ci].h > 0 && cra[ci].h <= maxCeil) {
-                        spans.push({ start: cra[ci].start, end: cra[ci].end, color: col, pri: parseRuleLevel(rule) === 'high' ? 2 : 1 });
+                        spans.push({
+                            start: cra[ci].start,
+                            end: cra[ci].end,
+                            color: col,
+                            pri: parseRuleLevel(rule) === 'high' ? 2 : 1,
+                            label: notifyRuleLineForTooltip(ri, rule, which, 'ceiling', maxCeil)
+                        });
                     }
                 }
             }
@@ -704,7 +710,13 @@
                 var vi;
                 for (vi = 0; vi < vra.length; vi++) {
                     if (vra[vi].sm != null && vra[vi].sm <= maxVis) {
-                        spans.push({ start: vra[vi].start, end: vra[vi].end, color: col, pri: parseRuleLevel(rule) === 'high' ? 2 : 1 });
+                        spans.push({
+                            start: vra[vi].start,
+                            end: vra[vi].end,
+                            color: col,
+                            pri: parseRuleLevel(rule) === 'high' ? 2 : 1,
+                            label: notifyRuleLineForTooltip(ri, rule, which, 'vis', maxVis)
+                        });
                     }
                 }
             }
@@ -743,7 +755,12 @@
                 }
             }
             if (!skip) {
-                out.push({ start: sp.start, end: sp.end, color: sp.color });
+                out.push({
+                    start: sp.start,
+                    end: sp.end,
+                    color: sp.color,
+                    label: sp.label
+                });
             }
         }
         out.sort(function (a, b) {
@@ -761,6 +778,38 @@
         icing: '#1e90ff',
         ts: '#ffff00'
     };
+
+    /** One-line description for `title` on underlined token (SW-style classification). */
+    var SW_STYLE_HOVER = {
+        ifr: 'SW style: IFR (ceiling/visibility)',
+        mvfr: 'SW style: MVFR',
+        crosswind: 'SW style: strong gust (crosswind)',
+        llws: 'SW style: low-level wind shear (LLWS/WS)',
+        icing: 'SW style: freezing precip / ice',
+        ts: 'SW style: thunderstorm (TS/TSRA/VCTS)'
+    };
+
+    function swStyleTooltipForClass(cls) {
+        if (!cls) {
+            return '';
+        }
+        return SW_STYLE_HOVER[cls] || '';
+    }
+
+    function notifyRuleLineForTooltip(ri, rule, which, kind, maxVal) {
+        var n = (Number(ri) >= 0 ? Number(ri) + 1 : 0);
+        var pre = n ? 'Notify rule ' + n + ' — ' : 'Notify rule — ';
+        var section = which === 'metar' ? 'METAR' : 'TAF';
+        var L = parseRuleLevel(rule) === 'high' ? 'High' : 'Advisory';
+        var base = pre + section + ' · ' + L;
+        if (kind === 'ceiling') {
+            return base + ': ceiling ≤ ' + String(maxVal) + ' ft';
+        }
+        if (kind === 'vis') {
+            return base + ': visibility ≤ ' + String(maxVal) + ' SM';
+        }
+        return base;
+    }
 
     function allowSwStyleHighlightClass(cls) {
         if (!cls) {
@@ -918,7 +967,8 @@
                     start: m.index,
                     end: m.index + m[0].length,
                     color: SW_STYLE_ALERT_COLORS[cls],
-                    pri: 0
+                    pri: 0,
+                    label: swStyleTooltipForClass(cls)
                 });
             }
         }
@@ -979,18 +1029,23 @@
                 ? swStyleClassifyTokenTaf(w, fullLine)
                 : swStyleClassifyTokenMetar(w, s);
             if (cls && SW_STYLE_ALERT_COLORS[cls]) {
+                var swLab = swStyleTooltipForClass(cls);
                 if (tafMode) {
                     spans.push({
                         start: start,
                         end: end,
-                        color: SW_STYLE_ALERT_COLORS[cls]
+                        color: SW_STYLE_ALERT_COLORS[cls],
+                        pri: 0,
+                        label: swLab
                     });
                 } else {
                     if (!parseVisibilityTokenForSwStyle(w)) {
                         spans.push({
                             start: start,
                             end: end,
-                            color: SW_STYLE_ALERT_COLORS[cls]
+                            color: SW_STYLE_ALERT_COLORS[cls],
+                            pri: 0,
+                            label: swLab
                         });
                     }
                 }
@@ -1089,8 +1144,11 @@
             if (sp.start > pos) {
                 out += escapeHtml(s.slice(pos, sp.start));
             }
+            var tip = sp.label ? ' title="' + escapeHtml(String(sp.label)) + '"' : '';
             out +=
-                '<mark style="background:transparent;padding:0 1px;border-radius:2px;box-shadow:inset 0 -2px 0 ' +
+                '<mark' +
+                tip +
+                ' style="background:transparent;padding:0 1px;border-radius:2px;box-shadow:inset 0 -2px 0 ' +
                 escapeHtml(sp.color) +
                 ';color:' +
                 escapeHtml(sp.color) +
