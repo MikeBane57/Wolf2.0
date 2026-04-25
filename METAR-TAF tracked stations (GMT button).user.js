@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.38
+// @version      2.0.39
 // @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -5000,6 +5000,9 @@
     }
 
     var WX_BTN_ATTR = 'data-dc-metar-watch-btn';
+    var TOOLBAR_STYLE_ID = 'dc-metar-ws-toolbar-ptr-style';
+    var wxOpenClickHandler = null;
+    var wxOpenDownHandler = null;
 
     function isPaxConnectionsPage() {
         try {
@@ -5129,6 +5132,26 @@
         }
     }
 
+    function ensureMetarToolbarZStyle() {
+        if (document.getElementById(TOOLBAR_STYLE_ID)) {
+            return;
+        }
+        var st = document.createElement('style');
+        st.id = TOOLBAR_STYLE_ID;
+        st.textContent =
+            '[data-dc-worksheet-helper-buttons="1"],button[' +
+            WX_BTN_ATTR +
+            '="1"]{' +
+            'position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}' +
+            'span#dc-ws-state-reload-host,span#dc-brief-ai-ws-host,#' +
+            'dc-ws-state-reload-host,#' +
+            'dc-brief-ai-ws-host' +
+            '{position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}';
+        try {
+            document.head.appendChild(st);
+        } catch (e) {}
+    }
+
     function findGmtClockElement() {
         if (isPaxConnectionsPage()) {
             return null;
@@ -5209,6 +5232,7 @@
             detachMetarWatchWxButton();
             return;
         }
+        ensureMetarToolbarZStyle();
         dedupeWxButtonNodes();
 
         var worksheetHelper = getOrCreateWorksheetHelperField();
@@ -5255,14 +5279,25 @@
         }
         if (!btn.getAttribute('data-dc-wx-open-bound')) {
             btn.setAttribute('data-dc-wx-open-bound', '1');
-            btn.addEventListener('click', function (e) {
+            wxOpenClickHandler = function (e) {
                 e.preventDefault();
                 e.stopPropagation();
+                e.stopImmediatePropagation();
                 if (Notification && Notification.permission === 'default' && boolPref('metarWatchNotify', true)) {
                     Notification.requestPermission();
                 }
                 openModal();
-            });
+            };
+            wxOpenDownHandler = function (e) {
+                if (e.button !== 0) {
+                    return;
+                }
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+            };
+            btn.addEventListener('click', wxOpenClickHandler, true);
+            btn.addEventListener('mousedown', wxOpenDownHandler, true);
+            btn.addEventListener('pointerdown', wxOpenDownHandler, true);
         }
         if (worksheetHelper) {
             btn.style.marginLeft = '0';
@@ -6367,9 +6402,41 @@
         alertRulesPerHost = null;
         try {
             if (btn) {
+                if (wxOpenClickHandler) {
+                    try {
+                        btn.removeEventListener('click', wxOpenClickHandler, true);
+                    } catch (e) {}
+                }
+                if (wxOpenDownHandler) {
+                    try {
+                        btn.removeEventListener('mousedown', wxOpenDownHandler, true);
+                        btn.removeEventListener('pointerdown', wxOpenDownHandler, true);
+                    } catch (e2) {}
+                }
+                wxOpenClickHandler = null;
+                wxOpenDownHandler = null;
                 btn.remove();
             }
         } catch (e) {}
+        try {
+            var ts = document.getElementById(TOOLBAR_STYLE_ID);
+            if (ts) {
+                ts.remove();
+            }
+        } catch (e3) {}
+        try {
+            var hel = document.querySelector(
+                '[data-dc-worksheet-helper-buttons="1"]'
+            );
+            if (
+                hel &&
+                !hel.querySelector(
+                    'button, #dc-ws-state-reload-host, #dc-brief-ai-ws-host'
+                )
+            ) {
+                hel.remove();
+            }
+        } catch (e4) {}
         stopCodModelLoop();
         var pk;
         for (pk in codCacheByParms) {

@@ -24,6 +24,9 @@
 
     // DonkeyCODE calls this when the script is toggled off or before re-inject (prefs).
     // Save listener/observer references so removeEventListener / disconnect work.
+    // Audit: clear every setInterval/setTimeout, disconnect MutationObserver, removeEventListener(…, sameFn),
+    //         remove injected DOM, revoke Object URLs if any. If capture-phase listeners were used, remove with
+    //         the same third argument. Leave window.__myScriptCleanup as a no-op (empty function) is OK for re-inject.
     window.__myScriptCleanup = function() {
         // TODO: disconnect MutationObservers, clear intervals, removeEventListener with same fn ref, remove injected nodes
     };

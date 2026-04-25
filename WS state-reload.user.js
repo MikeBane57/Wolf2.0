@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.1.3
+// @version      0.1.4
 // @description  Worksheet: save named AC tail/line states, recall them later, quick reload/restore, and optionally share cloud states.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
@@ -886,8 +886,15 @@
     }
 
     function removeEmptyWorksheetHelperField() {
-        var helper = document.querySelector('[data-dc-worksheet-helper-buttons="1"]');
-        if (helper && !helper.querySelector('button,#' + HOST_ID)) {
+        var helper = document.querySelector(
+            '[data-dc-worksheet-helper-buttons="1"]'
+        );
+        if (
+            helper &&
+            !helper.querySelector(
+                'button, #' + HOST_ID + ', #dc-brief-ai-ws-host, [data-dc-metar-watch-btn="1"]'
+            )
+        ) {
             try {
                 helper.remove();
             } catch (e) {}
@@ -944,6 +951,10 @@
         var st = document.createElement('style');
         st.id = STYLE_ID;
         st.textContent =
+            '[data-dc-worksheet-helper-buttons="1"],#' +
+            HOST_ID +
+            ',#dc-brief-ai-ws-host,button[data-dc-metar-watch-btn="1"]{' +
+            'position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}' +
             '#' +
             HOST_ID +
             '{display:inline-flex;align-items:stretch;gap:4px;margin-left:0;vertical-align:middle;}' +
@@ -1009,11 +1020,22 @@
         if (attrName) {
             btn.setAttribute(attrName, '1');
         }
-        btn.addEventListener('click', function (ev) {
+        function onBtnClick(ev) {
             ev.preventDefault();
             ev.stopPropagation();
+            ev.stopImmediatePropagation();
             onClick();
-        });
+        }
+        function onBtnDown(ev) {
+            if (ev.button !== 0) {
+                return;
+            }
+            ev.stopPropagation();
+            ev.stopImmediatePropagation();
+        }
+        btn.addEventListener('click', onBtnClick, true);
+        btn.addEventListener('mousedown', onBtnDown, true);
+        btn.addEventListener('pointerdown', onBtnDown, true);
         return btn;
     }
 
@@ -1535,7 +1557,7 @@
         init();
     }
 
-    window.__myScriptCleanup = function () {
+    var dcWsStateCleanup = function () {
         if (mountObserver) {
             mountObserver.disconnect();
             mountObserver = null;
@@ -1564,8 +1586,15 @@
             }
             removeEmptyWorksheetHelperField();
         } catch (e) {}
-        window.__wsStateReloadCleanup = undefined;
-        window.__myScriptCleanup = undefined;
+    };
+    window.__myScriptCleanup = function () {
+        try {
+            dcWsStateCleanup();
+        } catch (e) {}
+        try {
+            window.__wsStateReloadCleanup = function () {};
+        } catch (e2) {}
     };
     window.__wsStateReloadCleanup = window.__myScriptCleanup;
+    window.dcWsStateScriptCleanup = dcWsStateCleanup;
 })();

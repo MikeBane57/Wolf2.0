@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.1.6
+// @version      0.1.7
 // @description  Worksheet: regional weather brief (METAR-based) — optional LLM (Groq, Gemini, Ollama, etc.); button by WX/WS state.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/*
@@ -70,6 +70,8 @@
     var mountObserver = null;
     var modalOpen = false;
     var mountInterval = null;
+    var briefOpenClick = null;
+    var briefOpenDown = null;
 
     function isWorksheetPage() {
         try {
@@ -712,6 +714,10 @@
         st.textContent =
             '#' +
             HOST_ID +
+            ',[data-dc-worksheet-helper-buttons="1"]' +
+            '{position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}' +
+            '#' +
+            HOST_ID +
             '{display:inline-flex;align-items:stretch;margin-left:0;vertical-align:middle;}' +
             '[' +
             BTN_ATTR +
@@ -822,22 +828,43 @@
         if (modalOpen) {
             return;
         }
-        var root = openModalLoading();
-        runBrief().then(
-            function (text) {
-                var body = root && root.querySelector('.dc-bai-body');
-                if (body) {
-                    body.textContent = trim(text) || 'Empty brief.';
+        var root;
+        try {
+            root = openModalLoading();
+        } catch (e0) {
+            try {
+                window.alert('Brief AI: ' + (e0 && e0.message ? e0.message : e0));
+            } catch (e1) {}
+            return;
+        }
+        try {
+            runBrief().then(
+                function (text) {
+                    var body = root && root.querySelector('.dc-bai-body');
+                    if (body) {
+                        body.textContent = trim(text) || 'Empty brief.';
+                    }
+                    addFooter(root);
+                },
+                function (err) {
+                    fillModalError(
+                        root,
+                        'Error: ' + (err && err.message ? err.message : String(err))
+                    );
                 }
-                addFooter(root);
-            },
-            function (err) {
+            );
+        } catch (e2) {
+            if (root) {
                 fillModalError(
                     root,
-                    'Error: ' + (err && err.message ? err.message : String(err))
+                    'Error: ' + (e2 && e2.message ? e2.message : String(e2))
                 );
+            } else {
+                try {
+                    window.alert('Brief AI: ' + (e2 && e2.message ? e2.message : e2));
+                } catch (e3) {}
             }
-        );
+        }
     }
 
     function makeButton() {
@@ -846,11 +873,22 @@
         b.setAttribute(BTN_ATTR, '1');
         b.textContent = 'Brief AI';
         b.title = 'Regional weather brief (METAR + LLM: Groq/Gemini/Ollama in DonkeyCODE prefs)';
-        b.addEventListener('click', function (e) {
+        briefOpenClick = function (e) {
             e.preventDefault();
             e.stopPropagation();
+            e.stopImmediatePropagation();
             startBrief();
-        });
+        };
+        briefOpenDown = function (e) {
+            if (e.button !== 0) {
+                return;
+            }
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+        };
+        b.addEventListener('click', briefOpenClick, true);
+        b.addEventListener('mousedown', briefOpenDown, true);
+        b.addEventListener('pointerdown', briefOpenDown, true);
         return b;
     }
 
@@ -930,8 +968,15 @@
     }
 
     function removeEmptyWorksheetHelperField() {
-        var helper = document.querySelector('[data-dc-worksheet-helper-buttons="1"]');
-        if (helper && !helper.querySelector('button,#' + STATE_HOST_ID)) {
+        var helper = document.querySelector(
+            '[data-dc-worksheet-helper-buttons="1"]'
+        );
+        if (
+            helper &&
+            !helper.querySelector(
+                'button, #dc-ws-state-reload-host, [data-dc-metar-watch-btn="1"]'
+            )
+        ) {
             try {
                 helper.remove();
             } catch (e) {}
@@ -1163,25 +1208,62 @@
         }
     }, 2000);
 
-    window.__myScriptCleanup = function () {
+    var dcBriefAiCoreCleanup = function () {
         if (mountInterval) {
             try {
                 clearInterval(mountInterval);
             } catch (e) {}
             mountInterval = null;
         }
+        if (mountRaf) {
+            try {
+                cancelAnimationFrame(mountRaf);
+            } catch (e) {}
+            mountRaf = 0;
+        }
         if (mountObserver) {
             try {
                 mountObserver.disconnect();
-            } catch (e) {}
+            } catch (e2) {}
             mountObserver = null;
         }
+        var bEl = document.querySelector('[' + BTN_ATTR + '="1"]');
+        if (bEl) {
+            if (briefOpenClick) {
+                try {
+                    bEl.removeEventListener('click', briefOpenClick, true);
+                } catch (e3) {}
+            }
+            if (briefOpenDown) {
+                try {
+                    bEl.removeEventListener('mousedown', briefOpenDown, true);
+                    bEl.removeEventListener('pointerdown', briefOpenDown, true);
+                } catch (e4) {}
+            }
+        }
+        briefOpenClick = null;
+        briefOpenDown = null;
         var h = document.getElementById(HOST_ID);
         if (h && h.parentNode) {
             try {
                 h.parentNode.removeChild(h);
-            } catch (e) {}
+            } catch (e5) {}
         }
+        var st = document.getElementById(STYLE_ID);
+        if (st) {
+            try {
+                st.remove();
+            } catch (e6) {}
+        }
+        try {
+            removeEmptyWorksheetHelperField();
+        } catch (e7) {}
         closeModal();
+    };
+    window.dcBriefAiScriptCleanup = dcBriefAiCoreCleanup;
+    window.__myScriptCleanup = function () {
+        try {
+            dcBriefAiCoreCleanup();
+        } catch (e) {}
     };
 })();
