@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Alerts: send tails to worksheet
 // @namespace    Wolf 2.0
-// @version      0.2.0
+// @version      0.2.1
 // @description  /alerts: rule-based tail or flight # send to chosen worksheets (BroadcastChannel). Edit all options in the modal; optional DonkeyCODE pref defaults.
 // @match        https://opssuitemain.swacorp.com/alerts*
 // @match        https://opssuitemain.swacorp.com/*/alerts*
@@ -642,6 +642,7 @@
     }
 
     function showConfigModal() {
+        try {
         closePicker();
         var cfg = JSON.parse(JSON.stringify(loadConfig()));
         if (!Array.isArray(cfg.rules)) {
@@ -652,14 +653,18 @@
             'div',
             null,
             'position:fixed!important;inset:0!important;z-index:10000050!important;background:rgba(0,0,0,.55)!important;' +
-                'display:flex!important;align-items:center!important;justify-content:center!important;padding:12px!important;'
+                'display:flex!important;align-items:center!important;justify-content:center!important;padding:12px!important;' +
+                'box-sizing:border-box!important;'
         );
+        backdrop.setAttribute('data-dc-alerts-ws-backdrop', '1');
         backdrop.id = PICKER_ID;
         var panel = el(
             'div',
             null,
-            'background:#1a1f24!important;color:#e8ecef!important;border-radius:10px!important;width:min(640px,100%)!important;' +
-                'max-height:min(90vh,860px)!important;overflow:hidden!important;display:flex!important;flex-direction:column!important;' +
+            'position:relative!important;z-index:1!important;align-self:center!important;box-sizing:border-box!important;' +
+                'background:#1a1f24!important;color:#e8ecef!important;border-radius:10px!important;width:min(640px, 96vw)!important;' +
+                'min-width: min(300px, 96vw) !important;min-height: 220px !important;max-height: 92vh !important;overflow: hidden !important;' +
+                'display:flex !important;flex-direction: column !important; flex: 0 0 auto !important; ' +
                 'box-shadow:0 16px 48px rgba(0,0,0,.5)!important;border:1px solid #3d4a56!important;font:14px/1.45 system-ui,Segoe UI,sans-serif!important;'
         );
 
@@ -671,7 +676,12 @@
         var sc = el(
             'div',
             null,
-            'overflow:auto!important;flex:1!important;padding:12px 16px!important;display:flex!important;flex-direction:column!important;gap:14px!important;'
+            'box-sizing: border-box !important; flex: 0 1 auto !important; ' +
+            'min-height: 0 !important; ' +
+            'max-height: min(58vh, 480px) !important; ' +
+            'overflow-y: auto !important; overflow-x: hidden !important; ' +
+            'padding: 12px 16px !important; display: flex !important; flex-direction: column !important; gap: 14px !important; ' +
+            '-webkit-overflow-scrolling: touch;'
         );
 
         var h2 = el(
@@ -776,7 +786,10 @@
         var foot = el(
             'div',
             null,
-            'display:flex!important;flex-wrap:wrap;gap:8px!important;justify-content:flex-end!important;padding:10px 14px!important;border-top:1px solid #334155!important;'
+            'box-sizing: border-box !important; flex: 0 0 auto !important; ' +
+            'display: flex !important; flex-wrap: wrap !important; gap: 8px !important; justify-content: flex-end !important; ' +
+            'padding: 10px 14px !important; border-top: 1px solid #334155 !important; ' +
+            'background: #14191e !important;'
         );
         var btnRun = el('button', 'Run now', null);
         btnRun.type = 'button';
@@ -797,6 +810,11 @@
         panel.appendChild(head);
         panel.appendChild(sc);
         panel.appendChild(foot);
+        try {
+            backdrop.appendChild(panel);
+        } catch (eAp) {
+            throw eAp;
+        }
         backdrop.addEventListener('click', function (e) {
             if (e.target === backdrop) {
                 closePicker();
@@ -1019,6 +1037,14 @@
         btnSave.addEventListener('click', function () { saveForm(); });
         btnRun.addEventListener('click', function () { runNow(); });
         btnClose.addEventListener('click', function () { closePicker(); });
+        } catch (err) {
+            try {
+                closePicker();
+            } catch (e2) {}
+            try {
+                window.alert('Alerts auto-send: could not open dialog — ' + (err && err.message ? err.message : err));
+            } catch (e3) {}
+        }
     }
 
     function onOpenClick() {
