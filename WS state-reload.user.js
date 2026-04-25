@@ -302,8 +302,9 @@
             '{display:inline-flex;align-items:stretch;gap:4px;margin-left:8px;vertical-align:middle;}' +
             '#' +
             HOST_ID +
-            ' button{font:600 12px system-ui,Segoe UI,sans-serif;border:1px solid rgba(255,255,255,.25);border-radius:4px;' +
-            'background:#273847;color:#ecf0f1;padding:0 8px;min-height:28px;cursor:pointer;white-space:nowrap;}' +
+            ' button{font:600 14px system-ui,Segoe UI,sans-serif;border:none;border-radius:4px;box-sizing:border-box;' +
+            'background:#2c3e50;color:#ecf0f1;padding:0 10px;min-height:36px;max-height:50px;display:inline-flex;' +
+            'align-items:center;justify-content:center;cursor:pointer;white-space:nowrap;}' +
             '#' +
             HOST_ID +
             ' button:hover{background:#34495e;}' +
@@ -392,6 +393,20 @@
                         row.style.alignItems = 'stretch';
                     }
                 }
+                var rowH = Math.max(
+                    (row && (row.offsetHeight || row.clientHeight)) || 0,
+                    anchor.offsetHeight || 0,
+                    anchor.clientHeight || 0
+                );
+                if (rowH < 24) {
+                    rowH = 36;
+                }
+                rowH = Math.min(rowH, 50);
+                host.querySelectorAll('button').forEach(function (b) {
+                    b.style.minHeight = rowH + 'px';
+                    b.style.height = 'auto';
+                    b.style.alignSelf = 'stretch';
+                });
             } catch (e) {}
         } else if (host.parentNode !== document.body) {
             host.style.position = 'fixed';
