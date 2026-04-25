@@ -2,9 +2,12 @@
 // @name         WS state/reload
 // @namespace    Wolf 2.0
 // @version      0.1.0
-// @description  Worksheet: save named AC tail/line states, recall them later, and quick reload/restore current worksheet state.
+// @description  Worksheet: save named AC tail/line states, recall them later, quick reload/restore, and optionally share cloud states.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      api.github.com
+// @connect      raw.githubusercontent.com
+// @donkeycode-pref {"worksheetStateTeamKey":{"type":"string","group":"Worksheet state cloud","label":"Team key","description":"Shared key for cloud saves. Defaults to wallOfFameTeamKey if blank.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state cloud","label":"JSON repo owner","description":"Repo owner for cloud worksheet states.","default":"","placeholder":"MikeBane57"},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state cloud","label":"JSON repo name","description":"Repo containing WORKSHEET STATES/worksheet-states.json.","default":"","placeholder":"Wolf2.0"},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state cloud","label":"JSON branch","default":"","placeholder":"main"},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state cloud","label":"JSON path","description":"Path for shared cloud states.","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // ==/UserScript==
@@ -21,11 +24,17 @@
     var SS_QUICK_RESTORE = 'dc_ws_state_reload_restore_after_reload_v1';
     var WX_BTN_SELECTOR = '[data-dc-metar-watch-btn="1"]';
     var STATE_TTL_MS = 4 * 60 * 60 * 1000;
+    var GITHUB_OWNER = 'MikeBane57';
+    var GITHUB_REPO = 'Wolf2.0';
+    var GITHUB_BRANCH = 'main';
+    var CLOUD_FILE_PATH = 'WORKSHEET STATES/worksheet-states.json';
+    var CLOUD_EVENT_TYPE = 'worksheet-state-put';
 
     var mountObserver = null;
     var mountRaf = 0;
     var restoreTimer = null;
     var activeApplyTimer = null;
+    var cloudRowsHost = null;
 
     function isWorksheetPage() {
         try {
@@ -37,6 +46,17 @@
 
     function trimText(s) {
         return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+    }
+
+    function getPref(key, def) {
+        if (typeof donkeycodeGetPref !== 'function') {
+            return def;
+        }
+        var v = donkeycodeGetPref(key);
+        if (v === undefined || v === null || v === '') {
+            return def;
+        }
+        return v;
     }
 
     function nowIso() {
@@ -57,6 +77,452 @@
         } catch (e) {
             return fallback;
         }
+    }
+
+    function resolvedGithubPat() {
+        return trimText(getPref('donkeycode_github_pat', ''));
+    }
+
+    function resolvedCloudOwner() {
+        return trimText(getPref('worksheetStateDataOwner', '')) || GITHUB_OWNER;
+    }
+
+    function resolvedCloudRepo() {
+        return trimText(getPref('worksheetStateDataRepo', '')) || GITHUB_REPO;
+    }
+
+    function resolvedCloudBranch() {
+        return trimText(getPref('worksheetStateDataBranch', '')) || GITHUB_BRANCH;
+    }
+
+    function resolvedCloudPath() {
+        return (trimText(getPref('worksheetStateRepoPath', '')) || CLOUD_FILE_PATH).replace(/^\/+/, '');
+    }
+
+    function resolvedTeamKey() {
+        return trimText(getPref('worksheetStateTeamKey', '')) || trimText(getPref('wallOfFameTeamKey', ''));
+    }
+
+    function githubApiHeaders() {
+        return {
+            Authorization: 'Bearer ' + resolvedGithubPat(),
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28'
+        };
+    }
+
+    function encodedRepoPath(path) {
+        return String(path || '')
+            .replace(/^\/+/, '')
+            .split('/')
+            .map(encodeURIComponent)
+            .join('/');
+    }
+
+    function rawCloudUrl() {
+        return (
+            'https://raw.githubusercontent.com/' +
+            encodeURIComponent(resolvedCloudOwner()) +
+            '/' +
+            encodeURIComponent(resolvedCloudRepo()) +
+            '/' +
+            encodeURIComponent(resolvedCloudBranch()) +
+            '/' +
+            encodedRepoPath(resolvedCloudPath())
+        );
+    }
+
+    function githubContentsApiUrl() {
+        return (
+            'https://api.github.com/repos/' +
+            encodeURIComponent(resolvedCloudOwner()) +
+            '/' +
+            encodeURIComponent(resolvedCloudRepo()) +
+            '/contents/' +
+            encodedRepoPath(resolvedCloudPath())
+        );
+    }
+
+    function activeDonkeyCodeFolder() {
+        var keys = [
+            'donkeycode_session_folder',
+            'donkeycode_active_session_folder',
+            'donkeycode_github_sessions_root',
+            'donkeycode_sessions_root',
+            'donkeycode_folder',
+            'donkeycode_current_folder'
+        ];
+        var i;
+        for (i = 0; i < keys.length; i++) {
+            var v = trimText(getPref(keys[i], ''));
+            if (v) {
+                return v.replace(/^\/+|\/+$/g, '') || 'Default';
+            }
+        }
+        return 'Default';
+    }
+
+    function decodeGithubFileContent(b64) {
+        if (!b64) {
+            return '';
+        }
+        var clean = String(b64).replace(/\s/g, '');
+        var bin = atob(clean);
+        try {
+            return decodeURIComponent(escape(bin));
+        } catch (e) {
+            return bin;
+        }
+    }
+
+
+    function normalizeCloudState(state) {
+        if (!state || typeof state !== 'object' || !Array.isArray(state.items) || !state.items.length) {
+            return null;
+        }
+        var savedAt = trimText(state.savedAt || state.updatedAt || state.capturedAt || nowIso());
+        var folder = trimText(state.folder || state.folderName || 'Default') || 'Default';
+        var id = trimText(state.id) || stateId();
+        return {
+            id: id,
+            name: trimText(state.name) || '(unnamed)',
+            folder: folder,
+            savedAt: savedAt,
+            expiresAt: trimText(state.expiresAt) || expiresAtFor(savedAt),
+            title: trimText(state.title || ''),
+            url: trimText(state.url || ''),
+            items: state.items
+                .map(function (item) {
+                    if (!item || typeof item !== 'object') {
+                        return null;
+                    }
+                    var type = item.type === 'line' ? 'line' : 'tail';
+                    var value = trimText(item.value);
+                    if (!value) {
+                        return null;
+                    }
+                    return { type: type, value: value };
+                })
+                .filter(Boolean)
+        };
+    }
+
+    function parseCloudDocument(text) {
+        var doc = safeJsonParse(text, null);
+        var arr = doc && Array.isArray(doc.states) ? doc.states : Array.isArray(doc) ? doc : [];
+        var out = [];
+        var changed = false;
+        var i;
+        for (i = 0; i < arr.length; i++) {
+            var st = normalizeCloudState(arr[i]);
+            if (!st || isExpiredState(st)) {
+                changed = true;
+                continue;
+            }
+            out.push(st);
+        }
+        return { version: 1, states: out, updatedAt: Date.now(), _prunedExpired: changed || out.length !== arr.length };
+    }
+
+    function cloudDocFor(states) {
+        return {
+            version: 1,
+            updatedAt: Date.now(),
+            ttlMs: STATE_TTL_MS,
+            states: (states || [])
+                .map(normalizeCloudState)
+                .filter(Boolean)
+                .filter(function (st) {
+                    return !isExpiredState(st);
+                })
+        };
+    }
+
+    function gmXhr(method, url, headers, bodyObj, cb) {
+        if (typeof GM_xmlhttpRequest !== 'function') {
+            cb(0, '');
+            return;
+        }
+        var hasBody = bodyObj !== undefined && bodyObj !== null;
+        var data = hasBody ? (typeof bodyObj === 'string' ? bodyObj : JSON.stringify(bodyObj)) : undefined;
+        GM_xmlhttpRequest({
+            method: method,
+            url: url,
+            headers: headers || {},
+            data: data,
+            onload: function (res) {
+                cb(res.status || 0, res.responseText || '');
+            },
+            onerror: function () {
+                cb(0, '');
+            }
+        });
+    }
+
+    function rawGithubGetCloud(cb) {
+        gmXhr('GET', rawCloudUrl(), { Accept: 'application/json' }, null, function (status, text) {
+            if (status === 404) {
+                cb(cloudDocFor([]));
+                return;
+            }
+            if (status < 200 || status >= 300) {
+                cb(null);
+                return;
+            }
+            cb(parseCloudDocument(text || '{"states":[]}'));
+        });
+    }
+
+    function githubGetCloud(cb) {
+        if (!resolvedGithubPat()) {
+            cb(null);
+            return;
+        }
+        gmXhr(
+            'GET',
+            githubContentsApiUrl() + '?ref=' + encodeURIComponent(resolvedCloudBranch()),
+            githubApiHeaders(),
+            null,
+            function (status, text) {
+                if (status === 404) {
+                    cb(cloudDocFor([]));
+                    return;
+                }
+                if (status < 200 || status >= 300) {
+                    cb(null);
+                    return;
+                }
+                var meta = safeJsonParse(text, null);
+                if (!meta) {
+                    cb(null);
+                    return;
+                }
+                cb(parseCloudDocument(decodeGithubFileContent(meta.content || '')));
+            }
+        );
+    }
+
+    function fetchCloudStates(cb) {
+        rawGithubGetCloud(function (doc) {
+            if (doc) {
+                cb(doc);
+                return;
+            }
+            githubGetCloud(cb);
+        });
+    }
+
+    function dispatchCloudDoc(doc, cb) {
+        if (!resolvedTeamKey()) {
+            cb(false, 'Set worksheetStateTeamKey or wallOfFameTeamKey in DonkeyCODE prefs.');
+            return;
+        }
+        if (!resolvedGithubPat()) {
+            cb(false, 'Set donkeycode_github_pat in DonkeyCODE prefs so repository_dispatch can run.');
+            return;
+        }
+        var headers = githubApiHeaders();
+        headers['Content-Type'] = 'application/json';
+        var body = {
+            event_type: CLOUD_EVENT_TYPE,
+            client_payload: {
+                team_key: resolvedTeamKey(),
+                document: cloudDocFor(doc.states || []),
+                path: resolvedCloudPath()
+            }
+        };
+        var url =
+            'https://api.github.com/repos/' +
+            encodeURIComponent(resolvedCloudOwner()) +
+            '/' +
+            encodeURIComponent(resolvedCloudRepo()) +
+            '/dispatches';
+        gmXhr('POST', url, headers, body, function (status, text) {
+            if (status === 204) {
+                cb(true, null);
+                return;
+            }
+            cb(false, 'Cloud save dispatch failed: HTTP ' + status + (text ? ' ' + text.slice(0, 240) : ''));
+        });
+    }
+
+    function saveCurrentStateToCloud() {
+        var state = collectWorksheetState();
+        if (!state.items.length) {
+            toast('No visible tails or N/A line numbers found to save to cloud.', true);
+            return;
+        }
+        var folder = activeDonkeyCodeFolder();
+        var name = window.prompt('Name this cloud worksheet state:', defaultStateName());
+        if (name == null) {
+            return;
+        }
+        name = trimText(name);
+        if (!name) {
+            toast('Cloud state name is required.', true);
+            return;
+        }
+        if (!window.confirm('Save "' + name + '" to shared cloud states for folder "' + folder + '"?')) {
+            return;
+        }
+        state.id = stateId();
+        state.name = name;
+        state.folder = folder;
+        state.savedAt = nowIso();
+        state.updatedAt = state.savedAt;
+        state.expiresAt = expiresAtFor(state.savedAt);
+        toast('Loading cloud states before save...', false);
+        fetchCloudStates(function (doc) {
+            if (!doc) {
+                toast('Could not load cloud states. Check GitHub permissions/host access.', true);
+                return;
+            }
+            var states = (doc.states || []).filter(function (st) {
+                return st && st.id !== state.id && !isExpiredState(st);
+            });
+            states.unshift(normalizeCloudState(state));
+            dispatchCloudDoc(cloudDocFor(states), function (ok, err) {
+                if (!ok) {
+                    toast(err || 'Cloud save failed.', true);
+                    return;
+                }
+                toast('Cloud save requested for "' + name + '". It may take a moment to appear.', false);
+                refreshCloudRows();
+            });
+        });
+    }
+
+    function refreshCloudRows() {
+        if (!cloudRowsHost) {
+            return;
+        }
+        cloudRowsHost.textContent = 'Loading cloud states...';
+        fetchCloudStates(function (doc) {
+            if (!cloudRowsHost) {
+                return;
+            }
+            cloudRowsHost.textContent = '';
+            if (!doc) {
+                cloudRowsHost.textContent = 'Could not load cloud states. Check DonkeyCODE host access/PAT or wait for the workflow file to exist.';
+                return;
+            }
+            var folder = activeDonkeyCodeFolder();
+            var states = (doc.states || []).filter(function (st) {
+                return st && !isExpiredState(st);
+            });
+            states.sort(function (a, b) {
+                return String(b.savedAt || b.updatedAt || '').localeCompare(String(a.savedAt || a.updatedAt || ''));
+            });
+            if (!states.length) {
+                cloudRowsHost.textContent = 'No unexpired cloud states found.';
+                return;
+            }
+            var sameFolder = states.filter(function (st) {
+                return trimText(st.folder) === folder;
+            });
+            var list = sameFolder.concat(
+                states.filter(function (st) {
+                    return trimText(st.folder) !== folder;
+                })
+            );
+            for (var i = 0; i < list.length; i++) {
+                cloudRowsHost.appendChild(buildCloudStateRow(list[i], folder));
+            }
+        });
+    }
+
+    function buildCloudStateRow(state, activeFolder) {
+        var row = document.createElement('div');
+        row.className = 'dc-wss-row';
+        var info = document.createElement('div');
+        var name = document.createElement('div');
+        name.className = 'dc-wss-name';
+        name.textContent = state.name || '(unnamed)';
+        var meta = document.createElement('div');
+        meta.className = 'dc-wss-meta';
+        meta.textContent =
+            'Folder ' +
+            (state.folder || 'Default') +
+            (state.folder === activeFolder ? ' (current)' : '') +
+            ' - ' +
+            itemSummary(state.items) +
+            ' - saved ' +
+            formatDate(state.savedAt || state.updatedAt || state.capturedAt) +
+            ' - ' +
+            formatExpiresLabel(state.expiresAt);
+        info.appendChild(name);
+        info.appendChild(meta);
+
+        var recall = document.createElement('button');
+        recall.type = 'button';
+        recall.textContent = 'Recall';
+        recall.addEventListener('click', function () {
+            closeModal();
+            applyStateToWorksheet(state, 'cloud state "' + (state.name || '(unnamed)') + '"');
+        });
+
+        var spacer = document.createElement('span');
+        row.appendChild(info);
+        row.appendChild(recall);
+        row.appendChild(spacer);
+        return row;
+    }
+
+    function openCloudDialog() {
+        closeModal();
+        var overlay = document.createElement('div');
+        overlay.setAttribute(MODAL_ATTR, '1');
+        overlay.addEventListener('click', function (ev) {
+            if (ev.target === overlay) {
+                closeModal();
+            }
+        });
+        var panel = document.createElement('div');
+        panel.className = 'dc-wss-panel';
+        panel.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+        });
+        var head = document.createElement('div');
+        head.className = 'dc-wss-head';
+        var title = document.createElement('div');
+        title.textContent = 'Cloud worksheet states';
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = 'Close';
+        close.addEventListener('click', closeModal);
+        head.appendChild(title);
+        head.appendChild(close);
+
+        var body = document.createElement('div');
+        body.className = 'dc-wss-body';
+        var note = document.createElement('div');
+        note.className = 'dc-wss-note';
+        note.textContent =
+            'Current DonkeyCODE folder: ' +
+            activeDonkeyCodeFolder() +
+            '. Cloud saves are shared with all users and expire after 4 hours.';
+        var actions = document.createElement('div');
+        actions.className = 'dc-wss-actions';
+        var save = document.createElement('button');
+        save.type = 'button';
+        save.textContent = 'Save current to cloud';
+        save.addEventListener('click', saveCurrentStateToCloud);
+        var refresh = document.createElement('button');
+        refresh.type = 'button';
+        refresh.textContent = 'Refresh cloud list';
+        refresh.addEventListener('click', refreshCloudRows);
+        actions.appendChild(save);
+        actions.appendChild(refresh);
+        cloudRowsHost = document.createElement('div');
+        cloudRowsHost.className = 'dc-wss-cloud-rows';
+        body.appendChild(note);
+        body.appendChild(actions);
+        body.appendChild(cloudRowsHost);
+        panel.appendChild(head);
+        panel.appendChild(body);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+        refreshCloudRows();
     }
 
     function expiresAtFor(ts) {
@@ -382,6 +848,9 @@
             '#' +
             HOST_ID +
             ' button[data-dc-ws-quick]{background:#6b4a1f;}' +
+            '#' +
+            HOST_ID +
+            ' button[data-dc-ws-cloud]{background:#244b63;}' +
             '[' +
             MODAL_ATTR +
             ']{position:fixed;inset:0;z-index:10000040;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;}' +
@@ -395,6 +864,12 @@
             '[' +
             MODAL_ATTR +
             '] .dc-wss-body{padding:12px 14px;overflow:auto;display:flex;flex-direction:column;gap:8px;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-wss-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-wss-note{font-size:12px;color:#b9c4cf;background:#1b2028;border:1px solid #343f4a;border-radius:6px;padding:8px;}' +
             '[' +
             MODAL_ATTR +
             '] .dc-wss-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px;border:1px solid #3f4a56;border-radius:7px;background:#262c34;}' +
@@ -443,6 +918,7 @@
             host.id = HOST_ID;
             host.appendChild(makeButton('Save state', 'Save visible AC tails and N/A line fallbacks as a named state', '', saveCurrentState));
             host.appendChild(makeButton('Recall state', 'Recall one saved worksheet state', '', openRecallDialog));
+            host.appendChild(makeButton('Cloud states', 'Save or recall shared cloud worksheet states', 'data-dc-ws-cloud', openCloudDialog));
             host.appendChild(makeButton('Quick reload', 'Temporarily save current state, hard reload this page, then restore it', 'data-dc-ws-quick', quickReload));
         }
         var anchor = findMountAnchor();
@@ -556,6 +1032,7 @@
                 m.remove();
             } catch (e) {}
         }
+        cloudRowsHost = null;
     }
 
     function openRecallDialog() {
