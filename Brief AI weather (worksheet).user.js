@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.1.3
+// @version      0.1.4
 // @description  Worksheet: regional weather brief (METAR-based) with optional free-tier Gemini; button left of WS state, right of WX.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/*
@@ -543,7 +543,7 @@
         st.textContent =
             '#' +
             HOST_ID +
-            '{display:inline-flex;align-items:stretch;margin-left:4px;vertical-align:middle;}' +
+            '{display:inline-flex;align-items:stretch;margin-left:0;vertical-align:middle;}' +
             '[' +
             BTN_ATTR +
             ']{font:600 13px system-ui,Segoe UI,sans-serif;border:none;border-radius:4px;box-sizing:border-box;' +
@@ -705,6 +705,51 @@
         return sorted && sorted.closest ? sorted.closest('.fields') : null;
     }
 
+    function orderWsbInHelper(helper) {
+        if (!helper) {
+            return;
+        }
+        var wxn = helper.querySelector('[data-dc-metar-watch-btn="1"]');
+        var br = document.getElementById(HOST_ID);
+        var st = document.getElementById(STATE_HOST_ID);
+        var i;
+        var list = [wxn, br, st];
+        for (i = 0; i < list.length; i++) {
+            var n = list[i];
+            if (n && n.parentNode === helper) {
+                try {
+                    helper.appendChild(n);
+                } catch (e) {}
+            }
+        }
+    }
+
+    function positionWorksheetHelperToRowEnd(fields, helper) {
+        if (!fields || !helper) {
+            return;
+        }
+        try {
+            fields.appendChild(helper);
+        } catch (e) {}
+        try {
+            helper.style.display = 'inline-flex';
+            helper.style.alignItems = 'stretch';
+            helper.style.gap = '4px';
+            helper.style.marginLeft = 'auto';
+            helper.style.flexShrink = '0';
+        } catch (e2) {}
+        try {
+            if (
+                window.getComputedStyle(fields).display !== 'flex' &&
+                window.getComputedStyle(fields).display !== 'inline-flex'
+            ) {
+                fields.style.display = 'flex';
+                fields.style.flexWrap = 'wrap';
+                fields.style.alignItems = 'center';
+            }
+        } catch (e3) {}
+    }
+
     function getOrCreateWorksheetHelperField() {
         var fields = findWorksheetFieldsRow();
         if (!fields) {
@@ -712,6 +757,7 @@
         }
         var helper = fields.querySelector('[data-dc-worksheet-helper-buttons="1"]');
         if (helper) {
+            positionWorksheetHelperToRowEnd(fields, helper);
             return helper;
         }
         helper = document.createElement('div');
@@ -720,21 +766,8 @@
         helper.style.display = 'inline-flex';
         helper.style.alignItems = 'stretch';
         helper.style.gap = '4px';
-        var clearButton = null;
-        var buttons = fields.querySelectorAll('button');
-        var i;
-        for (i = 0; i < buttons.length; i++) {
-            if (/^Clear WS$/i.test(textLabel(buttons[i]))) {
-                clearButton = buttons[i];
-                break;
-            }
-        }
-        var clearField = clearButton && clearButton.closest ? clearButton.closest('.field') : null;
-        if (clearField && clearField.parentNode === fields) {
-            fields.insertBefore(helper, clearField.nextSibling);
-        } else {
-            fields.appendChild(helper);
-        }
+        fields.appendChild(helper);
+        positionWorksheetHelperToRowEnd(fields, helper);
         return helper;
     }
 
@@ -846,6 +879,7 @@
                     helper.appendChild(host);
                 } catch (e3) {}
             }
+            orderWsbInHelper(helper);
             host.querySelectorAll('[' + BTN_ATTR + ']').forEach(function (b) {
                 b.style.minHeight = '36px';
                 b.style.height = 'auto';
