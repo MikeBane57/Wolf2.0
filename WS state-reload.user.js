@@ -810,6 +810,68 @@
         };
     }
 
+
+    function textLabel(el) {
+        return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function findWorksheetFieldsRow() {
+        var buttons = document.querySelectorAll('button');
+        var i;
+        for (i = 0; i < buttons.length; i++) {
+            if (/^Clear WS$/i.test(textLabel(buttons[i]))) {
+                var fields = buttons[i].closest && buttons[i].closest('.fields');
+                if (fields) {
+                    return fields;
+                }
+            }
+        }
+        var sorted = document.querySelector('div[name="sortedBy"]');
+        return sorted && sorted.closest ? sorted.closest('.fields') : null;
+    }
+
+    function getOrCreateWorksheetHelperField() {
+        var fields = findWorksheetFieldsRow();
+        if (!fields) {
+            return null;
+        }
+        var helper = fields.querySelector('[data-dc-worksheet-helper-buttons="1"]');
+        if (helper) {
+            return helper;
+        }
+        helper = document.createElement('div');
+        helper.className = 'field';
+        helper.setAttribute('data-dc-worksheet-helper-buttons', '1');
+        helper.style.display = 'inline-flex';
+        helper.style.alignItems = 'stretch';
+        helper.style.gap = '4px';
+        var clearButton = null;
+        var buttons = fields.querySelectorAll('button');
+        var i;
+        for (i = 0; i < buttons.length; i++) {
+            if (/^Clear WS$/i.test(textLabel(buttons[i]))) {
+                clearButton = buttons[i];
+                break;
+            }
+        }
+        var clearField = clearButton && clearButton.closest ? clearButton.closest('.field') : null;
+        if (clearField && clearField.parentNode === fields) {
+            fields.insertBefore(helper, clearField.nextSibling);
+        } else {
+            fields.appendChild(helper);
+        }
+        return helper;
+    }
+
+    function removeEmptyWorksheetHelperField() {
+        var helper = document.querySelector('[data-dc-worksheet-helper-buttons="1"]');
+        if (helper && !helper.querySelector('button,#' + HOST_ID)) {
+            try {
+                helper.remove();
+            } catch (e) {}
+        }
+    }
+
     function findGmtClockElement() {
         var scopes = [];
         var h = document.querySelector('header');
@@ -862,7 +924,7 @@
         st.textContent =
             '#' +
             HOST_ID +
-            '{display:inline-flex;align-items:stretch;gap:4px;margin-left:8px;vertical-align:middle;}' +
+            '{display:inline-flex;align-items:stretch;gap:4px;margin-left:0;vertical-align:middle;}' +
             '#' +
             HOST_ID +
             ' button{font:600 14px system-ui,Segoe UI,sans-serif;border:none;border-radius:4px;box-sizing:border-box;' +
@@ -946,8 +1008,22 @@
             host.appendChild(makeButton('Load worksheet', 'Recall a local or cloud worksheet state', 'data-dc-ws-load', openLoadDialog));
             host.appendChild(makeButton('Quick reload', 'Temporarily save current state, hard reload this page, then restore it', 'data-dc-ws-quick', quickReload));
         }
-        var anchor = findMountAnchor();
-        if (anchor && anchor.parentNode) {
+        var helper = getOrCreateWorksheetHelperField();
+        var anchor = helper ? null : findMountAnchor();
+        if (helper) {
+            host.style.position = '';
+            host.style.right = '';
+            host.style.top = '';
+            host.style.zIndex = '';
+            if (host.parentNode !== helper) {
+                helper.appendChild(host);
+            }
+            host.querySelectorAll('button').forEach(function (b) {
+                b.style.minHeight = '36px';
+                b.style.height = 'auto';
+                b.style.alignSelf = 'stretch';
+            });
+        } else if (anchor && anchor.parentNode) {
             var parent = anchor.parentNode;
             host.style.position = '';
             host.style.right = '';
@@ -1452,6 +1528,7 @@
             if (style) {
                 style.remove();
             }
+            removeEmptyWorksheetHelperField();
         } catch (e) {}
         window.__wsStateReloadCleanup = undefined;
         window.__myScriptCleanup = undefined;

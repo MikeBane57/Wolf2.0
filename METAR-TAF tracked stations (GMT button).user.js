@@ -5031,6 +5031,80 @@
         } catch (e2) {}
         btn = null;
         badge = null;
+        removeEmptyWorksheetHelperField();
+    }
+
+
+    function isWorksheetWidgetPage() {
+        try {
+            return String(location.pathname || '').indexOf('/widgets/worksheet') === 0;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function textLabel(el) {
+        return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function findWorksheetFieldsRow() {
+        if (!isWorksheetWidgetPage()) {
+            return null;
+        }
+        var buttons = document.querySelectorAll('button');
+        var i;
+        for (i = 0; i < buttons.length; i++) {
+            if (/^Clear WS$/i.test(textLabel(buttons[i]))) {
+                var fields = buttons[i].closest && buttons[i].closest('.fields');
+                if (fields) {
+                    return fields;
+                }
+            }
+        }
+        var sorted = document.querySelector('div[name="sortedBy"]');
+        return sorted && sorted.closest ? sorted.closest('.fields') : null;
+    }
+
+    function getOrCreateWorksheetHelperField() {
+        var fields = findWorksheetFieldsRow();
+        if (!fields) {
+            return null;
+        }
+        var helper = fields.querySelector('[data-dc-worksheet-helper-buttons="1"]');
+        if (helper) {
+            return helper;
+        }
+        helper = document.createElement('div');
+        helper.className = 'field';
+        helper.setAttribute('data-dc-worksheet-helper-buttons', '1');
+        helper.style.display = 'inline-flex';
+        helper.style.alignItems = 'stretch';
+        helper.style.gap = '4px';
+        var clearButton = null;
+        var buttons = fields.querySelectorAll('button');
+        var i;
+        for (i = 0; i < buttons.length; i++) {
+            if (/^Clear WS$/i.test(textLabel(buttons[i]))) {
+                clearButton = buttons[i];
+                break;
+            }
+        }
+        var clearField = clearButton && clearButton.closest ? clearButton.closest('.field') : null;
+        if (clearField && clearField.parentNode === fields) {
+            fields.insertBefore(helper, clearField.nextSibling);
+        } else {
+            fields.appendChild(helper);
+        }
+        return helper;
+    }
+
+    function removeEmptyWorksheetHelperField() {
+        var helper = document.querySelector('[data-dc-worksheet-helper-buttons="1"]');
+        if (helper && !helper.querySelector('button,[data-dc-ws-state-reload-host],#dc-ws-state-reload-host')) {
+            try {
+                helper.remove();
+            } catch (e) {}
+        }
     }
 
     function findGmtClockElement() {
@@ -5115,8 +5189,9 @@
         }
         dedupeWxButtonNodes();
 
-        var anchor = findGmtClockElement();
-        var host = anchor && anchor.parentElement ? anchor.parentElement : document.body;
+        var worksheetHelper = getOrCreateWorksheetHelperField();
+        var anchor = worksheetHelper ? null : findGmtClockElement();
+        var host = worksheetHelper || (anchor && anchor.parentElement ? anchor.parentElement : document.body);
         if (!btn) {
             btn = document.createElement('button');
             btn.type = 'button';
@@ -5167,7 +5242,15 @@
                 openModal();
             });
         }
-        if (anchor && anchor.parentNode) {
+        if (worksheetHelper) {
+            btn.style.marginLeft = '0';
+            btn.style.minHeight = '36px';
+            btn.style.height = 'auto';
+            btn.style.alignSelf = 'stretch';
+            if (btn.parentNode !== worksheetHelper) {
+                worksheetHelper.appendChild(btn);
+            }
+        } else if (anchor && anchor.parentNode) {
             if (btn.parentNode !== anchor.parentNode || btn.previousSibling !== anchor) {
                 anchor.parentNode.insertBefore(btn, anchor.nextSibling);
             }
@@ -5196,6 +5279,7 @@
                 } catch (e3) {}
             }
         } else {
+            btn.style.marginLeft = '8px';
             btn.style.minHeight = '';
             btn.style.maxHeight = '50px';
             btn.style.alignSelf = '';
