@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.1.4
+// @version      0.1.5
 // @description  Worksheet: save named AC tail/line states, recall them later, quick reload/restore, and optionally share cloud states.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
@@ -34,6 +34,8 @@
     var mountObserver = null;
     var mountRaf = 0;
     var restoreTimer = null;
+    var onWsToolbarDocClick = null;
+    var docClickCaptureBound = false;
     var activeApplyTimer = null;
     var cloudRowsHost = null;
     var localRowsHost = null;
@@ -1012,31 +1014,69 @@
         document.head.appendChild(st);
     }
 
-    function makeButton(label, title, attrName, onClick) {
+    /**
+     * DonkeyCODE can surface clicks after React/embedded handlers. Document capture runs first.
+     * data-dc-ws-action: save | load | quick
+     */
+    function makeButton(label, title, action) {
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.textContent = label;
         btn.title = title;
-        if (attrName) {
-            btn.setAttribute(attrName, '1');
+        btn.setAttribute('data-dc-ws-action', String(action));
+        if (action === 'load') {
+            btn.setAttribute('data-dc-ws-load', '1');
+        } else if (action === 'quick') {
+            btn.setAttribute('data-dc-ws-quick', '1');
+        } else {
+            btn.setAttribute('data-dc-ws-save', '1');
         }
-        function onBtnClick(ev) {
+        return btn;
+    }
+
+    function ensureWsStateDocumentClickCapture() {
+        if (docClickCaptureBound) {
+            return;
+        }
+        onWsToolbarDocClick = function (ev) {
+            if (!isWorksheetPage()) {
+                return;
+            }
+            var t = ev.target;
+            if (!t) {
+                return;
+            }
+            if (t.nodeType !== 1) {
+                t = t.parentElement;
+            }
+            if (!t || !t.closest) {
+                return;
+            }
+            var h = t.closest('#' + HOST_ID);
+            if (!h) {
+                return;
+            }
+            var btn = t.tagName === 'BUTTON' ? t : t.closest('button');
+            if (!btn || !h.contains(btn)) {
+                return;
+            }
             ev.preventDefault();
             ev.stopPropagation();
             ev.stopImmediatePropagation();
-            onClick();
-        }
-        function onBtnDown(ev) {
-            if (ev.button !== 0) {
-                return;
+            var a = (btn.getAttribute('data-dc-ws-action') || '').toLowerCase();
+            if (a === 'load') {
+                openLoadDialog();
+            } else if (a === 'quick') {
+                quickReload();
+            } else {
+                saveCurrentState();
             }
-            ev.stopPropagation();
-            ev.stopImmediatePropagation();
-        }
-        btn.addEventListener('click', onBtnClick, true);
-        btn.addEventListener('mousedown', onBtnDown, true);
-        btn.addEventListener('pointerdown', onBtnDown, true);
-        return btn;
+        };
+        document.addEventListener('click', onWsToolbarDocClick, true);
+        try {
+            window.addEventListener('click', onWsToolbarDocClick, true);
+        } catch (e) {}
+        docClickCaptureBound = true;
     }
 
     function mountControls() {
@@ -1048,10 +1088,25 @@
         if (!host) {
             host = document.createElement('span');
             host.id = HOST_ID;
-            host.appendChild(makeButton('SAVE WS', 'Save visible AC tails and N/A line fallbacks', '', saveCurrentState));
-            host.appendChild(makeButton('Load worksheet', 'Recall a local or cloud worksheet state', 'data-dc-ws-load', openLoadDialog));
-            host.appendChild(makeButton('Quick reload', 'Temporarily save current state, hard reload this page, then restore it', 'data-dc-ws-quick', quickReload));
+            host.appendChild(
+                makeButton('SAVE WS', 'Save visible AC tails and N/A line fallbacks', 'save')
+            );
+            host.appendChild(
+                makeButton(
+                    'Load worksheet',
+                    'Recall a local or cloud worksheet state',
+                    'load'
+                )
+            );
+            host.appendChild(
+                makeButton(
+                    'Quick reload',
+                    'Temporarily save current state, hard reload this page, then restore it',
+                    'quick'
+                )
+            );
         }
+        ensureWsStateDocumentClickCapture();
         var helper = getOrCreateWorksheetHelperField();
         var anchor = helper ? null : findMountAnchor();
         if (helper) {
@@ -1544,6 +1599,7 @@
         if (!isWorksheetPage()) {
             return;
         }
+        ensureWsStateDocumentClickCapture();
         readStateStore();
         mountControls();
         restoreAfterQuickReloadIfNeeded();
@@ -1558,6 +1614,16 @@
     }
 
     var dcWsStateCleanup = function () {
+        if (onWsToolbarDocClick) {
+            try {
+                document.removeEventListener('click', onWsToolbarDocClick, true);
+            } catch (e) {}
+            try {
+                window.removeEventListener('click', onWsToolbarDocClick, true);
+            } catch (e1) {}
+            onWsToolbarDocClick = null;
+        }
+        docClickCaptureBound = false;
         if (mountObserver) {
             mountObserver.disconnect();
             mountObserver = null;

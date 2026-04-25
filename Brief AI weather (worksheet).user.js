@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.1.7
+// @version      0.1.8
 // @description  Worksheet: regional weather brief (METAR-based) — optional LLM (Groq, Gemini, Ollama, etc.); button by WX/WS state.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/*
@@ -70,8 +70,8 @@
     var mountObserver = null;
     var modalOpen = false;
     var mountInterval = null;
-    var briefOpenClick = null;
-    var briefOpenDown = null;
+    var onBriefDocClick = null;
+    var briefDocClickBound = false;
 
     function isWorksheetPage() {
         try {
@@ -867,28 +867,52 @@
         }
     }
 
+    function ensureBriefDocumentClickCapture() {
+        if (briefDocClickBound) {
+            return;
+        }
+        onBriefDocClick = function (ev) {
+            if (!isWorksheetPage()) {
+                return;
+            }
+            var t = ev.target;
+            if (!t) {
+                return;
+            }
+            if (t.nodeType !== 1) {
+                t = t.parentElement;
+            }
+            if (!t || !t.closest) {
+                return;
+            }
+            var wbtn = t.closest('[' + BTN_ATTR + '="1"]');
+            if (!wbtn) {
+                return;
+            }
+            if (!wbtn.isConnected) {
+                return;
+            }
+            if (!document.getElementById(HOST_ID) || !document.getElementById(HOST_ID).contains(wbtn)) {
+                return;
+            }
+            ev.preventDefault();
+            ev.stopPropagation();
+            ev.stopImmediatePropagation();
+            startBrief();
+        };
+        document.addEventListener('click', onBriefDocClick, true);
+        try {
+            window.addEventListener('click', onBriefDocClick, true);
+        } catch (e) {}
+        briefDocClickBound = true;
+    }
+
     function makeButton() {
         var b = document.createElement('button');
         b.type = 'button';
         b.setAttribute(BTN_ATTR, '1');
         b.textContent = 'Brief AI';
         b.title = 'Regional weather brief (METAR + LLM: Groq/Gemini/Ollama in DonkeyCODE prefs)';
-        briefOpenClick = function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            startBrief();
-        };
-        briefOpenDown = function (e) {
-            if (e.button !== 0) {
-                return;
-            }
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-        };
-        b.addEventListener('click', briefOpenClick, true);
-        b.addEventListener('mousedown', briefOpenDown, true);
-        b.addEventListener('pointerdown', briefOpenDown, true);
         return b;
     }
 
@@ -1054,6 +1078,7 @@
         if (!isWorksheetPage() || !document.body) {
             return;
         }
+        ensureBriefDocumentClickCapture();
         ensureStyle();
         var host = document.getElementById(HOST_ID);
         if (!host) {
@@ -1190,6 +1215,9 @@
             });
         } catch (e) {}
     }
+    if (isWorksheetPage() && document.body) {
+        ensureBriefDocumentClickCapture();
+    }
     startObservers();
     mountObserver = new MutationObserver(function () {
         schedule();
@@ -1227,22 +1255,16 @@
             } catch (e2) {}
             mountObserver = null;
         }
-        var bEl = document.querySelector('[' + BTN_ATTR + '="1"]');
-        if (bEl) {
-            if (briefOpenClick) {
-                try {
-                    bEl.removeEventListener('click', briefOpenClick, true);
-                } catch (e3) {}
-            }
-            if (briefOpenDown) {
-                try {
-                    bEl.removeEventListener('mousedown', briefOpenDown, true);
-                    bEl.removeEventListener('pointerdown', briefOpenDown, true);
-                } catch (e4) {}
-            }
+        if (onBriefDocClick) {
+            try {
+                document.removeEventListener('click', onBriefDocClick, true);
+            } catch (e3) {}
+            try {
+                window.removeEventListener('click', onBriefDocClick, true);
+            } catch (e4) {}
+            onBriefDocClick = null;
         }
-        briefOpenClick = null;
-        briefOpenDown = null;
+        briefDocClickBound = false;
         var h = document.getElementById(HOST_ID);
         if (h && h.parentNode) {
             try {

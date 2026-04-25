@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.39
+// @version      2.0.40
 // @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -5001,8 +5001,8 @@
 
     var WX_BTN_ATTR = 'data-dc-metar-watch-btn';
     var TOOLBAR_STYLE_ID = 'dc-metar-ws-toolbar-ptr-style';
-    var wxOpenClickHandler = null;
-    var wxOpenDownHandler = null;
+    var onWxDocClick = null;
+    var wxDocClickBound = false;
 
     function isPaxConnectionsPage() {
         try {
@@ -5132,6 +5132,45 @@
         }
     }
 
+    function ensureWxDocumentClickCapture() {
+        if (wxDocClickBound) {
+            return;
+        }
+        onWxDocClick = function (ev) {
+            if (isPaxConnectionsPage()) {
+                return;
+            }
+            var t = ev.target;
+            if (!t) {
+                return;
+            }
+            if (t.nodeType !== 1) {
+                t = t.parentElement;
+            }
+            if (!t || !t.closest) {
+                return;
+            }
+            var wbtn = t.closest('[' + WX_BTN_ATTR + '="1"]');
+            if (!wbtn || wbtn.getAttribute('data-dc-mwx-disabled') === '1') {
+                return;
+            }
+            ev.preventDefault();
+            ev.stopPropagation();
+            ev.stopImmediatePropagation();
+            if (Notification && Notification.permission === 'default' && boolPref('metarWatchNotify', true)) {
+                try {
+                    Notification.requestPermission();
+                } catch (e) {}
+            }
+            openModal();
+        };
+        document.addEventListener('click', onWxDocClick, true);
+        try {
+            window.addEventListener('click', onWxDocClick, true);
+        } catch (e) {}
+        wxDocClickBound = true;
+    }
+
     function ensureMetarToolbarZStyle() {
         if (document.getElementById(TOOLBAR_STYLE_ID)) {
             return;
@@ -5232,6 +5271,7 @@
             detachMetarWatchWxButton();
             return;
         }
+        ensureWxDocumentClickCapture();
         ensureMetarToolbarZStyle();
         dedupeWxButtonNodes();
 
@@ -5279,25 +5319,6 @@
         }
         if (!btn.getAttribute('data-dc-wx-open-bound')) {
             btn.setAttribute('data-dc-wx-open-bound', '1');
-            wxOpenClickHandler = function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                if (Notification && Notification.permission === 'default' && boolPref('metarWatchNotify', true)) {
-                    Notification.requestPermission();
-                }
-                openModal();
-            };
-            wxOpenDownHandler = function (e) {
-                if (e.button !== 0) {
-                    return;
-                }
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-            };
-            btn.addEventListener('click', wxOpenClickHandler, true);
-            btn.addEventListener('mousedown', wxOpenDownHandler, true);
-            btn.addEventListener('pointerdown', wxOpenDownHandler, true);
         }
         if (worksheetHelper) {
             btn.style.marginLeft = '0';
@@ -6333,6 +6354,7 @@
     }
 
     function init() {
+        ensureWxDocumentClickCapture();
         buildModal();
         mountButtonNearClock();
         initCrossTabPollSync();
@@ -6401,20 +6423,17 @@
         alertRulesPerSectionWrap = null;
         alertRulesPerHost = null;
         try {
+            if (onWxDocClick) {
+                try {
+                    document.removeEventListener('click', onWxDocClick, true);
+                } catch (e) {}
+                try {
+                    window.removeEventListener('click', onWxDocClick, true);
+                } catch (e2) {}
+                onWxDocClick = null;
+            }
+            wxDocClickBound = false;
             if (btn) {
-                if (wxOpenClickHandler) {
-                    try {
-                        btn.removeEventListener('click', wxOpenClickHandler, true);
-                    } catch (e) {}
-                }
-                if (wxOpenDownHandler) {
-                    try {
-                        btn.removeEventListener('mousedown', wxOpenDownHandler, true);
-                        btn.removeEventListener('pointerdown', wxOpenDownHandler, true);
-                    } catch (e2) {}
-                }
-                wxOpenClickHandler = null;
-                wxOpenDownHandler = null;
                 btn.remove();
             }
         } catch (e) {}
