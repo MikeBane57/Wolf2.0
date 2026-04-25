@@ -64,6 +64,7 @@
     var mountRaf = 0;
     var mountObserver = null;
     var modalOpen = false;
+    var mountInterval = null;
 
     function isWorksheetPage() {
         try {
@@ -262,13 +263,13 @@
             w += 2;
         }
         var wxs = (rec.wxString || rec.wx_string || rec.weatherString || '') + '';
-        if (/TS|FZDZ|FZRA|PL|SN|GR|//|BR|UP/.test(wxs) || /TS|FZ|SN|GR|RA|DZ|SG/.test(raw)) {
+        if (/TS|FZDZ|FZRA|PL|SN|GR|\/\/|BR|UP/.test(wxs) || /TS|FZ|SN|GR|RA|DZ|SG/.test(raw)) {
             w += 2;
             if (/TS|VCTS|VCT/.test(wxs + raw)) {
                 reasons.push('thunder');
             }
         }
-        if (/+RA|+SN|+TS/.test(wxs) || /\+[A-Z]{2}/.test(raw)) {
+        if (/\+RA|\+SN|\+TS/.test(wxs) || /\+[A-Z]{2}/.test(raw)) {
             w += 1;
         }
         if (/LOW VIS|1\/4|1\/2 SM|M1\/2/.test(raw)) {
@@ -671,6 +672,68 @@
         return b;
     }
 
+
+    function textLabel(el) {
+        return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function findWorksheetFieldsRow() {
+        var buttons = document.querySelectorAll('button');
+        var i;
+        for (i = 0; i < buttons.length; i++) {
+            if (/^Clear WS$/i.test(textLabel(buttons[i]))) {
+                var fields = buttons[i].closest && buttons[i].closest('.fields');
+                if (fields) {
+                    return fields;
+                }
+            }
+        }
+        var sorted = document.querySelector('div[name="sortedBy"]');
+        return sorted && sorted.closest ? sorted.closest('.fields') : null;
+    }
+
+    function getOrCreateWorksheetHelperField() {
+        var fields = findWorksheetFieldsRow();
+        if (!fields) {
+            return null;
+        }
+        var helper = fields.querySelector('[data-dc-worksheet-helper-buttons="1"]');
+        if (helper) {
+            return helper;
+        }
+        helper = document.createElement('div');
+        helper.className = 'field';
+        helper.setAttribute('data-dc-worksheet-helper-buttons', '1');
+        helper.style.display = 'inline-flex';
+        helper.style.alignItems = 'stretch';
+        helper.style.gap = '4px';
+        var clearButton = null;
+        var buttons = fields.querySelectorAll('button');
+        var i;
+        for (i = 0; i < buttons.length; i++) {
+            if (/^Clear WS$/i.test(textLabel(buttons[i]))) {
+                clearButton = buttons[i];
+                break;
+            }
+        }
+        var clearField = clearButton && clearButton.closest ? clearButton.closest('.field') : null;
+        if (clearField && clearField.parentNode === fields) {
+            fields.insertBefore(helper, clearField.nextSibling);
+        } else {
+            fields.appendChild(helper);
+        }
+        return helper;
+    }
+
+    function removeEmptyWorksheetHelperField() {
+        var helper = document.querySelector('[data-dc-worksheet-helper-buttons="1"]');
+        if (helper && !helper.querySelector('button,#' + STATE_HOST_ID)) {
+            try {
+                helper.remove();
+            } catch (e) {}
+        }
+    }
+
     /**
      * Same logic as WS state-reload / METAR: header + toolbar scan, time + GMT/Zulu.
      */
@@ -719,6 +782,28 @@
             host.id = HOST_ID;
             host.appendChild(makeButton());
         }
+        var helper = getOrCreateWorksheetHelperField();
+        if (helper) {
+            host.style.cssText = '';
+            var stateHost = document.getElementById(STATE_HOST_ID);
+            try {
+                if (stateHost && stateHost.parentNode === helper && host.parentNode !== helper) {
+                    helper.insertBefore(host, stateHost);
+                } else if (host.parentNode !== helper) {
+                    helper.appendChild(host);
+                }
+            } catch (e) {
+                try {
+                    helper.appendChild(host);
+                } catch (e2) {}
+            }
+            host.querySelectorAll('[' + BTN_ATTR + ']').forEach(function (b) {
+                b.style.minHeight = '36px';
+                b.style.height = 'auto';
+                b.style.alignSelf = 'stretch';
+            });
+            return;
+        }
         var wx = document.querySelector(WX_SEL);
         var anchor = wx || findGmtClockElement();
         if (anchor && anchor.parentNode) {
@@ -726,19 +811,19 @@
             if (host.parentNode) {
                 try {
                     host.parentNode.removeChild(host);
-                } catch (e) {}
+                } catch (e3) {}
             }
-            var stateHost = document.getElementById(STATE_HOST_ID);
+            var stateHost2 = document.getElementById(STATE_HOST_ID);
             try {
-                if (stateHost && stateHost.parentNode === par) {
-                    par.insertBefore(host, stateHost);
+                if (stateHost2 && stateHost2.parentNode === par) {
+                    par.insertBefore(host, stateHost2);
                 } else {
                     par.insertBefore(host, anchor.nextSibling);
                 }
-            } catch (e2) {
+            } catch (e4) {
                 try {
                     par.appendChild(host);
-                } catch (e3) {}
+                } catch (e5) {}
             }
             try {
                 var row = anchor.parentElement;
@@ -763,13 +848,13 @@
                     b.style.height = 'auto';
                     b.style.alignSelf = 'stretch';
                 });
-            } catch (e4) {}
+            } catch (e6) {}
         } else {
             host.style.cssText =
                 'position:fixed!important;right:12px!important;top:12px!important;z-index:100001!important;';
             try {
                 document.body.appendChild(host);
-            } catch (e5) {}
+            } catch (e7) {}
         }
     }
 
@@ -814,7 +899,7 @@
     } catch (e) {
         mountObserver = null;
     }
-    setInterval(function () {
+    mountInterval = setInterval(function () {
         if (isWorksheetPage()) {
             mount();
         }
