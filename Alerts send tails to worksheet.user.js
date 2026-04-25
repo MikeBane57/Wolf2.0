@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Alerts: send tails to worksheet
 // @namespace    Wolf 2.0
-// @version      0.4.0
+// @version      0.4.1
 // @description  /alerts: rules (AND/OR), tail or flight, auto on table change or timer. BroadcastChannel to worksheet. localStorage + modal; optional DonkeyCODE defaults.
 // @match        https://opssuitemain.swacorp.com/alerts*
 // @match        https://opssuitemain.swacorp.com/*/alerts*
@@ -1068,13 +1068,40 @@
             })()
         );
         sc.appendChild(autoRow);
-        sc.appendChild(
+        var helpAuto = el(
+            'div',
+            null,
+            'font:12px!important;color:#7d8a97!important;margin:0!important;line-height:1.5!important;'
+        );
+        helpAuto.appendChild(
             el(
                 'p',
-                'Autorun re-sends when the set of values to post changes (per worksheet). It does not repeat the same post until the plan changes. Dedupe: inside one run, each tail and flight is sent once (no duplicate WN1234 lines). “Regex” is a pattern: use .* for “anything” (e.g. Misrouted.*HGR). “Exact” matches the whole field, ignoring upper/lower case. Multiple conditions on one rule use AND or OR. First rule that matches a row wins.',
-                'font:12px!important;color:#7d8a97!important;margin:0!important;'
+                'Autorun (table + timer): the script builds a send plan from the visible table. For each row, the first enabled rule that matches decides whether to send that row’s tail or flight numbers to that rule’s worksheet. Autorun runs when the table’s content changes (debounced) and/or on the interval you set.',
+                'margin:0 0 8px 0!important;'
             )
         );
+        helpAuto.appendChild(
+            el(
+                'p',
+                'No repeat sends on a steady table: after a send, the same set of tails and flights per worksheet is not posted again until the plan actually changes (rows update, filters change, or rules match differently). Run now also updates that state.',
+                'margin:0 0 8px 0!important;'
+            )
+        );
+        helpAuto.appendChild(
+            el(
+                'p',
+                'Match lines: add one or more; combine with all of (AND) or any of (OR). Contains = substring. Exact = whole field, case-insensitive. Regex = pattern (e.g. Misrouted.*HGR); invalid patterns never match.',
+                'margin:0 0 8px 0!important;'
+            )
+        );
+        helpAuto.appendChild(
+            el(
+                'p',
+                'Dedupe: in one run, each tail and each flight # is only queued once per destination worksheet. Stagger delays separate posts. Save writes this browser’s copy (local storage) and restarts autorun if enabled.',
+                'margin:0!important;'
+            )
+        );
+        sc.appendChild(helpAuto);
 
         var hRules = el(
             'div',
