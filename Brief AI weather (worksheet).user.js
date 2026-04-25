@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.1.1
+// @version      0.1.3
 // @description  Worksheet: regional weather brief (METAR-based) with optional free-tier Gemini; button left of WS state, right of WX.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
+// @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      aviationweather.gov
 // @connect      generativelanguage.googleapis.com
@@ -68,7 +69,19 @@
 
     function isWorksheetPage() {
         try {
-            return String(location.pathname || '').indexOf('/widgets/worksheet') === 0;
+            var p = String(location.pathname || '');
+            var h = String(location.hash || '');
+            var u = String(location.href || '');
+            if (p.indexOf('worksheet') >= 0) {
+                return true;
+            }
+            if (/worksheet/i.test(h)) {
+                return true;
+            }
+            if (/[?&/]worksheet/i.test(u)) {
+                return true;
+            }
+            return p.indexOf('/widgets/worksheet') === 0;
         } catch (e) {
             return false;
         }
@@ -771,6 +784,36 @@
         return null;
     }
 
+    function sizeHostToRow(host, refEl) {
+        if (!host || !refEl) {
+            return;
+        }
+        try {
+            var row = refEl.parentElement;
+            if (row) {
+                var cs = window.getComputedStyle(row);
+                if (cs && cs.display !== 'flex' && cs.display !== 'inline-flex') {
+                    row.style.display = 'flex';
+                    row.style.alignItems = 'stretch';
+                }
+            }
+            var rowH = Math.max(
+                (row && (row.offsetHeight || row.clientHeight)) || 0,
+                refEl.offsetHeight || 0,
+                refEl.clientHeight || 0
+            );
+            if (rowH < 24) {
+                rowH = 36;
+            }
+            rowH = Math.min(rowH, 50);
+            host.querySelectorAll('[' + BTN_ATTR + ']').forEach(function (b) {
+                b.style.minHeight = rowH + 'px';
+                b.style.height = 'auto';
+                b.style.alignSelf = 'stretch';
+            });
+        } catch (e) {}
+    }
+
     function mount() {
         if (!isWorksheetPage() || !document.body) {
             return;
@@ -782,20 +825,26 @@
             host.id = HOST_ID;
             host.appendChild(makeButton());
         }
+        if (host.parentNode) {
+            try {
+                host.parentNode.removeChild(host);
+            } catch (e) {}
+        }
+
         var helper = getOrCreateWorksheetHelperField();
         if (helper) {
             host.style.cssText = '';
-            var stateHost = document.getElementById(STATE_HOST_ID);
+            var sh1 = document.getElementById(STATE_HOST_ID);
             try {
-                if (stateHost && stateHost.parentNode === helper && host.parentNode !== helper) {
-                    helper.insertBefore(host, stateHost);
-                } else if (host.parentNode !== helper) {
+                if (sh1 && sh1.parentNode === helper) {
+                    helper.insertBefore(host, sh1);
+                } else {
                     helper.appendChild(host);
                 }
-            } catch (e) {
+            } catch (e2) {
                 try {
                     helper.appendChild(host);
-                } catch (e2) {}
+                } catch (e3) {}
             }
             host.querySelectorAll('[' + BTN_ATTR + ']').forEach(function (b) {
                 b.style.minHeight = '36px';
@@ -804,57 +853,44 @@
             });
             return;
         }
+
+        var stateHost = document.getElementById(STATE_HOST_ID);
+        if (stateHost && stateHost.parentNode) {
+            var par0 = stateHost.parentNode;
+            try {
+                par0.insertBefore(host, stateHost);
+            } catch (e4) {
+                try {
+                    par0.appendChild(host);
+                } catch (e5) {}
+            }
+            sizeHostToRow(host, stateHost);
+            return;
+        }
+
         var wx = document.querySelector(WX_SEL);
         var anchor = wx || findGmtClockElement();
         if (anchor && anchor.parentNode) {
             var par = anchor.parentNode;
-            if (host.parentNode) {
-                try {
-                    host.parentNode.removeChild(host);
-                } catch (e3) {}
-            }
-            var stateHost2 = document.getElementById(STATE_HOST_ID);
             try {
-                if (stateHost2 && stateHost2.parentNode === par) {
-                    par.insertBefore(host, stateHost2);
+                var sh2 = document.getElementById(STATE_HOST_ID);
+                if (sh2 && sh2.parentNode === par) {
+                    par.insertBefore(host, sh2);
                 } else {
                     par.insertBefore(host, anchor.nextSibling);
                 }
-            } catch (e4) {
+            } catch (e6) {
                 try {
                     par.appendChild(host);
-                } catch (e5) {}
+                } catch (e7) {}
             }
-            try {
-                var row = anchor.parentElement;
-                if (row) {
-                    var cs = window.getComputedStyle(row);
-                    if (cs && cs.display !== 'flex' && cs.display !== 'inline-flex') {
-                        row.style.display = 'flex';
-                        row.style.alignItems = 'stretch';
-                    }
-                }
-                var rowH = Math.max(
-                    (row && (row.offsetHeight || row.clientHeight)) || 0,
-                    anchor.offsetHeight || 0,
-                    anchor.clientHeight || 0
-                );
-                if (rowH < 24) {
-                    rowH = 36;
-                }
-                rowH = Math.min(rowH, 50);
-                host.querySelectorAll('[' + BTN_ATTR + ']').forEach(function (b) {
-                    b.style.minHeight = rowH + 'px';
-                    b.style.height = 'auto';
-                    b.style.alignSelf = 'stretch';
-                });
-            } catch (e6) {}
+            sizeHostToRow(host, anchor);
         } else {
             host.style.cssText =
-                'position:fixed!important;right:12px!important;top:12px!important;z-index:100001!important;';
+                'position:fixed!important;right:12px!important;top:48px!important;z-index:2147483000!important;';
             try {
                 document.body.appendChild(host);
-            } catch (e7) {}
+            } catch (e8) {}
         }
     }
 
@@ -874,18 +910,48 @@
         }
         if (typeof window.requestIdleCallback === 'function') {
             requestIdleCallback(function () {
-                schedule();
+                if (isWorksheetPage()) {
+                    schedule();
+                }
             });
         } else {
-            setTimeout(schedule, 0);
+            setTimeout(function () {
+                if (isWorksheetPage()) {
+                    schedule();
+                }
+            }, 0);
         }
-        setTimeout(schedule, 400);
-        setTimeout(schedule, 2000);
+        setTimeout(function () {
+            if (isWorksheetPage()) {
+                schedule();
+            }
+        }, 400);
+        setTimeout(function () {
+            if (isWorksheetPage()) {
+                schedule();
+            }
+        }, 2000);
+        setTimeout(function () {
+            if (isWorksheetPage()) {
+                mount();
+            }
+        }, 5000);
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', function () {
-                setTimeout(schedule, 0);
+                setTimeout(function () {
+                    if (isWorksheetPage()) {
+                        schedule();
+                    }
+                }, 0);
             });
         }
+        try {
+            window.addEventListener('load', function () {
+                if (isWorksheetPage()) {
+                    schedule();
+                }
+            });
+        } catch (e) {}
     }
     startObservers();
     mountObserver = new MutationObserver(function () {
@@ -906,6 +972,12 @@
     }, 2000);
 
     window.__myScriptCleanup = function () {
+        if (mountInterval) {
+            try {
+                clearInterval(mountInterval);
+            } catch (e) {}
+            mountInterval = null;
+        }
         if (mountObserver) {
             try {
                 mountObserver.disconnect();
