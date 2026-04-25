@@ -1414,7 +1414,7 @@
         init();
     }
 
-    window.__wsStateReloadCleanup = function () {
+    window.__myScriptCleanup = function () {
         if (mountObserver) {
             mountObserver.disconnect();
             mountObserver = null;
@@ -1443,5 +1443,7 @@
             }
         } catch (e) {}
         window.__wsStateReloadCleanup = undefined;
+        window.__myScriptCleanup = undefined;
     };
+    window.__wsStateReloadCleanup = window.__myScriptCleanup;
 })();

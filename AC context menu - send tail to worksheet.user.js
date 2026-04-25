@@ -23,6 +23,7 @@
     var lastExtractedTail = '';
     var initTimer = null;
     var onCtx = null;
+    var hideTimers = [];
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -429,6 +430,7 @@
         popup.setAttribute('data-dc-ac-tail-ws-wired', '1');
 
         var wrap = document.createElement('div');
+        wrap.setAttribute('data-dc-ac-tail-ws-wrap', '1');
         wrap.style.cssText =
             (opts.standalone
                 ? 'border-top:1px solid rgba(34,36,38,.12)!important;margin-top:.3em!important;padding-top:.2em!important;'
@@ -483,6 +485,7 @@
             hideTid = setTimeout(function () {
                 sub.style.setProperty('display', 'none', 'important');
             }, 220);
+            hideTimers.push(hideTid);
         }
         function loadAndFillSub() {
             if (listLoaded) {
@@ -690,5 +693,23 @@
             } catch (e) {}
             ch = null;
         }
+        while (hideTimers.length) {
+            try {
+                clearTimeout(hideTimers.pop());
+            } catch (e) {}
+        }
+        try {
+            document
+                .querySelectorAll('[data-dc-ac-tail-ws-wired]')
+                .forEach(function (popup) {
+                    popup.removeAttribute('data-dc-ac-tail-ws-wired');
+                });
+            document
+                .querySelectorAll('[data-dc-ac-tail-ws-wrap]')
+                .forEach(function (node) {
+                    node.remove();
+                });
+        } catch (e2) {}
+        window.__myScriptCleanup = undefined;
     };
 })();

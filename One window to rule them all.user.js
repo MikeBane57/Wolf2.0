@@ -237,4 +237,17 @@
     document.documentElement.appendChild(s);
     s.remove();
 
+    window.__myScriptCleanup = function() {
+        var cleanup = document.createElement('script');
+        cleanup.textContent = `
+            if (window.__myScriptCleanup) {
+                try { window.__myScriptCleanup(); } catch (e) {}
+                try { delete window.__myScriptCleanup; } catch (e2) { window.__myScriptCleanup = undefined; }
+            }
+        `;
+        document.documentElement.appendChild(cleanup);
+        cleanup.remove();
+        window.__myScriptCleanup = undefined;
+    };
+
 })();

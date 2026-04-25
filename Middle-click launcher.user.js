@@ -27,6 +27,7 @@
     const REUSE_WINDOW_NAME = 'donkeycode_midclick_reuse';
 
     const puckHandlers = new WeakMap();
+    const boundPucks = new Set();
     const midIntervals = [];
     let observer = null;
     let initTimer = null;
@@ -1014,6 +1015,7 @@
         };
 
         puckHandlers.set(puck, onMid);
+        boundPucks.add(puck);
         puck.addEventListener('mousedown', onMid);
     }
 
@@ -1068,7 +1070,7 @@
                 clearInterval(midIntervals.pop());
             } catch (e) {}
         }
-        document.querySelectorAll('[data-mid-click-bound]').forEach(function(puck) {
+        boundPucks.forEach(function(puck) {
             const h = puckHandlers.get(puck);
             if (h) {
                 try {
@@ -1076,7 +1078,11 @@
                 } catch (e) {}
                 puckHandlers.delete(puck);
             }
-            delete puck.dataset.midClickBound;
+            try {
+                delete puck.dataset.midClickBound;
+            } catch (e2) {}
         });
+        boundPucks.clear();
+        window.__myScriptCleanup = undefined;
     };
 })();
