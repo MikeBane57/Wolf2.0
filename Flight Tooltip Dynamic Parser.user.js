@@ -12,6 +12,8 @@
 
 
 (function() {
+    const touchedTooltips = new WeakMap();
+    const touchedTooltipNodes = [];
 
     function extractInfo(text) {
         const info = {};
@@ -70,6 +72,13 @@
 
     function rebuildTooltip(tooltip) {
         if (!tooltip) return;
+        if (!touchedTooltips.has(tooltip)) {
+            touchedTooltips.set(tooltip, {
+                html: tooltip.innerHTML,
+                style: tooltip.getAttribute('style')
+            });
+            touchedTooltipNodes.push(tooltip);
+        }
 
         // --- Warnings (unique) ---
         const warningNodes = Array.from(tooltip.querySelectorAll('div i.warning.sign.icon'))
@@ -198,5 +207,23 @@
 
     window.__myScriptCleanup = function() {
         observer.disconnect();
+        touchedTooltipNodes.forEach(function(tooltip) {
+            if (!tooltip) {
+                return;
+            }
+            const orig = touchedTooltips.get(tooltip);
+            if (!orig) {
+                return;
+            }
+            try {
+                tooltip.innerHTML = orig.html;
+                if (orig.style === null || orig.style === undefined) {
+                    tooltip.removeAttribute('style');
+                } else {
+                    tooltip.setAttribute('style', orig.style);
+                }
+            } catch (e) {}
+        });
+        window.__myScriptCleanup = undefined;
     };
 })();

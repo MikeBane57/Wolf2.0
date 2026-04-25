@@ -28,6 +28,8 @@ const PREF_KEYS = {
 };
 
 const STORAGE_KEY = "opsPanelSettings";
+const pendingTimers = [];
+const removedRecords = [];
 
 function getPref(key, def) {
     if (typeof donkeycodeGetPref !== 'function') {
@@ -214,6 +216,7 @@ function addControls(group){
                     parent:flexItem.parentNode,
                     next:flexItem.nextSibling
                 });
+                removedRecords.push(removed[removed.length - 1]);
                 flexItem.remove();
             });
             btn.style.background="#800";
@@ -262,13 +265,14 @@ function applySize(){
     hSlider.oninput=applySize;
 
     // Apply saved on load
-    setTimeout(function() {
+    const applySavedTimer = setTimeout(function() {
         if (saved[group.name] && saved[group.name].hidden) {
             btn.click();
         } else {
             applySize();
         }
     }, 1200);
+    pendingTimers.push(applySavedTimer);
 
     container.appendChild(btn);
     container.appendChild(wSlider);
@@ -304,9 +308,18 @@ const nukeObserver = new MutationObserver(nukeRow);
 nukeObserver.observe(document.body,{childList:true,subtree:true});
 
 window.__myScriptCleanup = function() {
+    while (pendingTimers.length) {
+        try { clearTimeout(pendingTimers.pop()); } catch (e) {}
+    }
     nukeObserver.disconnect();
     const tb = document.getElementById('ops-dashboard-power-controls-toolbar');
     if (tb) tb.remove();
+
+    while (removedRecords.length) {
+        const rec = removedRecords.pop();
+        if (!rec || !rec.el || rec.el.parentNode || !rec.parent) continue;
+        try { rec.parent.insertBefore(rec.el, rec.next || null); } catch (e) {}
+    }
 
     document.querySelectorAll('[data-ops-dash-nuke-touched]').forEach(function(el) {
         el.classList.add("middle", "aligned", "row", "_2co3koQ6lLI=", "css-bwiy4s");
