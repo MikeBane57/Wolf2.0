@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         One window to rule them all
 // @namespace    Wolf 2.0
-// @version      10.7
+// @version      10.8
 // @description  Position popup windows by URL; geometry from DonkeyCODE Pref (Scripts → gear) or defaults below.
 // @match        https://opssuitemain.swacorp.com/*
 // @run-at       document-start
@@ -65,14 +65,14 @@
         ];
     }
 
-    var RULES = buildRules();
+    var owtrtaWindowRules = buildRules();
 
     var s = document.createElement('script');
 
     s.textContent = `
         console.log("=== POPUP ROUTER ACTIVE (Reuse + Reload URL) ===");
 
-        const RULES = ${JSON.stringify(RULES)};
+        const RULES = ${JSON.stringify(owtrtaWindowRules)};
         const originalOpen = window.open;
 
         const windowRefs = {};
