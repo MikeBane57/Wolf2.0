@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.3.1
+// @version      0.3.2
 // @description  Worksheet: regional weather brief (METAR-based) — broad, conversational LLM brief; compose modal, stations-of-interest, optional LLM.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/*
@@ -862,7 +862,22 @@
             '] .dc-bai-brief-para{margin:0 0 0.5em;}' +
             '[' +
             MODAL_ATTR +
-            '] .dc-bai-body--brief h4.dc-bai-brief-title{margin:1.1em 0 0.35em;padding:0;}' +
+            '] .dc-bai-region{margin:0 0 10px;border:1px solid #3f4d5c;border-radius:8px;padding:10px 12px 12px;background:#141920;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-region-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-region .dc-bai-brief-title{margin:0;flex:1;min-width:0;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-copy-region{flex-shrink:0;font:600 11px system-ui,sans-serif;padding:4px 8px;border-radius:5px;cursor:pointer;border:1px solid #475569;background:#2a3444;color:#cbd5e1;align-self:flex-start;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-copy-region:hover{background:#3d4b5f;color:#e2e8f0;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-body--brief h4.dc-bai-brief-title{margin:0;}' +
             '[' +
             MODAL_ATTR +
             '] .dc-bai-body--brief h4.dc-bai-brief-title:first-child{margin-top:0;}' +
@@ -968,7 +983,7 @@
         var t = normalizeBriefTextForDisplay(plain);
         t = t.replace(/^\s+|\s+$/g, '');
         if (!t) {
-            return '<div class="dc-bai-body--brief" data-brief="1"></div>';
+            return '<div class="dc-bai-body--brief dc-bai-brief-bulk" data-brief="1"></div>';
         }
         var parts = t.split(/(?:\n\s*){2,}|\n(?=[\t ]*\*\*)/g);
         var out = [];
@@ -986,19 +1001,25 @@
                     .slice(m[0].length)
                     .replace(/^\n+|\n+$/g, '');
                 out.push(
+                    '<section class="dc-bai-region" data-dc-bai-brief-section="1">' +
+                    '<div class="dc-bai-region-head">' +
                     '<h4 class="dc-bai-brief-title"><em>' +
                     escHtml(m[1]) +
-                    '</em></h4><p class="dc-bai-brief-para">' +
+                    '</em></h4>' +
+                    '<button type="button" class="dc-bai-copy-region" data-dc-bai-action="copy-region" title="Copy this region" aria-label="Copy this section">Copy</button>' +
+                    '</div>' +
                     (rest
-                        ? escHtml(rest)
+                        ? '<p class="dc-bai-brief-para">' +
+                        escHtml(rest)
                             .split('\n')
-                            .join('<br />')
-                        : '') +
-                    '</p>'
+                            .join('<br />') +
+                        '</p>'
+                        : '<p class="dc-bai-brief-para"></p>') +
+                    '</section>'
                 );
             } else {
                 out.push(
-                    '<p class="dc-bai-brief-para">' +
+                    '<p class="dc-bai-brief-para dc-bai-brief-lead">' +
                     escHtml(b)
                         .split('\n')
                         .join('<br />') +
@@ -1015,7 +1036,88 @@
                 '</p>'
             );
         }
-        return '<div class="dc-bai-body--brief" data-brief="1">' + out.join('') + '</div>';
+        return (
+            '<div class="dc-bai-body--brief dc-bai-brief-bulk" data-brief="1">' + out.join('') + '</div>'
+        );
+    }
+
+    function copyTextToClipboard(text) {
+        var t = String(text == null ? '' : text);
+        t = t.replace(/^\s+|\s+$/g, '');
+        if (!t) {
+            return;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(t).catch(function () {});
+            return;
+        }
+        try {
+            var ta = document.createElement('textarea');
+            ta.value = t;
+            ta.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            try {
+                ta.remove();
+            } catch (e) {}
+        } catch (e2) {}
+    }
+
+    function plainTextForBriefRegionSection(sec) {
+        if (!sec) {
+            return '';
+        }
+        var t = sec.querySelector('.dc-bai-brief-title em');
+        var p = sec.querySelector('.dc-bai-brief-para');
+        var line = '**' + trim((t && t.textContent) || '') + '**';
+        if (p && p.textContent) {
+            line += '\n' + trim(p.textContent);
+        }
+        return line;
+    }
+
+    function briefPlainTextFromBulkBody(body) {
+        var root = body && body.querySelector('.dc-bai-brief-bulk');
+        if (!root) {
+            return (body && (body.innerText || body.textContent)) || '';
+        }
+        var segs = [];
+        var c;
+        var ch = root.children;
+        for (c = 0; c < ch.length; c++) {
+            var el = ch[c];
+            if (el.getAttribute('data-dc-bai-brief-section') === '1') {
+                segs.push(plainTextForBriefRegionSection(el));
+            } else if (el.classList && el.classList.contains('dc-bai-brief-para')) {
+                segs.push(trim((el && el.textContent) || ''));
+            }
+        }
+        return segs
+            .filter(function (s) { return s && s.length; })
+            .join('\n\n');
+    }
+
+    function wireRegionCopyButtons(body) {
+        if (!body) {
+            return;
+        }
+        [].forEach.call(
+            body.querySelectorAll('button.dc-bai-copy-region'),
+            function (btn) {
+                if (btn.getAttribute('data-dc-bai-copy-wired') === '1') {
+                    return;
+                }
+                btn.setAttribute('data-dc-bai-copy-wired', '1');
+                var sec = btn.closest && btn.closest('.dc-bai-region');
+                if (!sec) {
+                    return;
+                }
+                bindWorksheetToolbarButtonActivate(btn, function () {
+                    copyTextToClipboard(plainTextForBriefRegionSection(sec));
+                });
+            }
+        );
     }
 
     function addFooter(root) {
@@ -1023,22 +1125,26 @@
         if (!foot) {
             return;
         }
+        foot.setAttribute('data-bai-all-copy', '1');
         foot.innerHTML = '';
         var copy = document.createElement('button');
         copy.type = 'button';
-        copy.textContent = 'Copy';
+        copy.setAttribute('title', 'Copy entire brief');
+        copy.setAttribute('data-bai-all-copy', '1');
+        copy.textContent = 'Copy all';
         copy.addEventListener('click', function () {
             var body = root.querySelector('.dc-bai-body');
             if (!body) {
                 return;
             }
-            var t = (body.innerText && body.innerText.length
-                ? body.innerText
-                : body.textContent) || '';
-            t = t.replace(/^\s+|\s+$/g, '');
-            if (t && navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(t).catch(function () {});
+            var t = briefPlainTextFromBulkBody(body);
+            if (!t) {
+                t = (body.innerText && body.innerText.length
+                    ? body.innerText
+                    : body.textContent) || '';
+                t = t.replace(/Copy\s*$/gmi, '');
             }
+            copyTextToClipboard(t);
         });
         var cl = document.createElement('button');
         cl.type = 'button';
@@ -1141,6 +1247,7 @@
                             b.innerHTML = formatBriefBodyHtml(
                                 trim(text) || 'Empty brief.'
                             );
+                            wireRegionCopyButtons(b);
                         }
                         addFooter(root2);
                     },
