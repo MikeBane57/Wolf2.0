@@ -35,6 +35,7 @@
     var restoreTimer = null;
     var activeApplyTimer = null;
     var cloudRowsHost = null;
+    var localRowsHost = null;
 
     function isWorksheetPage() {
         try {
@@ -850,7 +851,7 @@
             ' button[data-dc-ws-quick]{background:#6b4a1f;}' +
             '#' +
             HOST_ID +
-            ' button[data-dc-ws-cloud]{background:#244b63;}' +
+            ' button[data-dc-ws-state]{background:#244b63;}' +
             '[' +
             MODAL_ATTR +
             ']{position:fixed;inset:0;z-index:10000040;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;}' +
@@ -916,9 +917,7 @@
         if (!host) {
             host = document.createElement('span');
             host.id = HOST_ID;
-            host.appendChild(makeButton('Save state', 'Save visible AC tails and N/A line fallbacks as a named state', '', saveCurrentState));
-            host.appendChild(makeButton('Recall state', 'Recall one saved worksheet state', '', openRecallDialog));
-            host.appendChild(makeButton('Cloud states', 'Save or recall shared cloud worksheet states', 'data-dc-ws-cloud', openCloudDialog));
+            host.appendChild(makeButton('WS state', 'Save or recall local/cloud worksheet states', 'data-dc-ws-state', openStateDialog));
             host.appendChild(makeButton('Quick reload', 'Temporarily save current state, hard reload this page, then restore it', 'data-dc-ws-quick', quickReload));
         }
         var anchor = findMountAnchor();
@@ -1033,6 +1032,7 @@
             } catch (e) {}
         }
         cloudRowsHost = null;
+        localRowsHost = null;
     }
 
     function openRecallDialog() {
@@ -1117,7 +1117,7 @@
                 return;
             }
             deleteState(state.id);
-            openRecallDialog();
+            refreshLocalRows();
         });
 
         row.appendChild(info);
@@ -1137,6 +1137,113 @@
         }
         store.states = next;
         writeStateStore(store);
+    }
+
+
+    function refreshLocalRows() {
+        if (!localRowsHost) {
+            return;
+        }
+        localRowsHost.textContent = '';
+        var store = readStateStore();
+        if (!store.states.length) {
+            localRowsHost.textContent = 'No local saved states yet.';
+            return;
+        }
+        for (var i = 0; i < store.states.length; i++) {
+            localRowsHost.appendChild(buildStateRow(store.states[i]));
+        }
+    }
+
+    function addSectionTitle(host, text) {
+        var title = document.createElement('div');
+        title.className = 'dc-wss-name';
+        title.textContent = text;
+        title.style.marginTop = '4px';
+        host.appendChild(title);
+    }
+
+    function openStateDialog() {
+        closeModal();
+        var overlay = document.createElement('div');
+        overlay.setAttribute(MODAL_ATTR, '1');
+        overlay.addEventListener('click', function (ev) {
+            if (ev.target === overlay) {
+                closeModal();
+            }
+        });
+
+        var panel = document.createElement('div');
+        panel.className = 'dc-wss-panel';
+        panel.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+        });
+
+        var head = document.createElement('div');
+        head.className = 'dc-wss-head';
+        var title = document.createElement('div');
+        title.textContent = 'Worksheet states';
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = 'Close';
+        close.addEventListener('click', closeModal);
+        head.appendChild(title);
+        head.appendChild(close);
+
+        var body = document.createElement('div');
+        body.className = 'dc-wss-body';
+
+        addSectionTitle(body, 'Local states');
+        var localNote = document.createElement('div');
+        localNote.className = 'dc-wss-note';
+        localNote.textContent = 'Local states stay in this browser only and expire after 4 hours.';
+        var localActions = document.createElement('div');
+        localActions.className = 'dc-wss-actions';
+        var saveLocal = document.createElement('button');
+        saveLocal.type = 'button';
+        saveLocal.textContent = 'Save current locally';
+        saveLocal.addEventListener('click', function () {
+            saveCurrentState();
+            refreshLocalRows();
+        });
+        localActions.appendChild(saveLocal);
+        localRowsHost = document.createElement('div');
+        localRowsHost.className = 'dc-wss-local-rows';
+        body.appendChild(localNote);
+        body.appendChild(localActions);
+        body.appendChild(localRowsHost);
+
+        addSectionTitle(body, 'Cloud states');
+        var cloudNote = document.createElement('div');
+        cloudNote.className = 'dc-wss-note';
+        cloudNote.textContent =
+            'Current DonkeyCODE folder: ' +
+            activeDonkeyCodeFolder() +
+            '. Cloud states are shared with all users and expire after 4 hours.';
+        var cloudActions = document.createElement('div');
+        cloudActions.className = 'dc-wss-actions';
+        var saveCloud = document.createElement('button');
+        saveCloud.type = 'button';
+        saveCloud.textContent = 'Save current to cloud';
+        saveCloud.addEventListener('click', saveCurrentStateToCloud);
+        var refreshCloud = document.createElement('button');
+        refreshCloud.type = 'button';
+        refreshCloud.textContent = 'Refresh cloud list';
+        refreshCloud.addEventListener('click', refreshCloudRows);
+        cloudActions.appendChild(saveCloud);
+        cloudActions.appendChild(refreshCloud);
+        cloudRowsHost = document.createElement('div');
+        cloudRowsHost.className = 'dc-wss-cloud-rows';
+        body.appendChild(cloudNote);
+        body.appendChild(cloudActions);
+        body.appendChild(cloudRowsHost);
+
+        panel.appendChild(head);
+        panel.appendChild(body);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+        refreshLocalRows();
+        refreshCloudRows();
     }
 
     function quickReload() {
