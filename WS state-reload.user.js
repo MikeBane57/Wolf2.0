@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.1.0
+// @version      0.1.1
 // @description  Worksheet: save named AC tail/line states, recall them later, quick reload/restore, and optionally share cloud states.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
@@ -23,6 +23,7 @@
     var SS_QUICK_STATE = 'dc_ws_state_reload_quick_state_v1';
     var SS_QUICK_RESTORE = 'dc_ws_state_reload_restore_after_reload_v1';
     var WX_BTN_SELECTOR = '[data-dc-metar-watch-btn="1"]';
+    var BRIEF_HOST_ID = 'dc-brief-ai-ws-host';
     var STATE_TTL_MS = 4 * 60 * 60 * 1000;
     var GITHUB_OWNER = 'MikeBane57';
     var GITHUB_REPO = 'Wolf2.0';
@@ -821,6 +822,10 @@
     }
 
     function findMountAnchor() {
+        var brief = document.getElementById(BRIEF_HOST_ID);
+        if (brief) {
+            return brief;
+        }
         var wx = document.querySelector(WX_BTN_SELECTOR);
         if (wx) {
             return wx;
