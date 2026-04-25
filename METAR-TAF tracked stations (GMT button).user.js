@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.36
+// @version      2.0.42
 // @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -2761,6 +2761,7 @@
     var selectedIata = null;
     var anchorRetryTimer = null;
     var mountScheduled = false;
+    var onToolbarClickDebug = null;
     var onDocKey = null;
     var refreshThisBtn = null;
     var refreshAllBtn = null;
@@ -5000,6 +5001,9 @@
     }
 
     var WX_BTN_ATTR = 'data-dc-metar-watch-btn';
+    var TOOLBAR_STYLE_ID = 'dc-metar-ws-toolbar-ptr-style';
+    var WSB_STATE_ID = 'dc-ws-state-reload-host';
+    var WSB_BRIEF_ID = 'dc-brief-ai-ws-host';
 
     function isPaxConnectionsPage() {
         try {
@@ -5031,6 +5035,179 @@
         } catch (e2) {}
         btn = null;
         badge = null;
+        removeEmptyWorksheetHelperField();
+    }
+
+
+    function isWorksheetWidgetPage() {
+        try {
+            return String(location.pathname || '').indexOf('/widgets/worksheet') === 0;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function textLabel(el) {
+        return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function findWorksheetFieldsRow() {
+        if (!isWorksheetWidgetPage()) {
+            return null;
+        }
+        var buttons = document.querySelectorAll('button');
+        var i;
+        for (i = 0; i < buttons.length; i++) {
+            if (/^Clear WS$/i.test(textLabel(buttons[i]))) {
+                var fields = buttons[i].closest && buttons[i].closest('.fields');
+                if (fields) {
+                    return fields;
+                }
+            }
+        }
+        var sorted = document.querySelector('div[name="sortedBy"]');
+        return sorted && sorted.closest ? sorted.closest('.fields') : null;
+    }
+
+    function orderWsbInHelper(helper) {
+        if (!helper) {
+            return;
+        }
+        var wxn = helper.querySelector('[' + WX_BTN_ATTR + '="1"]');
+        var br = document.getElementById(WSB_BRIEF_ID);
+        var st = document.getElementById(WSB_STATE_ID);
+        var i;
+        var list = [wxn, br, st];
+        for (i = 0; i < list.length; i++) {
+            var n = list[i];
+            if (n && n.parentNode === helper) {
+                try {
+                    helper.appendChild(n);
+                } catch (e) {}
+            }
+        }
+    }
+
+    function positionWorksheetHelperToRowEnd(fields, helper) {
+        if (!fields || !helper) {
+            return;
+        }
+        try {
+            fields.appendChild(helper);
+        } catch (e) {}
+        try {
+            helper.style.display = 'inline-flex';
+            helper.style.alignItems = 'stretch';
+            helper.style.gap = '4px';
+            helper.style.marginLeft = '';
+        } catch (e2) {}
+    }
+
+    function getOrCreateWorksheetHelperField() {
+        var fields = findWorksheetFieldsRow();
+        if (!fields) {
+            return null;
+        }
+        var helper = fields.querySelector('[data-dc-worksheet-helper-buttons="1"]');
+        if (helper) {
+            positionWorksheetHelperToRowEnd(fields, helper);
+            return helper;
+        }
+        helper = document.createElement('div');
+        helper.className = 'field';
+        helper.setAttribute('data-dc-worksheet-helper-buttons', '1');
+        helper.style.display = 'inline-flex';
+        helper.style.alignItems = 'stretch';
+        helper.style.gap = '4px';
+        fields.appendChild(helper);
+        positionWorksheetHelperToRowEnd(fields, helper);
+        return helper;
+    }
+
+    function removeEmptyWorksheetHelperField() {
+        var helper = document.querySelector(
+            '[data-dc-worksheet-helper-buttons="1"]'
+        );
+        if (
+            helper &&
+            !helper.querySelector(
+                'button, #' + WSB_STATE_ID + ', #' + WSB_BRIEF_ID
+            )
+        ) {
+            try {
+                helper.remove();
+            } catch (e) {}
+        }
+    }
+
+    function ensureWorksheetToolbarClickDebug() {
+        if (!isWorksheetWidgetPage() || onToolbarClickDebug) {
+            return;
+        }
+        if (getPref('worksheetToolbarClickDebug', false) !== true) {
+            return;
+        }
+        onToolbarClickDebug = function (ev) {
+            if (!ev || (ev.type !== 'pointerdown' && ev.type !== 'click')) {
+                return;
+            }
+            if (ev.button != null && ev.button !== 0) {
+                return;
+            }
+            if (!ev.isTrusted) {
+                return;
+            }
+            var t = ev.target;
+            if (t && t.nodeType !== 1) {
+                t = t.parentElement;
+            }
+            var hlp = t && t.closest
+                ? t.closest('[data-dc-worksheet-helper-buttons="1"]')
+                : null;
+            if (!hlp) {
+                return;
+            }
+            var pick = t;
+            try {
+                if (ev.clientX != null && ev.clientY != null) {
+                    pick = document.elementFromPoint(ev.clientX, ev.clientY) || t;
+                }
+            } catch (e) {}
+            var lines = [
+                '[Wolf2.0][METAR] toolbar ' + ev.type,
+                '  target: ' + (t && t.tagName) + (t && t.getAttribute('id') ? ' #' + t.getAttribute('id') : ''),
+                '  elementFromPoint: ' + (pick && pick.tagName)
+            ];
+            try {
+                console.log(lines.join('\n'));
+            } catch (e) {}
+        };
+        document.addEventListener('click', onToolbarClickDebug, true);
+        try {
+            document.addEventListener('pointerdown', onToolbarClickDebug, true);
+        } catch (e) {
+            document.addEventListener('mousedown', onToolbarClickDebug, true);
+        }
+    }
+
+    function ensureMetarToolbarZStyle() {
+        if (document.getElementById(TOOLBAR_STYLE_ID)) {
+            return;
+        }
+        var st = document.createElement('style');
+        st.id = TOOLBAR_STYLE_ID;
+        st.textContent =
+            '[data-dc-worksheet-helper-buttons="1"],button[' +
+            WX_BTN_ATTR +
+            '="1"]{' +
+            'position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}' +
+            'span#dc-ws-state-reload-host,span#dc-brief-ai-ws-host,#' +
+            'dc-ws-state-reload-host,#' +
+            'dc-brief-ai-ws-host' +
+            '{position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}';
+        try {
+            document.head.appendChild(st);
+        } catch (e) {}
     }
 
     function findGmtClockElement() {
@@ -5108,15 +5285,37 @@
         }
     }
 
+    function bindWxButtonIfNeeded() {
+        if (!btn) {
+            return;
+        }
+        if (btn.getAttribute('data-dc-wx-click-bound') === '1') {
+            return;
+        }
+        btn.setAttribute('data-dc-wx-click-bound', '1');
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (Notification && Notification.permission === 'default' && boolPref('metarWatchNotify', true)) {
+                try {
+                    Notification.requestPermission();
+                } catch (e) {}
+            }
+            openModal();
+        });
+    }
+
     function mountButtonNearClock() {
         if (isPaxConnectionsPage()) {
             detachMetarWatchWxButton();
             return;
         }
+        ensureMetarToolbarZStyle();
         dedupeWxButtonNodes();
 
-        var anchor = findGmtClockElement();
-        var host = anchor && anchor.parentElement ? anchor.parentElement : document.body;
+        var worksheetHelper = getOrCreateWorksheetHelperField();
+        var anchor = worksheetHelper ? null : findGmtClockElement();
+        var host = worksheetHelper || (anchor && anchor.parentElement ? anchor.parentElement : document.body);
         if (!btn) {
             btn = document.createElement('button');
             btn.type = 'button';
@@ -5158,18 +5357,34 @@
         }
         if (!btn.getAttribute('data-dc-wx-open-bound')) {
             btn.setAttribute('data-dc-wx-open-bound', '1');
-            btn.addEventListener('click', function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (Notification && Notification.permission === 'default' && boolPref('metarWatchNotify', true)) {
-                    Notification.requestPermission();
-                }
-                openModal();
-            });
         }
-        if (anchor && anchor.parentNode) {
-            if (btn.parentNode !== anchor.parentNode || btn.previousSibling !== anchor) {
-                anchor.parentNode.insertBefore(btn, anchor.nextSibling);
+        bindWxButtonIfNeeded();
+        if (worksheetHelper) {
+            btn.style.marginLeft = '0';
+            btn.style.minHeight = '36px';
+            btn.style.height = 'auto';
+            btn.style.alignSelf = 'stretch';
+            if (btn.parentNode !== worksheetHelper) {
+                try {
+                    worksheetHelper.appendChild(btn);
+                } catch (e) {}
+            }
+            orderWsbInHelper(worksheetHelper);
+        } else if (anchor && anchor.parentNode) {
+            var hPar = anchor.parentNode;
+            btn.style.marginLeft = '8px';
+            if (btn.parentNode !== hPar) {
+                try {
+                    hPar.appendChild(btn);
+                } catch (e01) {
+                    try {
+                        hPar.insertBefore(btn, anchor.nextSibling);
+                    } catch (e02) {}
+                }
+            } else {
+                try {
+                    hPar.appendChild(btn);
+                } catch (e03) {}
             }
             var row = anchor.parentElement;
             var rowH = 0;
@@ -5196,6 +5411,7 @@
                 } catch (e3) {}
             }
         } else {
+            btn.style.marginLeft = '8px';
             btn.style.minHeight = '';
             btn.style.maxHeight = '50px';
             btn.style.alignSelf = '';
@@ -6179,8 +6395,15 @@
     }
 
     function init() {
+        ensureWorksheetToolbarClickDebug();
         buildModal();
         mountButtonNearClock();
+        var flo = document.getElementById('dc-worksheet-scripts-float-host');
+        if (flo) {
+            try {
+                flo.remove();
+            } catch (e) {}
+        }
         initCrossTabPollSync();
         initMetarTafSharedSync();
         initViewedSync();
@@ -6200,6 +6423,18 @@
     }
 
     window.__myScriptCleanup = function () {
+        if (onToolbarClickDebug) {
+            try {
+                document.removeEventListener('click', onToolbarClickDebug, true);
+            } catch (e) {}
+            try {
+                document.removeEventListener('pointerdown', onToolbarClickDebug, true);
+            } catch (e1) {}
+            try {
+                document.removeEventListener('mousedown', onToolbarClickDebug, true);
+            } catch (e2) {}
+            onToolbarClickDebug = null;
+        }
         stopMetarTafSharedSync();
         stopViewedSync();
         stopCrossTabPollSync();
@@ -6251,6 +6486,25 @@
                 btn.remove();
             }
         } catch (e) {}
+        try {
+            var ts = document.getElementById(TOOLBAR_STYLE_ID);
+            if (ts) {
+                ts.remove();
+            }
+        } catch (e3) {}
+        try {
+            var hel = document.querySelector(
+                '[data-dc-worksheet-helper-buttons="1"]'
+            );
+            if (
+                hel &&
+                !hel.querySelector(
+                    'button, #' + WSB_STATE_ID + ', #' + WSB_BRIEF_ID
+                )
+            ) {
+                hel.remove();
+            }
+        } catch (e5) {}
         stopCodModelLoop();
         var pk;
         for (pk in codCacheByParms) {
