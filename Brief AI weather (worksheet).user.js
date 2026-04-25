@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.1.0
+// @version      0.1.1
 // @description  Worksheet: regional weather brief (METAR-based) with optional free-tier Gemini; button left of WS state, right of WX.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
@@ -671,7 +671,10 @@
         return b;
     }
 
-    function findGmtLikeAnchor() {
+    /**
+     * Same logic as WS state-reload / METAR: header + toolbar scan, time + GMT/Zulu.
+     */
+    function findGmtClockElement() {
         var scopes = [];
         var h = document.querySelector('header');
         if (h) {
@@ -717,61 +720,56 @@
             host.appendChild(makeButton());
         }
         var wx = document.querySelector(WX_SEL);
-        var anchor = wx || findGmtLikeAnchor();
+        var anchor = wx || findGmtClockElement();
         if (anchor && anchor.parentNode) {
             var par = anchor.parentNode;
-            var next = anchor.nextSibling;
-            if (host.parentNode === par) {
-                if (next && host === next) {
-                    return;
-                }
+            if (host.parentNode) {
+                try {
+                    host.parentNode.removeChild(host);
+                } catch (e) {}
             }
             var stateHost = document.getElementById(STATE_HOST_ID);
-            if (stateHost && stateHost.parentNode === par) {
-                if (host.parentNode) {
-                    try {
-                        host.parentNode.removeChild(host);
-                    } catch (e) {}
-                }
-                try {
+            try {
+                if (stateHost && stateHost.parentNode === par) {
                     par.insertBefore(host, stateHost);
-                } catch (e) {
-                    par.appendChild(host);
+                } else {
+                    par.insertBefore(host, anchor.nextSibling);
                 }
-            } else {
-                if (host.nextSibling && host.nextSibling !== stateHost) {
-                }
-                if (host.parentNode) {
-                    try {
-                        host.parentNode.removeChild(host);
-                    } catch (e) {}
-                }
+            } catch (e2) {
                 try {
-                    if (stateHost && stateHost.parentNode === par) {
-                        par.insertBefore(host, stateHost);
-                    } else {
-                        if (next) {
-                            par.insertBefore(host, next);
-                        } else {
-                            par.appendChild(host);
-                        }
-                    }
-                } catch (e2) {
                     par.appendChild(host);
-                }
+                } catch (e3) {}
             }
             try {
                 var row = anchor.parentElement;
                 if (row) {
-                    if (row.style && window.getComputedStyle(row).display !== 'flex' && window.getComputedStyle(row).display !== 'inline-flex') {
+                    var cs = window.getComputedStyle(row);
+                    if (cs && cs.display !== 'flex' && cs.display !== 'inline-flex') {
                         row.style.display = 'flex';
                         row.style.alignItems = 'stretch';
                     }
                 }
-            } catch (e3) {}
-        } else if (host.parentNode !== document.body) {
-            host.style.cssText = 'position:fixed;right:12px;top:12px;z-index:99998';
-            document.body.appendChild(host);
+                var rowH = Math.max(
+                    (row && (row.offsetHeight || row.clientHeight)) || 0,
+                    anchor.offsetHeight || 0,
+                    anchor.clientHeight || 0
+                );
+                if (rowH < 24) {
+                    rowH = 36;
+                }
+                rowH = Math.min(rowH, 50);
+                host.querySelectorAll('[' + BTN_ATTR + ']').forEach(function (b) {
+                    b.style.minHeight = rowH + 'px';
+                    b.style.height = 'auto';
+                    b.style.alignSelf = 'stretch';
+                });
+            } catch (e4) {}
+        } else {
+            host.style.cssText =
+                'position:fixed!important;right:12px!important;top:12px!important;z-index:100001!important;';
+            try {
+                document.body.appendChild(host);
+            } catch (e5) {}
         }
     }
 
@@ -785,9 +783,26 @@
         });
     }
 
-    if (isWorksheetPage() && document.body) {
-        schedule();
+    function startObservers() {
+        if (isWorksheetPage() && document.body) {
+            schedule();
+        }
+        if (typeof window.requestIdleCallback === 'function') {
+            requestIdleCallback(function () {
+                schedule();
+            });
+        } else {
+            setTimeout(schedule, 0);
+        }
+        setTimeout(schedule, 400);
+        setTimeout(schedule, 2000);
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function () {
+                setTimeout(schedule, 0);
+            });
+        }
     }
+    startObservers();
     mountObserver = new MutationObserver(function () {
         schedule();
     });
@@ -799,7 +814,11 @@
     } catch (e) {
         mountObserver = null;
     }
-    setInterval(mount, 2000);
+    setInterval(function () {
+        if (isWorksheetPage()) {
+            mount();
+        }
+    }, 2000);
 
     window.__myScriptCleanup = function () {
         if (mountObserver) {
