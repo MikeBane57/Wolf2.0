@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.41
+// @version      2.0.42
 // @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -2761,6 +2761,7 @@
     var selectedIata = null;
     var anchorRetryTimer = null;
     var mountScheduled = false;
+    var onToolbarClickDebug = null;
     var onDocKey = null;
     var refreshThisBtn = null;
     var refreshAllBtn = null;
@@ -5001,7 +5002,6 @@
 
     var WX_BTN_ATTR = 'data-dc-metar-watch-btn';
     var TOOLBAR_STYLE_ID = 'dc-metar-ws-toolbar-ptr-style';
-    var WORKSHEET_FLOAT_HOST_ID = 'dc-worksheet-scripts-float-host';
     var WSB_STATE_ID = 'dc-ws-state-reload-host';
     var WSB_BRIEF_ID = 'dc-brief-ai-ws-host';
 
@@ -5069,46 +5069,23 @@
         return sorted && sorted.closest ? sorted.closest('.fields') : null;
     }
 
-    function orderWsbInFloat(fh) {
-        if (!fh) {
+    function orderWsbInHelper(helper) {
+        if (!helper) {
             return;
         }
-        var wxn = fh.querySelector('[' + WX_BTN_ATTR + '="1"]');
+        var wxn = helper.querySelector('[' + WX_BTN_ATTR + '="1"]');
         var br = document.getElementById(WSB_BRIEF_ID);
         var st = document.getElementById(WSB_STATE_ID);
         var i;
         var list = [wxn, br, st];
         for (i = 0; i < list.length; i++) {
             var n = list[i];
-            if (n && n.parentNode === fh) {
+            if (n && n.parentNode === helper) {
                 try {
-                    fh.appendChild(n);
+                    helper.appendChild(n);
                 } catch (e) {}
             }
         }
-    }
-
-    function ensureWorksheetScriptFloatHost() {
-        var el = document.getElementById(WORKSHEET_FLOAT_HOST_ID);
-        if (el) {
-            return el;
-        }
-        el = document.createElement('div');
-        el.id = WORKSHEET_FLOAT_HOST_ID;
-        el.setAttribute('data-dc-worksheet-script-float', '1');
-        el.title = 'Wolf2.0 worksheet tools (WX, Brief, WS state)';
-        el.style.cssText =
-            'position:fixed!important;top:8px!important;right:8px!important;z-index:2147483640!important;' +
-            'display:inline-flex!important;align-items:stretch!important;flex-wrap:wrap!important;gap:6px!important;' +
-            'max-width:min(100vw - 16px, 680px)!important;box-sizing:border-box!important;padding:8px 10px!important;' +
-            'background:rgba(20,25,32,.95)!important;border:1px solid #4a5a6a!important;border-radius:8px!important;' +
-            'box-shadow:0 6px 24px rgba(0,0,0,.45)!important;pointer-events:auto!important;';
-        try {
-            if (document.body) {
-                document.body.appendChild(el);
-            }
-        } catch (e) {}
-        return el;
     }
 
     function positionWorksheetHelperToRowEnd(fields, helper) {
@@ -5147,22 +5124,6 @@
         return helper;
     }
 
-    function pruneWorksheetScriptFloatHost() {
-        var fh = document.getElementById(WORKSHEET_FLOAT_HOST_ID);
-        if (!fh) {
-            return;
-        }
-        if (
-            !fh.querySelector(
-                '#' + WSB_STATE_ID + ', #' + WSB_BRIEF_ID + ', [' + WX_BTN_ATTR + '="1"]'
-            )
-        ) {
-            try {
-                fh.remove();
-            } catch (e) {}
-        }
-    }
-
     function removeEmptyWorksheetHelperField() {
         var helper = document.querySelector(
             '[data-dc-worksheet-helper-buttons="1"]'
@@ -5176,6 +5137,56 @@
             try {
                 helper.remove();
             } catch (e) {}
+        }
+    }
+
+    function ensureWorksheetToolbarClickDebug() {
+        if (!isWorksheetWidgetPage() || onToolbarClickDebug) {
+            return;
+        }
+        if (getPref('worksheetToolbarClickDebug', false) !== true) {
+            return;
+        }
+        onToolbarClickDebug = function (ev) {
+            if (!ev || (ev.type !== 'pointerdown' && ev.type !== 'click')) {
+                return;
+            }
+            if (ev.button != null && ev.button !== 0) {
+                return;
+            }
+            if (!ev.isTrusted) {
+                return;
+            }
+            var t = ev.target;
+            if (t && t.nodeType !== 1) {
+                t = t.parentElement;
+            }
+            var hlp = t && t.closest
+                ? t.closest('[data-dc-worksheet-helper-buttons="1"]')
+                : null;
+            if (!hlp) {
+                return;
+            }
+            var pick = t;
+            try {
+                if (ev.clientX != null && ev.clientY != null) {
+                    pick = document.elementFromPoint(ev.clientX, ev.clientY) || t;
+                }
+            } catch (e) {}
+            var lines = [
+                '[Wolf2.0][METAR] toolbar ' + ev.type,
+                '  target: ' + (t && t.tagName) + (t && t.getAttribute('id') ? ' #' + t.getAttribute('id') : ''),
+                '  elementFromPoint: ' + (pick && pick.tagName)
+            ];
+            try {
+                console.log(lines.join('\n'));
+            } catch (e) {}
+        };
+        document.addEventListener('click', onToolbarClickDebug, true);
+        try {
+            document.addEventListener('pointerdown', onToolbarClickDebug, true);
+        } catch (e) {
+            document.addEventListener('mousedown', onToolbarClickDebug, true);
         }
     }
 
@@ -5302,10 +5313,7 @@
         ensureMetarToolbarZStyle();
         dedupeWxButtonNodes();
 
-        var worksheetHelper =
-            isWorksheetWidgetPage() && document.body
-                ? ensureWorksheetScriptFloatHost()
-                : null;
+        var worksheetHelper = getOrCreateWorksheetHelperField();
         var anchor = worksheetHelper ? null : findGmtClockElement();
         var host = worksheetHelper || (anchor && anchor.parentElement ? anchor.parentElement : document.body);
         if (!btn) {
@@ -5361,7 +5369,7 @@
                     worksheetHelper.appendChild(btn);
                 } catch (e) {}
             }
-            orderWsbInFloat(worksheetHelper);
+            orderWsbInHelper(worksheetHelper);
         } else if (anchor && anchor.parentNode) {
             var hPar = anchor.parentNode;
             btn.style.marginLeft = '8px';
@@ -6387,8 +6395,15 @@
     }
 
     function init() {
+        ensureWorksheetToolbarClickDebug();
         buildModal();
         mountButtonNearClock();
+        var flo = document.getElementById('dc-worksheet-scripts-float-host');
+        if (flo) {
+            try {
+                flo.remove();
+            } catch (e) {}
+        }
         initCrossTabPollSync();
         initMetarTafSharedSync();
         initViewedSync();
@@ -6408,6 +6423,18 @@
     }
 
     window.__myScriptCleanup = function () {
+        if (onToolbarClickDebug) {
+            try {
+                document.removeEventListener('click', onToolbarClickDebug, true);
+            } catch (e) {}
+            try {
+                document.removeEventListener('pointerdown', onToolbarClickDebug, true);
+            } catch (e1) {}
+            try {
+                document.removeEventListener('mousedown', onToolbarClickDebug, true);
+            } catch (e2) {}
+            onToolbarClickDebug = null;
+        }
         stopMetarTafSharedSync();
         stopViewedSync();
         stopCrossTabPollSync();
@@ -6465,9 +6492,6 @@
                 ts.remove();
             }
         } catch (e3) {}
-        try {
-            pruneWorksheetScriptFloatHost();
-        } catch (e4) {}
         try {
             var hel = document.querySelector(
                 '[data-dc-worksheet-helper-buttons="1"]'

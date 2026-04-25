@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.1.9
+// @version      0.2.1
 // @description  Worksheet: regional weather brief (METAR-based) — optional LLM (Groq, Gemini, Ollama, etc.); button by WX/WS state.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/*
@@ -12,7 +12,7 @@
 // @connect      openrouter.ai
 // @connect      localhost
 // @connect      127.0.0.1
-// @donkeycode-pref {"briefAiProvider":{"type":"select","group":"Brief AI","label":"LLM provider","description":"GitHub Copilot has no public HTTP API for this use. Groq: free key at https://console.groq.com — set Base URL to https://api.groq.com/openai/v1. Ollama: free local (open-source models), set URL to http://127.0.0.1:11434/v1. OpenRouter: https://openrouter.ai","default":"openai_compat","options":[{"val":"openai_compat","label":"OpenAI-compatible (Groq, OpenRouter, many others)"},{"val":"gemini","label":"Google Gemini (AI Studio key)"},{"val":"ollama","label":"Ollama local (http://127.0.0.1:11434/v1)"}]},"briefAiOpenaiBaseUrl":{"type":"string","group":"Brief AI","label":"OpenAI-compat: Base URL","default":"https://api.groq.com/openai/v1","placeholder":"https://api.groq.com/openai/v1"},"briefAiOpenaiKey":{"type":"string","group":"Brief AI","label":"OpenAI-compat: API key","default":"","password":true,"description":"e.g. Groq gs_... or OpenRouter sk-..."},"briefAiOpenaiModel":{"type":"string","group":"Brief AI","label":"OpenAI-compat: model id","default":"llama-3.3-70b-versatile","placeholder":"llama-3.3-70b-versatile"},"briefAiOllamaUrl":{"type":"string","group":"Brief AI","label":"Ollama: base URL (OpenAI path)","default":"http://127.0.0.1:11434/v1","placeholder":"http://127.0.0.1:11434/v1"},"briefAiOllamaModel":{"type":"string","group":"Brief AI","label":"Ollama: model name","default":"llama3.2","placeholder":"llama3.2"},"briefAiGeminiKey":{"type":"string","group":"Brief AI","label":"Gemini: API key","description":"https://aistudio.google.com/apikey","default":"","password":true},"briefAiGeminiModel":{"type":"string","group":"Brief AI","label":"Gemini: model","default":"gemini-2.0-flash","placeholder":"gemini-2.0-flash"},"briefAiExtraStations":{"type":"string","group":"Brief AI","label":"Extra stations of concern","description":"Space- or comma-separated IATA; merged into fetch.","default":"","placeholder":"e.g. OAK ABQ"},"briefAiTemperature":{"type":"number","group":"Brief AI","label":"LLM temperature","description":"Higher = more conversational (0.15–0.8).","default":0.45,"min":0.1,"max":0.95,"step":0.05}}
+// @donkeycode-pref {"worksheetToolbarClickDebug":{"type":"boolean","group":"Brief AI","label":"Log click target (debug)","description":"Same as WS state: log pointerdown/click on worksheet helper.","default":false},"briefAiProvider":{"type":"select","group":"Brief AI","label":"LLM provider","description":"GitHub Copilot has no public HTTP API for this use. Groq: free key at https://console.groq.com — set Base URL to https://api.groq.com/openai/v1. Ollama: free local (open-source models), set URL to http://127.0.0.1:11434/v1. OpenRouter: https://openrouter.ai","default":"openai_compat","options":[{"val":"openai_compat","label":"OpenAI-compatible (Groq, OpenRouter, many others)"},{"val":"gemini","label":"Google Gemini (AI Studio key)"},{"val":"ollama","label":"Ollama local (http://127.0.0.1:11434/v1)"}]},"briefAiOpenaiBaseUrl":{"type":"string","group":"Brief AI","label":"OpenAI-compat: Base URL","default":"https://api.groq.com/openai/v1","placeholder":"https://api.groq.com/openai/v1"},"briefAiOpenaiKey":{"type":"string","group":"Brief AI","label":"OpenAI-compat: API key","default":"","password":true,"description":"e.g. Groq gs_... or OpenRouter sk-..."},"briefAiOpenaiModel":{"type":"string","group":"Brief AI","label":"OpenAI-compat: model id","default":"llama-3.3-70b-versatile","placeholder":"llama-3.3-70b-versatile"},"briefAiOllamaUrl":{"type":"string","group":"Brief AI","label":"Ollama: base URL (OpenAI path)","default":"http://127.0.0.1:11434/v1","placeholder":"http://127.0.0.1:11434/v1"},"briefAiOllamaModel":{"type":"string","group":"Brief AI","label":"Ollama: model name","default":"llama3.2","placeholder":"llama3.2"},"briefAiGeminiKey":{"type":"string","group":"Brief AI","label":"Gemini: API key","description":"https://aistudio.google.com/apikey","default":"","password":true},"briefAiGeminiModel":{"type":"string","group":"Brief AI","label":"Gemini: model","default":"gemini-2.0-flash","placeholder":"gemini-2.0-flash"},"briefAiExtraStations":{"type":"string","group":"Brief AI","label":"Extra stations of concern","description":"Space- or comma-separated IATA; merged into fetch.","default":"","placeholder":"e.g. OAK ABQ"},"briefAiTemperature":{"type":"number","group":"Brief AI","label":"LLM temperature","description":"Higher = more conversational (0.15–0.8).","default":0.45,"min":0.1,"max":0.95,"step":0.05}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Brief%20AI%20weather%20(worksheet).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Brief%20AI%20weather%20(worksheet).user.js
 // ==/UserScript==
@@ -26,7 +26,6 @@
     var STYLE_ID = 'dc-brief-ai-ws-style';
     var WX_SEL = '[data-dc-metar-watch-btn="1"]';
     var STATE_HOST_ID = 'dc-ws-state-reload-host';
-    var WORKSHEET_FLOAT_HOST_ID = 'dc-worksheet-scripts-float-host';
 
     /** Default WN regions (IATA). Duplicates in source lists are de-duped at runtime. */
     var DEFAULT_EAST =
@@ -71,6 +70,7 @@
     var mountObserver = null;
     var modalOpen = false;
     var mountInterval = null;
+    var onToolbarClickDebug = null;
 
     function isWorksheetPage() {
         try {
@@ -880,62 +880,209 @@
         return b;
     }
 
+    function textLabel(el) {
+        return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim();
+    }
 
-    function orderWsbInFloat(fh) {
-        if (!fh) {
+    function findWorksheetFieldsRow() {
+        var buttons = document.querySelectorAll('button');
+        var i;
+        for (i = 0; i < buttons.length; i++) {
+            if (/^Clear WS$/i.test(textLabel(buttons[i]))) {
+                var fields = buttons[i].closest && buttons[i].closest('.fields');
+                if (fields) {
+                    return fields;
+                }
+            }
+        }
+        var sorted = document.querySelector('div[name="sortedBy"]');
+        return sorted && sorted.closest ? sorted.closest('.fields') : null;
+    }
+
+    function orderWsbInHelper(helper) {
+        if (!helper) {
             return;
         }
-        var wxn = fh.querySelector('[data-dc-metar-watch-btn="1"]');
+        var wxn = helper.querySelector('[data-dc-metar-watch-btn="1"]');
         var br = document.getElementById(HOST_ID);
         var st = document.getElementById(STATE_HOST_ID);
         var i;
         var list = [wxn, br, st];
         for (i = 0; i < list.length; i++) {
             var n = list[i];
-            if (n && n.parentNode === fh) {
+            if (n && n.parentNode === helper) {
                 try {
-                    fh.appendChild(n);
+                    helper.appendChild(n);
                 } catch (e) {}
             }
         }
     }
 
-    function ensureWorksheetScriptFloatHost() {
-        var el = document.getElementById(WORKSHEET_FLOAT_HOST_ID);
-        if (el) {
-            return el;
-        }
-        el = document.createElement('div');
-        el.id = WORKSHEET_FLOAT_HOST_ID;
-        el.setAttribute('data-dc-worksheet-script-float', '1');
-        el.title = 'Wolf2.0 worksheet tools (WX, Brief, WS state)';
-        el.style.cssText =
-            'position:fixed!important;top:8px!important;right:8px!important;z-index:2147483640!important;' +
-            'display:inline-flex!important;align-items:stretch!important;flex-wrap:wrap!important;gap:6px!important;' +
-            'max-width:min(100vw - 16px, 680px)!important;box-sizing:border-box!important;padding:8px 10px!important;' +
-            'background:rgba(20,25,32,.95)!important;border:1px solid #4a5a6a!important;border-radius:8px!important;' +
-            'box-shadow:0 6px 24px rgba(0,0,0,.45)!important;pointer-events:auto!important;';
-        try {
-            if (document.body) {
-                document.body.appendChild(el);
-            }
-        } catch (e) {}
-        return el;
-    }
-
-    function pruneWorksheetScriptFloatHost() {
-        var fh = document.getElementById(WORKSHEET_FLOAT_HOST_ID);
-        if (!fh) {
+    function positionWorksheetHelperToRowEnd(fields, helper) {
+        if (!fields || !helper) {
             return;
         }
-        if (
-            !fh.querySelector(
-                '#' + STATE_HOST_ID + ', #' + HOST_ID + ', [data-dc-metar-watch-btn="1"]'
-            )
-        ) {
+        try {
+            fields.appendChild(helper);
+        } catch (e) {}
+        try {
+            helper.style.display = 'inline-flex';
+            helper.style.alignItems = 'stretch';
+            helper.style.gap = '4px';
+            helper.style.marginLeft = '';
+        } catch (e2) {}
+    }
+
+    function getOrCreateWorksheetHelperField() {
+        var fields = findWorksheetFieldsRow();
+        if (!fields) {
+            return null;
+        }
+        var helper = fields.querySelector('[data-dc-worksheet-helper-buttons="1"]');
+        if (helper) {
+            positionWorksheetHelperToRowEnd(fields, helper);
+            return helper;
+        }
+        helper = document.createElement('div');
+        helper.className = 'field';
+        helper.setAttribute('data-dc-worksheet-helper-buttons', '1');
+        helper.style.display = 'inline-flex';
+        helper.style.alignItems = 'stretch';
+        helper.style.gap = '4px';
+        fields.appendChild(helper);
+        positionWorksheetHelperToRowEnd(fields, helper);
+        return helper;
+    }
+
+    function findGmtClockElement() {
+        var scopes = [];
+        var h = document.querySelector('header');
+        if (h) {
+            scopes.push(h);
+        }
+        var tb = document.querySelector(
+            '[class*="toolbar"],[class*="Toolbar"],[class*="topbar"],[class*="TopBar"],[class*="app-bar"]'
+        );
+        if (tb) {
+            scopes.push(tb);
+        }
+        if (!scopes.length) {
+            scopes.push(document.body);
+        }
+        var si;
+        var sj;
+        for (si = 0; si < scopes.length; si++) {
+            var candidates = scopes[si].querySelectorAll('span,div,button,p,time,li');
+            for (sj = 0; sj < candidates.length; sj++) {
+                var el = candidates[sj];
+                var t = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+                if (t.length > 120 || !/\d{1,2}:\d{2}/.test(t)) {
+                    continue;
+                }
+                if (/GMT|Zulu|\bUTC\b|\(Z\)/i.test(t)) {
+                    return el;
+                }
+            }
+        }
+        return null;
+    }
+
+    function elDesc(el) {
+        if (!el) {
+            return 'null';
+        }
+        var tag = (el.tagName || '?').toLowerCase();
+        var id = (el.getAttribute('id') || el.id) ? ' id="' + (el.getAttribute('id') || el.id) + '"' : '';
+        var cls = el.className && String(el.className) ? ' class="' + String(el.className).slice(0, 100) + '"' : '';
+        var t = '';
+        if (el.getAttribute && el.getAttribute('data-dc-metar-watch-btn')) {
+            t += ' [data-dc-metar-watch-btn]';
+        }
+        if (el.getAttribute && el.getAttribute('data-dc-brief-ai-btn')) {
+            t += ' [data-dc-brief-ai-btn]';
+        }
+        return '<' + tag + id + cls + '>' + t;
+    }
+
+    function ensureWorksheetToolbarClickDebug() {
+        if (!isWorksheetPage() || onToolbarClickDebug) {
+            return;
+        }
+        if (getPref('worksheetToolbarClickDebug', false) !== true) {
+            return;
+        }
+        onToolbarClickDebug = function (ev) {
+            if (!ev) {
+                return;
+            }
+            if (ev.type !== 'pointerdown' && ev.type !== 'click') {
+                return;
+            }
+            if (ev.button != null && ev.button !== 0) {
+                return;
+            }
+            if (!ev.isTrusted) {
+                return;
+            }
+            var t = ev.target;
+            if (t && t.nodeType !== 1) {
+                t = t.parentElement;
+            }
+            var hlp = t && t.closest
+                ? t.closest('[data-dc-worksheet-helper-buttons="1"]')
+                : null;
+            if (!hlp) {
+                return;
+            }
+            var pick = t;
             try {
-                fh.remove();
+                if (ev.clientX != null && ev.clientY != null) {
+                    pick = document.elementFromPoint(ev.clientX, ev.clientY) || t;
+                }
             } catch (e) {}
+            var pickPath = [pick, t];
+            if (hlp) {
+                pickPath.push(hlp);
+            }
+            if (hlp) {
+                pickPath.push(
+                    hlp.querySelector('[data-dc-metar-watch-btn="1"]') || null
+                );
+                pickPath.push(document.getElementById(HOST_ID) || null);
+                pickPath.push(document.getElementById(STATE_HOST_ID) || null);
+            }
+            var lines = [
+                '[Wolf2.0][Brief AI] toolbar ' + ev.type,
+                '  target: ' + elDesc(t),
+                '  elementFromPoint: ' + elDesc(pick)
+            ];
+            var p;
+            for (p = 0; p < pickPath.length; p++) {
+                if (pickPath[p]) {
+                    var x = pickPath[p];
+                    try {
+                        lines.push(
+                            '  layer ' +
+                            p +
+                            ' z=' +
+                            (x.style && x.style.zIndex) +
+                            ' pe=' +
+                            (x.style && x.style.pointerEvents) +
+                            ' ' +
+                            elDesc(x)
+                        );
+                    } catch (e) {}
+                }
+            }
+            try {
+                console.log(lines.join('\n'));
+            } catch (e) {}
+        };
+        document.addEventListener('click', onToolbarClickDebug, true);
+        try {
+            document.addEventListener('pointerdown', onToolbarClickDebug, true);
+        } catch (e) {
+            document.addEventListener('mousedown', onToolbarClickDebug, true);
         }
     }
 
@@ -946,7 +1093,7 @@
         if (
             helper &&
             !helper.querySelector(
-                'button, #dc-ws-state-reload-host, [data-dc-metar-watch-btn="1"]'
+                'button, #dc-ws-state-reload-host, #dc-brief-ai-ws-host, [data-dc-metar-watch-btn="1"]'
             )
         ) {
             try {
@@ -960,41 +1107,64 @@
             return;
         }
         ensureStyle();
+        ensureWorksheetToolbarClickDebug();
         var host = document.getElementById(HOST_ID);
         if (!host) {
             host = document.createElement('span');
             host.id = HOST_ID;
             host.appendChild(makeButton());
         }
-        if (host.parentNode) {
-            try {
-                host.parentNode.removeChild(host);
-            } catch (e) {}
-        }
-
-        var fh = ensureWorksheetScriptFloatHost();
-        if (fh) {
-            host.style.cssText = '';
-            try {
-                fh.appendChild(host);
-            } catch (e2) {}
-            orderWsbInFloat(fh);
+        var helper = getOrCreateWorksheetHelperField();
+        var anchor = helper ? null : findGmtClockElement();
+        if (helper) {
+            host.style.position = '';
+            host.style.right = '';
+            host.style.top = '';
+            host.style.zIndex = '';
+            if (host.parentNode !== helper) {
+                try {
+                    helper.appendChild(host);
+                } catch (e) {}
+            }
+            orderWsbInHelper(helper);
             host.querySelectorAll('[' + BTN_ATTR + ']').forEach(function (b) {
                 b.style.minHeight = '36px';
                 b.style.height = 'auto';
                 b.style.alignSelf = 'stretch';
             });
-        }
-        var oldH = document.querySelector(
-            '[data-dc-worksheet-helper-buttons="1"]'
-        );
-        if (oldH && oldH.querySelector('#' + HOST_ID)) {
-            try {
-                var ob = oldH.querySelector('#' + HOST_ID);
-                if (ob) {
-                    ob.remove();
+        } else if (anchor && anchor.parentNode) {
+            var parent = anchor.parentNode;
+            host.style.position = '';
+            host.style.right = '';
+            host.style.top = '';
+            host.style.zIndex = '';
+            if (host.parentNode !== parent) {
+                try {
+                    parent.appendChild(host);
+                } catch (e0) {
+                    try {
+                        parent.insertBefore(host, anchor.nextSibling);
+                    } catch (e1) {}
                 }
+            } else {
+                try {
+                    parent.appendChild(host);
+                } catch (e2) {}
+            }
+        } else if (host.parentNode !== document.body) {
+            try {
+                host.style.position = 'fixed';
+                host.style.right = '12px';
+                host.style.top = '12px';
+                host.style.zIndex = '99999';
+                document.body.appendChild(host);
             } catch (e3) {}
+        }
+        var flo = document.getElementById('dc-worksheet-scripts-float-host');
+        if (flo) {
+            try {
+                flo.remove();
+            } catch (e4) {}
         }
     }
 
@@ -1076,42 +1246,57 @@
     }, 2000);
 
     var dcBriefAiCoreCleanup = function () {
+        if (onToolbarClickDebug) {
+            try {
+                document.removeEventListener('click', onToolbarClickDebug, true);
+            } catch (e) {}
+            try {
+                document.removeEventListener('pointerdown', onToolbarClickDebug, true);
+            } catch (e1) {}
+            try {
+                document.removeEventListener('mousedown', onToolbarClickDebug, true);
+            } catch (e2) {}
+            onToolbarClickDebug = null;
+        }
         if (mountInterval) {
             try {
                 clearInterval(mountInterval);
-            } catch (e) {}
+            } catch (e3) {}
             mountInterval = null;
         }
         if (mountRaf) {
             try {
                 cancelAnimationFrame(mountRaf);
-            } catch (e) {}
+            } catch (e4) {}
             mountRaf = 0;
         }
         if (mountObserver) {
             try {
                 mountObserver.disconnect();
-            } catch (e2) {}
+            } catch (e5) {}
             mountObserver = null;
         }
         var h = document.getElementById(HOST_ID);
         if (h && h.parentNode) {
             try {
                 h.parentNode.removeChild(h);
-            } catch (e3) {}
+            } catch (e6) {}
         }
         var st = document.getElementById(STYLE_ID);
         if (st) {
             try {
                 st.remove();
-            } catch (e4) {}
+            } catch (e7) {}
         }
         try {
-            pruneWorksheetScriptFloatHost();
-        } catch (e5) {}
-        try {
             removeEmptyWorksheetHelperField();
-        } catch (e6) {}
+        } catch (e8) {}
+        var flo2 = document.getElementById('dc-worksheet-scripts-float-host');
+        if (flo2) {
+            try {
+                flo2.remove();
+            } catch (e9) {}
+        }
         closeModal();
     };
     window.dcBriefAiScriptCleanup = dcBriefAiCoreCleanup;
