@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.33
-// @description  Vis parsing/highlight: mixed 1 1/2SM, M1/4; full vis token span; rule + SW-style use same SM regex (no 1/2 without leading whole).
+// @version      2.0.34
+// @description  Hide WX button on pax-connections (clock match false positive). Vis: mixed 1 1/2SM; full vis span; same SM regex for rules + SW style.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -4941,7 +4941,44 @@
         }
     }
 
+    var WX_BTN_ATTR = 'data-dc-metar-watch-btn';
+
+    function isPaxConnectionsPage() {
+        try {
+            return (
+                String(location.pathname || '')
+                    .toLowerCase()
+                    .indexOf('pax-connections') >= 0
+            );
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function detachMetarWatchWxButton() {
+        try {
+            if (btn && btn.parentNode) {
+                btn.remove();
+            } else {
+                var nd = document.querySelectorAll('[' + WX_BTN_ATTR + '="1"]');
+                var n;
+                for (n = 0; n < nd.length; n++) {
+                    try {
+                        if (nd[n] && nd[n].parentNode) {
+                            nd[n].remove();
+                        }
+                    } catch (e) {}
+                }
+            }
+        } catch (e2) {}
+        btn = null;
+        badge = null;
+    }
+
     function findGmtClockElement() {
+        if (isPaxConnectionsPage()) {
+            return null;
+        }
         var scopes = [];
         var h = document.querySelector('header');
         if (h) {
@@ -4986,8 +5023,6 @@
         });
     }
 
-    var WX_BTN_ATTR = 'data-dc-metar-watch-btn';
-
     /**
      * Hot-reload / duplicate injection can leave multiple WX nodes; keep one and refresh refs.
      */
@@ -5016,6 +5051,10 @@
     }
 
     function mountButtonNearClock() {
+        if (isPaxConnectionsPage()) {
+            detachMetarWatchWxButton();
+            return;
+        }
         dedupeWxButtonNodes();
 
         var anchor = findGmtClockElement();
