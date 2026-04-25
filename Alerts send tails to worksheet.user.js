@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Alerts: send tails to worksheet
 // @namespace    Wolf 2.0
-// @version      0.2.1
+// @version      0.2.2
 // @description  /alerts: rule-based tail or flight # send to chosen worksheets (BroadcastChannel). Edit all options in the modal; optional DonkeyCODE pref defaults.
 // @match        https://opssuitemain.swacorp.com/alerts*
 // @match        https://opssuitemain.swacorp.com/*/alerts*
@@ -754,7 +754,7 @@
         sc.appendChild(
             el(
                 'p',
-                'First matching rule wins per row. “Tail” sends the Tail # cell; “Flight #” scrapes 1–4 digit flight numbers from the description (and type line).',
+                'Rules do not run until you click Run now (no auto-refresh on table changes). First matching rule wins per row. “Tail” = Tail # cell; “Flight #” = numbers from description.',
                 'font:12px!important;color:#7d8a97!important;margin:0!important;'
             )
         );
@@ -773,6 +773,8 @@
         btnAdd.type = 'button';
         btnAdd.style.cssText =
             'font:12px system-ui;padding:4px 10px;border-radius:4px;cursor:pointer;background:#24303d;color:#e2e8f0;border:1px solid #3d4a56;';
+        sc._btnAdd = btnAdd;
+        sc._wsTabs = null;
         sc.appendChild(btnAdd);
 
         var summary = el(
@@ -951,27 +953,73 @@
             }
         }
 
+        function setAddRuleBusy(busy) {
+            if (!btnAdd) {
+                return;
+            }
+            if (busy) {
+                btnAdd.setAttribute('disabled', 'disabled');
+                btnAdd.setAttribute('data-dc-adding', '1');
+                btnAdd.style.opacity = '0.55';
+                btnAdd.style.cursor = 'not-allowed';
+            } else {
+                try {
+                    btnAdd.removeAttribute('disabled');
+                } catch (e) {}
+                btnAdd.removeAttribute('data-dc-adding');
+                btnAdd.style.opacity = '';
+                btnAdd.style.cursor = '';
+            }
+        }
+
         btnAdd.addEventListener('click', function () {
+            if (btnAdd.getAttribute('data-dc-adding') === '1') {
+                return;
+            }
             readFormIntoCfg();
+            try {
+                syncRulesFromDom();
+            } catch (e) {}
             var nr = newRule();
             if (!Array.isArray(cfg.rules)) {
                 cfg.rules = [];
             }
             cfg.rules.push(nr);
-            listWorksheetTabs().then(function (tabs) {
-                redrawRules(tabs);
-            });
+            if (sc._wsTabs && sc._wsTabs.length) {
+                redrawRules(sc._wsTabs);
+                if (sc._summary) {
+                    sc._summary.textContent =
+                        'Rules: ' + cfg.rules.length + ' · ' + sc._wsTabs.length + ' worksheet(s) in browser — click Run now to apply to the current table.';
+                }
+                return;
+            }
+            setAddRuleBusy(true);
+            listWorksheetTabs()
+                .then(function (tabs) {
+                    sc._wsTabs = tabs || [];
+                    redrawRules(sc._wsTabs);
+                    if (sc._summary) {
+                        sc._summary.textContent =
+                            'Rules: ' + cfg.rules.length + ' · ' + (sc._wsTabs.length ? (sc._wsTabs.length + ' worksheet(s) in browser') : 'No worksheet tabs') + ' — click Run now to apply.';
+                    }
+                })
+                .catch(function () {
+                })
+                .then(function () {
+                    setAddRuleBusy(false);
+                });
         });
 
         listWorksheetTabs().then(function (tabs) {
+            sc._wsTabs = tabs || [];
             if (cfg.rules.length) {
-                redrawRules(tabs);
+                redrawRules(sc._wsTabs);
             }
             if (!cfg.rules.length) {
                 sc._summary.textContent =
-                    'No rules yet. Add a rule, pick a worksheet, and match e.g. alert type “Misrouted”.';
+                    'No rules yet. Add a rule, pick a worksheet, and match e.g. alert type “Misrouted”. Rules run only when you click Run now.';
             } else {
-                sc._summary.textContent = 'Rules: ' + cfg.rules.length + ' · ' + (tabs && tabs.length ? (tabs.length + ' worksheet(s) in browser') : 'No worksheet tabs (open a worksheet in this browser).');
+                sc._summary.textContent = 'Rules: ' + cfg.rules.length + ' · ' + (sc._wsTabs && sc._wsTabs.length ? (sc._wsTabs.length + ' worksheet(s) in browser') : 'No worksheet tabs (open a worksheet in this browser).') + ' — Run now uses the table as it looks now.';
             }
         });
 
