@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Send AC to WS (send late FLT required)
 // @namespace    Wolf 2.0
-// @version      1.1.2
+// @version      1.1.3
 // @description  Right-click AC: send tail to another worksheet. Requires Send late flights to WS Pax Conx on worksheet tabs (BroadcastChannel ws_apply_tail).
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -191,19 +191,78 @@
     }
 
     var RE_N_NUMBER = /N\d{1,5}[A-Z]?/i;
+    /** Alternate AC row layout (worksheet) — see XrjX-V8q874 block vs AoJn2gDrLWo. */
+    var RE_TAIL_ALTERNATE = /\b([A-Z]{1,2}\d{1,5}[A-Z]{0,2})\b/;
+    /** Fleet / line id when not N-number (e.g. 7S7). */
+    var RE_LINE_ID = /^[A-Z0-9]{2,7}$/i;
+
+    function textOneLine(el) {
+        if (!el) {
+            return '';
+        }
+        return String(el.textContent || '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function tailFromPlainLine(s) {
+        if (!s) {
+            return '';
+        }
+        s = String(s).replace(/\s+/g, ' ').trim();
+        if (s.length < 2 || s.length > 35) {
+            return '';
+        }
+        if (/^[A-Z]{3}$/i.test(s)) {
+            return '';
+        }
+        if (s.indexOf('#') === 0) {
+            return '';
+        }
+        var m = s.match(RE_N_NUMBER);
+        if (m) {
+            return m[0].toUpperCase();
+        }
+        m = s.match(RE_TAIL_ALTERNATE);
+        if (m) {
+            return m[1].toUpperCase();
+        }
+        if (RE_LINE_ID.test(s) && !/^\d+$/.test(s)) {
+            return s.toUpperCase();
+        }
+        return '';
+    }
 
     function extractTailFromAcBlock(root) {
         if (!root || !root.querySelector) {
             return '';
         }
-        var cand =
-            (root.querySelector('div[class*="opUU"]') || root.querySelector('[class*="opUU"]') || null);
+        var tryEls = [];
+        var sels = [
+            'div[class*="opUU"]',
+            'div[class*="o8Cnb"]',
+            'div[class*="AId8"]'
+        ];
+        var q;
+        for (q = 0; q < sels.length; q++) {
+            var n = root.querySelector(sels[q]);
+            if (n) {
+                tryEls.push(n);
+            }
+        }
+        for (q = 0; q < tryEls.length; q++) {
+            var t0 = tailFromPlainLine(textOneLine(tryEls[q]));
+            if (t0) {
+                return t0;
+            }
+        }
+        var cand = tryEls[0] || null;
         var t = '';
         if (cand) {
-            t = (cand.textContent || '').replace(/\s+/g, ' ').trim();
+            t = textOneLine(cand);
         }
         if (!t) {
-            t = (root.textContent || '').replace(/\s+/g, ' ').trim();
+            t = textOneLine(root);
         }
         if (!t) {
             return '';
@@ -212,8 +271,29 @@
         if (m) {
             return m[0].toUpperCase();
         }
-        m = t.match(/\b([A-Z]{1,2}\d{1,5}[A-Z]{0,2})\b/);
-        return m ? m[1].toUpperCase() : '';
+        m = t.match(RE_TAIL_ALTERNATE);
+        if (m) {
+            return m[1].toUpperCase();
+        }
+        // Obfuscated layout: scan child divs for a lone id / tail line
+        var kids = root.querySelectorAll('div');
+        var i;
+        for (i = 0; i < kids.length; i++) {
+            var t1 = tailFromPlainLine(textOneLine(kids[i]));
+            if (t1) {
+                return t1;
+            }
+        }
+        t = textOneLine(root);
+        m = t.match(RE_N_NUMBER);
+        if (m) {
+            return m[0].toUpperCase();
+        }
+        m = t.match(RE_TAIL_ALTERNATE);
+        if (m) {
+            return m[1].toUpperCase();
+        }
+        return tailFromPlainLine(t);
     }
 
     function isLikelyAcContextMenuPopup(popup) {
@@ -385,9 +465,11 @@
         sub.addEventListener('mouseleave', scheduleHide);
 
         try {
-            menu.insertBefore(wrap, firstItem);
-        } catch (e) {
             menu.appendChild(wrap);
+        } catch (e) {
+            try {
+                menu.appendChild(wrap);
+            } catch (e2) {}
         }
     }
 
@@ -425,9 +507,12 @@
         var hasType = el.closest
             ? el.closest('[data-testid="iata-display-type"]')
             : null;
-        var inBlock = el.closest
-            ? el.closest('div.AoJn2gDrLWo, [class*="AoJn2gDrLWo"]')
-            : null;
+        var inBlock =
+            (el.closest &&
+                el.closest(
+                    'div.AoJn2gDrLWo, [class*="AoJn2gDrLWo"], [class*="XrjX-V8q874"], [class*="XrjX"]'
+                )) ||
+            null;
         if (inBlock) {
             lastContextTarget = inBlock;
         } else if (hasType) {
