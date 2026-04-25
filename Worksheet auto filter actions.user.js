@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.3.6
+// @version      1.3.7
 // @description  Worksheet: compact collapsible auto filter actions; watch AC/LN/FLT; Replace/Append/Remove on change or interval.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -737,7 +737,7 @@
 
     function formatTime24hLocal() {
         var d = new Date();
-        return pad2(d.getHours()) + pad2(d.getMinutes());
+        return '>' + pad2(d.getHours()) + pad2(d.getMinutes());
     }
 
     function setOperationalTimeInputValue(inp, value) {
