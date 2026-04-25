@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Pax connections - late flights
 // @namespace    Wolf 2.0
-// @version      1.9.5
-// @description  After sending tight flights, show PAX count from the Pax table next to each flight puck on the worksheet (briefly). Alt+open Pax, parse/merge unchanged.
+// @version      1.9.6
+// @description  Worksheet PAX badge: looser PAX column match, text-based puck match, fixed-position badge, longer retries. Alt+open Pax unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"paxLateToWsEnabled":{"type":"boolean","group":"Pax late to worksheet","label":"Enable Alt+click on flight pucks","default":true},"paxLateToWsOpenPaxWindow":{"type":"boolean","group":"Pax late to worksheet","label":"Open Pax on Alt+click","default":true,"description":"Opens a separate browser window (not a tab) when the popup options below are used."},"paxLateToWsPaxAsPopupWindow":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Pax in popup (not new tab)","default":true,"description":"Uses window features (size/position) like Middle-click launcher, so the worksheet can stay the focused tab."},"paxLateToWsPaxRefocusOpener":{"type":"boolean","group":"Pax late to worksheet · open Pax","label":"Refocus this window after open","default":true,"description":"Call window.focus() on the schedule/worksheet window after opening Pax (best-effort; browser may still show the popup on top)."},"paxLateToWsPaxWinW":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup width (px)","default":1000,"min":400,"max":2400,"step":10},"paxLateToWsPaxWinH":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup height (px)","default":800,"min":400,"max":2000,"step":10},"paxLateToWsPaxWinLeft":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup left offset from this window (px)","default":24,"min":-2000,"max":2000,"step":1},"paxLateToWsPaxWinTop":{"type":"number","group":"Pax late to worksheet · open Pax","label":"Popup top offset (px)","default":24,"min":0,"max":2000,"step":1},"paxLateToWsPaxWindowName":{"type":"string","group":"Pax late to worksheet · open Pax","label":"Reusable window name","default":"__dcPaxLateFlightsPax__","description":"If another Pax from this control is already using this name, the same window may navigate (browser dependent). Use a new name to always get a new popup."},"paxLateToWsAfterOpenWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After open Pax, wait (ms)","default":2000,"min":0,"max":20000,"step":100},"paxLateToWsPaxInlineSend":{"type":"boolean","group":"Pax late to worksheet","label":"Pax: inline send by connection","default":true,"description":"Compact button between CONNECT and SCH ARR. With several worksheet tabs, you pick the target; one tab = send there; remembered per city after a successful send."},"paxLateToWsWorksheetPicker":{"type":"boolean","group":"Pax late to worksheet","label":"Ask which worksheet (2+ tabs)","default":true,"description":"When more than one worksheet tab is open, show a title list. Schedule pages are not listed (worksheet widget only)."},"paxLateToWsListWorksheetsMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet list wait (ms)","default":500,"min":100,"max":5000,"step":50,"description":"How long to wait for worksheet tab replies before opening the picker. Lower = faster; raise only if the list is often empty."},"paxLateToWsMatchPaxPath":{"type":"boolean","group":"Pax late to worksheet","label":"Match leg to Pax URL","default":true},"paxLateToWsTightByTime":{"type":"boolean","group":"Pax late to worksheet · time","label":"Tight = ETD within gap of ref ETA","default":true},"paxLateToWsTightMaxGapMin":{"type":"number","group":"Pax late to worksheet · time","label":"Max minutes (|ETD − ref ETA|)","default":20,"min":0,"max":300,"step":1},"paxLateToWsTightTimeOrColor":{"type":"boolean","group":"Pax late to worksheet · time","label":"OR include red/orange rows","default":true},"paxLateToWsDownlineColumn":{"type":"select","group":"Pax late to worksheet","label":"IATA filter column","default":"off","options":[{"value":"off","label":"No IATA filter"},{"value":"final","label":"FINAL only"},{"value":"next","label":"NEXT only"},{"value":"next_or_final","label":"NEXT or FINAL"}]},"paxLateToWsDownlineIata":{"type":"string","group":"Pax late to worksheet","label":"IATA list","default":"","placeholder":"e.g. MSP"},"paxLateToWsAutoOutboundTab":{"type":"boolean","group":"Pax late to worksheet","label":"Click Outbound first","default":true},"paxLateToWsOutboundTabRetryMs":{"type":"number","group":"Pax late to worksheet","label":"Outbound: retry every (ms)","default":300,"min":100,"max":3000,"step":50,"description":"Poll for the Outbound tab while the page is still loading."},"paxLateToWsOutboundTabMaxWaitMs":{"type":"number","group":"Pax late to worksheet","label":"Outbound: max wait (ms)","default":12000,"min":0,"max":60000,"step":500,"description":"Stop looking for Outbound after this; collection still runs. 0 = one try only (old behavior)."},"paxLateToWsOutboundWaitMs":{"type":"number","group":"Pax late to worksheet","label":"After Outbound (ms)","default":500,"min":0,"max":5000,"step":50},"paxLateToWsQueryOtherWindows":{"type":"boolean","group":"Pax late to worksheet","label":"Broadcast from Pax to worksheet","default":true},"paxLateToWsBcastTimeoutMs":{"type":"number","group":"Pax late to worksheet","label":"Pax reply wait (ms)","default":2000,"min":0,"max":10000,"step":100},"paxLateToWsVerboseLog":{"type":"boolean","group":"Pax late to worksheet","label":"Debug log (general)","default":false,"description":"General [PAX-LATE-WS] lines (e.g. Alt+click, broadcast)."},"paxLateToWsLogParse":{"type":"boolean","group":"Pax late to worksheet","label":"Log parse (tight conx table)","default":false,"description":"Console: ref ETA, each outbound row FLT, ETD, |gap|, time vs color, include/skip. Use with Send or Alt+click to see why 3702 vs 3862."},"paxLateToWsWsPaxBadgeMs":{"type":"number","group":"Pax late to worksheet","label":"Worksheet: PAX count badge (ms)","default":12000,"min":0,"max":120000,"step":500,"description":"After each flight is entered, show the Pax count from the outbound table next to that flight puck. 0 = off."},"paxLateToWsStepMs":{"type":"number","group":"Pax late to worksheet","label":"Enter delay (ms)","default":250,"min":0,"max":5000,"step":50}}
@@ -1193,6 +1193,10 @@
         if (!headerTr) {
             return -1;
         }
+        const bySub = findHeaderColumnIndexByText(headerTr, 'PAX');
+        if (bySub >= 0) {
+            return bySub;
+        }
         const ths = headerTr.querySelectorAll('th');
         for (var i = 0; i < ths.length; i++) {
             if (thTextNorm(ths[i]) === 'PAX') {
@@ -1206,8 +1210,39 @@
         if (!td) {
             return null;
         }
-        const t = trimCellText((td && td.textContent) || '');
-        const m = t.match(/\b(\d{1,4})\b/);
+        var t = trimCellText((td && td.textContent) || '');
+        if (td.querySelector) {
+            const el =
+                (td.querySelector && td.querySelector('span')) || td;
+            if (el && el.cloneNode) {
+                const c = el.cloneNode(true);
+                const tb = c.querySelectorAll('table');
+                var ti;
+                for (ti = 0; ti < tb.length; ti++) {
+                    if (tb[ti] && tb[ti].parentNode) {
+                        tb[ti].parentNode.removeChild(tb[ti]);
+                    }
+                }
+                var anyD = true;
+                while (anyD) {
+                    anyD = false;
+                    const ds = c.querySelectorAll('div');
+                    var di;
+                    for (di = 0; di < ds.length; di++) {
+                        if (ds[di] && ds[di].parentNode) {
+                            ds[di].parentNode.removeChild(ds[di]);
+                            anyD = true;
+                            break;
+                        }
+                    }
+                }
+                t = trimCellText(c.textContent || t);
+            }
+        }
+        var m = t.match(/(?:^|[^\d])(\d{1,4})(?:$|[^\d])/);
+        if (!m) {
+            m = t.match(/(\d{1,4})/);
+        }
         if (!m) {
             return null;
         }
@@ -1571,6 +1606,45 @@
             return String(x.flight).replace(/^\s+|\s+$/g, '');
         }
         return String(x);
+    }
+
+    function firstFlightDigitsInString(s) {
+        if (!s) {
+            return '';
+        }
+        const t = String(s);
+        const m1 = t.match(
+            /(?:^|[^\d/])(\d{1,4})(?:$|[^.\d/])/
+        );
+        if (m1) {
+            return m1[1];
+        }
+        const m2 = t.match(/(\d{1,4})/);
+        return m2 ? m2[1] : '';
+    }
+
+    function flightDigitsFromPuckDom(puck) {
+        if (!puck) {
+            return '';
+        }
+        const fd = findFlightDataFromPuck(puck, null);
+        if (fd) {
+            const a = getFlightNumber({
+                flight: fd.flight || fd.legFlight || fd.opFlight
+            });
+            if (a) {
+                return a;
+            }
+        }
+        const popT = puck.querySelector
+            ? puck.querySelector(
+                '[data-qe-id="as-flight-leg-pop-target"]'
+            )
+            : null;
+        const t =
+            (popT && (popT.textContent || popT.getAttribute('aria-label'))) ||
+            (puck.textContent || '');
+        return firstFlightDigitsInString(t);
     }
 
     function formatFlightsListForLog(arr) {
@@ -2428,15 +2502,8 @@
             if (!puck) {
                 continue;
             }
-            const fd = findFlightDataFromPuck(puck, null);
-            if (!fd) {
-                continue;
-            }
-            if (
-                String(fd.flight || '') === d ||
-                String(fd.legFlight || '') === d ||
-                String(fd.opFlight || '') === d
-            ) {
+            const fromDom = flightDigitsFromPuckDom(puck);
+            if (fromDom && fromDom === d) {
                 return puck;
             }
         }
@@ -2451,44 +2518,58 @@
         if (ms <= 0) {
             return;
         }
-        try {
-            if (puck.querySelector) {
-                const oldB = puck.querySelector('[data-dc-pax-late-ws-pax-badge]');
-                if (oldB && oldB.parentNode) {
-                    try {
-                        oldB.parentNode.removeChild(oldB);
-                    } catch (e) {}
-                }
-            }
-        } catch (e2) {}
-        var pos = 'static';
-        try {
-            pos = window.getComputedStyle(puck).position;
-        } catch (e) {}
-        if (pos === 'static') {
+        const host =
+            (puck.querySelector &&
+                puck.querySelector(
+                    '[data-qe-id="as-flight-leg-pop-target"]'
+                )) ||
+            puck;
+        const oldL = document.querySelectorAll(
+            '[data-dc-pax-late-ws-pax-badge-wrap]'
+        );
+        var oi;
+        for (oi = 0; oi < oldL.length; oi++) {
             try {
-                puck.style.position = 'relative';
+                if (oldL[oi] && oldL[oi].parentNode) {
+                    oldL[oi].parentNode.removeChild(oldL[oi]);
+                }
             } catch (e) {}
         }
+        const wrap = document.createElement('div');
+        wrap.setAttribute('data-dc-pax-late-ws-pax-badge-wrap', '1');
         const b = document.createElement('span');
         b.setAttribute('data-dc-pax-late-ws-pax-badge', '1');
         b.textContent = 'PAX ' + String(paxCount);
-        b.setAttribute('title', 'Pax on board (from Pax connections export)');
+        b.setAttribute('title', 'Pax on board (from Pax connections row)');
         b.style.cssText =
-            'position:absolute!important;right:2px!important;bottom:2px!important;z-index:20!important;' +
-            'max-width:96%!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;' +
-            'font:10px/1.1 system-ui,Segoe UI,sans-serif!important;padding:2px 4px!important;border-radius:3px!important;' +
-            'background:rgba(0,0,0,.75)!important;color:#ecf0f1!important;pointer-events:none!important;' +
-            'box-shadow:0 1px 2px rgba(0,0,0,.4)!important;';
+            'font:10px/1.15 system-ui,Segoe UI,sans-serif!important;padding:2px 5px!important;border-radius:3px!important;' +
+            'background:rgba(0,0,0,.82)!important;color:#ecf0f1!important;pointer-events:none!important;' +
+            'box-shadow:0 1px 3px rgba(0,0,0,.45)!important;white-space:nowrap!important;';
+        wrap.appendChild(b);
+        var r;
         try {
-            puck.appendChild(b);
+            r = host.getBoundingClientRect();
+        } catch (e) {
+            r = null;
+        }
+        if (!r || r.width < 2) {
+            return;
+        }
+        wrap.style.cssText =
+            'position:fixed!important;left:' +
+            Math.round(r.right - 4) +
+            'px!important;top:' +
+            Math.round(r.top - 2) +
+            'px!important;transform:translate(-100%,0)!important;z-index:999999!important;pointer-events:none!important;';
+        try {
+            document.body.appendChild(wrap);
         } catch (e) {
             return;
         }
         const tid = setTimeout(function () {
             try {
-                if (b.parentNode) {
-                    b.parentNode.removeChild(b);
+                if (wrap.parentNode) {
+                    wrap.parentNode.removeChild(wrap);
                 }
             } catch (e) {}
         }, ms);
@@ -2510,24 +2591,36 @@
         if (!d) {
             return;
         }
+        var tries = 0;
+        var maxTries = 12;
         function oneTry() {
+            tries++;
             const puck = findFlightPuckForFlightDigits(d);
             if (puck) {
                 showPaxBadgeOnFlightPuck(puck, flightItem.pax);
-                return true;
+                return;
             }
-            return false;
+            if (tries < maxTries) {
+                const w = 120 * tries;
+                const tid = setTimeout(oneTry, w);
+                pendingTimeouts.push(tid);
+            } else if (getPref('paxLateToWsVerboseLog', false) !== false) {
+                log(
+                    'PAX badge: no puck for flight ' +
+                        d +
+                        ' after ' +
+                        maxTries +
+                        ' tries (worksheet may use a different leg display).'
+                );
+            }
         }
-        if (oneTry()) {
-            return;
+        if (window.requestAnimationFrame) {
+            requestAnimationFrame(function () {
+                oneTry();
+            });
+        } else {
+            oneTry();
         }
-        const t1 = setTimeout(function () {
-            oneTry();
-        }, 80);
-        const t2 = setTimeout(function () {
-            oneTry();
-        }, 400);
-        pendingTimeouts.push(t1, t2);
     }
 
     function ensureWorksheetRegistration() {
