@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Send AC to WS (send late FLT required)
 // @namespace    Wolf 2.0
-// @version      1.1.1
+// @version      1.1.3
 // @description  Right-click AC: send tail to another worksheet. Requires Send late flights to WS Pax Conx on worksheet tabs (BroadcastChannel ws_apply_tail).
-// @match        https://opssuitemain.swacorp.com/*
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
 // @donkeycode-pref {"acTailToWsEnabled":{"type":"boolean","group":"AC → worksheet","label":"Enable context menu","default":true},"acTailToWsListWaitMs":{"type":"number","group":"AC → worksheet","label":"Worksheet list wait (ms)","default":2000,"min":100,"max":8000,"step":100,"description":"How long to wait for worksheet tabs to answer ws_list (raise if the list is often empty)."},"acTailToWsLog":{"type":"boolean","group":"AC → worksheet","label":"Debug log","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/AC%20context%20menu%20-%20send%20tail%20to%20worksheet.user.js
@@ -14,6 +14,8 @@
     'use strict';
 
     var BC_WS_NAME = 'dc_pax_late_to_ws_v1';
+    /** Same key as Send late flights to WS Pax Conx — per-tab worksheet identity. */
+    var WS_TAB_ID_KEY = 'dcPaxLateWsTabId';
 
     var ch = null;
     var menuObserver = null;
@@ -139,6 +141,33 @@
         });
     }
 
+    var worksheetTabIdLocal = '';
+
+    /**
+     * Tab id for this worksheet (must match Pax script's getOrCreateWorksheetTabId).
+     */
+    function getOrCreateWorksheetTabIdForThisPage() {
+        if (worksheetTabIdLocal) {
+            return worksheetTabIdLocal;
+        }
+        try {
+            var ex = sessionStorage.getItem(WS_TAB_ID_KEY);
+            if (ex) {
+                worksheetTabIdLocal = ex;
+                return ex;
+            }
+        } catch (e) {}
+        worksheetTabIdLocal =
+            'ws' +
+            String(Date.now()) +
+            '-' +
+            String(Math.random()).slice(2, 10);
+        try {
+            sessionStorage.setItem(WS_TAB_ID_KEY, worksheetTabIdLocal);
+        } catch (e2) {}
+        return worksheetTabIdLocal;
+    }
+
     function postApplyTailToWorksheet(tail, targetTabId) {
         var c = ensureChannel();
         if (!c) {
@@ -162,19 +191,78 @@
     }
 
     var RE_N_NUMBER = /N\d{1,5}[A-Z]?/i;
+    /** Alternate AC row layout (worksheet) — see XrjX-V8q874 block vs AoJn2gDrLWo. */
+    var RE_TAIL_ALTERNATE = /\b([A-Z]{1,2}\d{1,5}[A-Z]{0,2})\b/;
+    /** Fleet / line id when not N-number (e.g. 7S7). */
+    var RE_LINE_ID = /^[A-Z0-9]{2,7}$/i;
+
+    function textOneLine(el) {
+        if (!el) {
+            return '';
+        }
+        return String(el.textContent || '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function tailFromPlainLine(s) {
+        if (!s) {
+            return '';
+        }
+        s = String(s).replace(/\s+/g, ' ').trim();
+        if (s.length < 2 || s.length > 35) {
+            return '';
+        }
+        if (/^[A-Z]{3}$/i.test(s)) {
+            return '';
+        }
+        if (s.indexOf('#') === 0) {
+            return '';
+        }
+        var m = s.match(RE_N_NUMBER);
+        if (m) {
+            return m[0].toUpperCase();
+        }
+        m = s.match(RE_TAIL_ALTERNATE);
+        if (m) {
+            return m[1].toUpperCase();
+        }
+        if (RE_LINE_ID.test(s) && !/^\d+$/.test(s)) {
+            return s.toUpperCase();
+        }
+        return '';
+    }
 
     function extractTailFromAcBlock(root) {
         if (!root || !root.querySelector) {
             return '';
         }
-        var cand =
-            (root.querySelector('div[class*="opUU"]') || root.querySelector('[class*="opUU"]') || null);
+        var tryEls = [];
+        var sels = [
+            'div[class*="opUU"]',
+            'div[class*="o8Cnb"]',
+            'div[class*="AId8"]'
+        ];
+        var q;
+        for (q = 0; q < sels.length; q++) {
+            var n = root.querySelector(sels[q]);
+            if (n) {
+                tryEls.push(n);
+            }
+        }
+        for (q = 0; q < tryEls.length; q++) {
+            var t0 = tailFromPlainLine(textOneLine(tryEls[q]));
+            if (t0) {
+                return t0;
+            }
+        }
+        var cand = tryEls[0] || null;
         var t = '';
         if (cand) {
-            t = (cand.textContent || '').replace(/\s+/g, ' ').trim();
+            t = textOneLine(cand);
         }
         if (!t) {
-            t = (root.textContent || '').replace(/\s+/g, ' ').trim();
+            t = textOneLine(root);
         }
         if (!t) {
             return '';
@@ -183,8 +271,29 @@
         if (m) {
             return m[0].toUpperCase();
         }
-        m = t.match(/\b([A-Z]{1,2}\d{1,5}[A-Z]{0,2})\b/);
-        return m ? m[1].toUpperCase() : '';
+        m = t.match(RE_TAIL_ALTERNATE);
+        if (m) {
+            return m[1].toUpperCase();
+        }
+        // Obfuscated layout: scan child divs for a lone id / tail line
+        var kids = root.querySelectorAll('div');
+        var i;
+        for (i = 0; i < kids.length; i++) {
+            var t1 = tailFromPlainLine(textOneLine(kids[i]));
+            if (t1) {
+                return t1;
+            }
+        }
+        t = textOneLine(root);
+        m = t.match(RE_N_NUMBER);
+        if (m) {
+            return m[0].toUpperCase();
+        }
+        m = t.match(RE_TAIL_ALTERNATE);
+        if (m) {
+            return m[1].toUpperCase();
+        }
+        return tailFromPlainLine(t);
     }
 
     function isLikelyAcContextMenuPopup(popup) {
@@ -292,12 +401,20 @@
                     return;
                 }
                 sub.innerHTML = '';
+                var myId = getOrCreateWorksheetTabIdForThisPage();
+                var hadAny = tabs && tabs.length > 0;
+                if (tabs && tabs.length && myId) {
+                    tabs = tabs.filter(function (x) {
+                        return x && String(x.tabId) !== String(myId);
+                    });
+                }
                 if (!tabs || !tabs.length) {
                     var d0 = document.createElement('a');
                     d0.className = firstItem.className || 'item';
                     d0.href = '#';
-                    d0.textContent =
-                        'No worksheets found — open a worksheet with "Send late flights to WS Pax Conx" (v1.9.9+).';
+                    d0.textContent = hadAny
+                        ? 'No other worksheets — you are on the only target, or open another worksheet tab with "Send late flights to WS Pax Conx" (v1.9.9+).'
+                        : 'No worksheets found — open a worksheet with "Send late flights to WS Pax Conx" (v1.9.9+).';
                     d0.style.cssText = 'color:#e67e22!important;white-space:normal!important;';
                     sub.appendChild(d0);
                     return;
@@ -348,9 +465,11 @@
         sub.addEventListener('mouseleave', scheduleHide);
 
         try {
-            menu.insertBefore(wrap, firstItem);
-        } catch (e) {
             menu.appendChild(wrap);
+        } catch (e) {
+            try {
+                menu.appendChild(wrap);
+            } catch (e2) {}
         }
     }
 
@@ -388,9 +507,12 @@
         var hasType = el.closest
             ? el.closest('[data-testid="iata-display-type"]')
             : null;
-        var inBlock = el.closest
-            ? el.closest('div.AoJn2gDrLWo, [class*="AoJn2gDrLWo"]')
-            : null;
+        var inBlock =
+            (el.closest &&
+                el.closest(
+                    'div.AoJn2gDrLWo, [class*="AoJn2gDrLWo"], [class*="XrjX-V8q874"], [class*="XrjX"]'
+                )) ||
+            null;
         if (inBlock) {
             lastContextTarget = inBlock;
         } else if (hasType) {
@@ -422,6 +544,7 @@
     }
 
     function init() {
+        getOrCreateWorksheetTabIdForThisPage();
         ensureChannel();
         onCtx = onContextMenu;
         document.addEventListener('contextmenu', onCtx, true);
