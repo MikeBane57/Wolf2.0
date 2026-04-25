@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Brief AI weather (worksheet)
 // @namespace    Wolf 2.0
-// @version      0.2.3
-// @description  Worksheet: regional weather brief (METAR-based) — optional LLM (Groq, Gemini, Ollama, etc.); button by WX/WS state.
+// @version      0.3.0
+// @description  Worksheet: regional weather brief (METAR-based) — broad LLM brief; compose modal, stations-of-interest, optional LLM.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -12,7 +12,7 @@
 // @connect      openrouter.ai
 // @connect      localhost
 // @connect      127.0.0.1
-// @donkeycode-pref {"worksheetToolbarClickDebug":{"type":"boolean","group":"Brief AI","label":"Log click target (debug)","description":"Same as WS state: log pointerdown/click on worksheet helper.","default":false},"briefAiProvider":{"type":"select","group":"Brief AI","label":"LLM provider","description":"GitHub Copilot has no public HTTP API for this use. Groq: free key at https://console.groq.com — set Base URL to https://api.groq.com/openai/v1. Ollama: free local (open-source models), set URL to http://127.0.0.1:11434/v1. OpenRouter: https://openrouter.ai","default":"openai_compat","options":[{"val":"openai_compat","label":"OpenAI-compatible (Groq, OpenRouter, many others)"},{"val":"gemini","label":"Google Gemini (AI Studio key)"},{"val":"ollama","label":"Ollama local (http://127.0.0.1:11434/v1)"}]},"briefAiOpenaiBaseUrl":{"type":"string","group":"Brief AI","label":"OpenAI-compat: Base URL","default":"https://api.groq.com/openai/v1","placeholder":"https://api.groq.com/openai/v1"},"briefAiOpenaiKey":{"type":"string","group":"Brief AI","label":"OpenAI-compat: API key","default":"","password":true,"description":"e.g. Groq gs_... or OpenRouter sk-..."},"briefAiOpenaiModel":{"type":"string","group":"Brief AI","label":"OpenAI-compat: model id","default":"llama-3.3-70b-versatile","placeholder":"llama-3.3-70b-versatile"},"briefAiOllamaUrl":{"type":"string","group":"Brief AI","label":"Ollama: base URL (OpenAI path)","default":"http://127.0.0.1:11434/v1","placeholder":"http://127.0.0.1:11434/v1"},"briefAiOllamaModel":{"type":"string","group":"Brief AI","label":"Ollama: model name","default":"llama3.2","placeholder":"llama3.2"},"briefAiGeminiKey":{"type":"string","group":"Brief AI","label":"Gemini: API key","description":"https://aistudio.google.com/apikey","default":"","password":true},"briefAiGeminiModel":{"type":"string","group":"Brief AI","label":"Gemini: model","default":"gemini-2.0-flash","placeholder":"gemini-2.0-flash"},"briefAiExtraStations":{"type":"string","group":"Brief AI","label":"Extra stations of concern","description":"Space- or comma-separated IATA; merged into fetch.","default":"","placeholder":"e.g. OAK ABQ"},"briefAiTemperature":{"type":"number","group":"Brief AI","label":"LLM temperature","description":"Higher = more conversational (0.15–0.8).","default":0.45,"min":0.1,"max":0.95,"step":0.05}}
+// @donkeycode-pref {"worksheetToolbarClickDebug":{"type":"boolean","group":"Brief AI","label":"Log click target (debug)","description":"Same as WS state: log pointerdown/click on worksheet helper.","default":false},"briefAiProvider":{"type":"select","group":"Brief AI","label":"LLM provider","description":"GitHub Copilot has no public HTTP API for this use. Groq: free key at https://console.groq.com — set Base URL to https://api.groq.com/openai/v1. Ollama: free local (open-source models), set URL to http://127.0.0.1:11434/v1. OpenRouter: https://openrouter.ai","default":"openai_compat","options":[{"val":"openai_compat","label":"OpenAI-compatible (Groq, OpenRouter, many others)"},{"val":"gemini","label":"Google Gemini (AI Studio key)"},{"val":"ollama","label":"Ollama local (http://127.0.0.1:11434/v1)"}]},"briefAiOpenaiBaseUrl":{"type":"string","group":"Brief AI","label":"OpenAI-compat: Base URL","default":"https://api.groq.com/openai/v1","placeholder":"https://api.groq.com/openai/v1"},"briefAiOpenaiKey":{"type":"string","group":"Brief AI","label":"OpenAI-compat: API key","default":"","password":true,"description":"e.g. Groq gs_... or OpenRouter sk-..."},"briefAiOpenaiModel":{"type":"string","group":"Brief AI","label":"OpenAI-compat: model id","default":"llama-3.3-70b-versatile","placeholder":"llama-3.3-70b-versatile"},"briefAiOllamaUrl":{"type":"string","group":"Brief AI","label":"Ollama: base URL (OpenAI path)","default":"http://127.0.0.1:11434/v1","placeholder":"http://127.0.0.1:11434/v1"},"briefAiOllamaModel":{"type":"string","group":"Brief AI","label":"Ollama: model name","default":"llama3.2","placeholder":"llama3.2"},"briefAiGeminiKey":{"type":"string","group":"Brief AI","label":"Gemini: API key","description":"https://aistudio.google.com/apikey","default":"","password":true},"briefAiGeminiModel":{"type":"string","group":"Brief AI","label":"Gemini: model","default":"gemini-2.0-flash","placeholder":"gemini-2.0-flash"},"briefAiExtraStations":{"type":"string","group":"Brief AI","label":"Default extra stations (pref)","description":"Also merged into METAR scope and pre-fills the compose dialog. Use the dialog to list what to call out; leave blank in the dialog to use the full WN default lists.","default":"","placeholder":"e.g. OAK ABQ"},"briefAiTemperature":{"type":"number","group":"Brief AI","label":"LLM temperature","description":"Higher = more conversational (0.15–0.8).","default":0.45,"min":0.1,"max":0.95,"step":0.05}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Brief%20AI%20weather%20(worksheet).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Brief%20AI%20weather%20(worksheet).user.js
 // ==/UserScript==
@@ -140,6 +140,36 @@
         return 'K' + u;
     }
 
+    var DEFAULT_REGION_STATIONS = {
+        East: DEFAULT_EAST,
+        Central: DEFAULT_CENTRAL,
+        West: DEFAULT_WEST,
+        'Intl/ETOPS': DEFAULT_INTL
+    };
+
+    function iataListFromRegionDefaults(regionKey) {
+        return parseStationList(
+            (DEFAULT_REGION_STATIONS[regionKey] && String(DEFAULT_REGION_STATIONS[regionKey])) || ''
+        );
+    }
+
+    function regionNameForIata(iata) {
+        var u = String(iata || '').toUpperCase();
+        if (u.length !== 3) {
+            return 'East';
+        }
+        var r;
+        for (r in DEFAULT_REGION_STATIONS) {
+            if (!Object.prototype.hasOwnProperty.call(DEFAULT_REGION_STATIONS, r)) {
+                continue;
+            }
+            if (iataListFromRegionDefaults(r).indexOf(u) >= 0) {
+                return r;
+            }
+        }
+        return 'East';
+    }
+
     function buildRegionMap() {
         var extra = parseStationList(getPref('briefAiExtraStations', ''));
         var m = {
@@ -151,13 +181,40 @@
         if (extra.length) {
             var e;
             for (e = 0; e < extra.length; e++) {
-                m.East.push(extra[e]);
+                m[regionNameForIata(extra[e])].push(extra[e]);
             }
         }
         var r;
         for (r in m) {
             if (Object.prototype.hasOwnProperty.call(m, r)) {
                 m[r] = dedupeStrings(m[r]);
+            }
+        }
+        return m;
+    }
+
+    /**
+     * @param {string} watchListRaw - space/comma IATA; empty = full defaults (same as buildRegionMap)
+     */
+    function buildRegionMapForWatchList(watchListRaw) {
+        var listed = parseStationList(watchListRaw);
+        var fromPref = parseStationList(getPref('briefAiExtraStations', ''));
+        if (!listed.length && !fromPref.length) {
+            return buildRegionMap();
+        }
+        var all = dedupeStrings(listed.concat(fromPref));
+        if (!all.length) {
+            return buildRegionMap();
+        }
+        var m = { East: [], Central: [], West: [], 'Intl/ETOPS': [] };
+        var k;
+        for (k = 0; k < all.length; k++) {
+            var code = all[k];
+            m[regionNameForIata(code)].push(code);
+        }
+        for (k in m) {
+            if (Object.prototype.hasOwnProperty.call(m, k)) {
+                m[k] = dedupeStrings(m[k]);
             }
         }
         return m;
@@ -347,10 +404,54 @@
         return out;
     }
 
+    function regionAggregationForLlm(rName, sum) {
+        var wx = sum && sum.sample;
+        var sc = wx && wx.sc;
+        var raw = sc && sc.raw ? String(sc.raw) : '';
+        return {
+            approxStationsInRegion: sum && typeof sum.total === 'number' ? sum.total : 0,
+            sitesWithIfrOrLifr: sum && typeof sum.ifr === 'number' ? sum.ifr : 0,
+            sitesWithMvfr: sum && typeof sum.mvfr === 'number' ? sum.mvfr : 0,
+            sitesWithNotableHazards: sum && typeof sum.withFlags === 'number' ? sum.withFlags : 0,
+            roughConvectiveSignal: sc && /TS|VCTS|VCT|CB|convect|thunder/i.test(
+                (raw) + (sc.flt || '')
+            )
+                ? 'possible in snapshot'
+                : 'none called out in snapshot',
+            roughWintrySignal: sc && /FZ|SN|PL|ice|FZDZ|FZRA/i.test(raw)
+                ? 'possible in snapshot'
+                : 'none called out in snapshot',
+            generalFlightCategoryTilt: sc && sc.flt
+                ? String(sc.flt)
+                : 'varied or unknown in snapshot',
+            _omitAirportNames: true
+        };
+    }
+
+    function buildAggregatedBriefForLlm(struct) {
+        var r = (struct && struct.regions) || {};
+        var out = {
+            asOf: (struct && struct.asOf) || new Date().toISOString(),
+            dataScope:
+                'METAR-based snapshot; counts and themes only—no per-airport identities in this JSON.',
+            regions: {}
+        };
+        var k;
+        for (k in r) {
+            if (Object.prototype.hasOwnProperty.call(r, k)) {
+                out.regions[k] = regionAggregationForLlm(k, r[k]);
+            }
+        }
+        return out;
+    }
+
     function templateParagraphs(struct) {
         var r = struct && struct.regions;
         if (!r) {
-            return 'No regional data could be loaded. Check network or try again.';
+            return '**East**\nNo data loaded—check network and try again.\n\n' +
+                '**Central**\n(n/a)\n\n' +
+                '**West**\n(n/a)\n\n' +
+                '**Intl / ETOPS**\n(n/a)';
         }
         var order = [
             'East',
@@ -363,40 +464,27 @@
         for (i = 0; i < order.length; i++) {
             var name = order[i];
             var s = r[name];
-            if (!s) {
+            var title = name === 'Intl/ETOPS' ? 'Intl / ETOPS' : name;
+            if (!s || s.total < 1) {
+                parts.push('**' + title + '**');
+                parts.push('Nothing in the watch set for this band; broad picture only.');
                 continue;
             }
-            var line = name.toUpperCase() + ': ';
-            if (s.total < 1) {
-                line += 'No station list for this region.';
-            } else if (!s.sample) {
-                line +=
-                    'No operational concerns foreseen: no METARs returned (fetch gap or all stations without recent obs).';
+            if (!s.sample) {
+                parts.push('**' + title + '**');
+                parts.push('Broad picture: no recent METAR snapshot in the fetch—treat as unknown until refreshed.');
             } else {
-                var sev = s.ifr + s.mvfr;
-                if (sev < 1 && s.withFlags < 1) {
-                    line += 'No operational concerns foreseen based on current DECODED sample.';
+                var sev = (s.ifr || 0) + (s.mvfr || 0);
+                parts.push('**' + title + '**');
+                if (sev < 1 && (s.withFlags || 0) < 1) {
+                    parts.push('Broad picture: nothing stands out in this sample—routine ops barring new developments.');
                 } else {
-                    var wx = s.sample;
-                    var reas =
-                        wx.sc && wx.sc.reasons && wx.sc.reasons.length
-                            ? ' — ' + wx.sc.reasons.join(', ')
-                            : '';
-                    line +=
-                        s.ifr +
-                        ' site(s) IFR/LIFR, ' +
-                        s.mvfr +
-                        ' MVFR of ' +
-                        s.total +
-                        ' monitored. Highest-visibility concern ' +
-                        wx.iata +
-                        ' (' +
-                        (wx.sc && (wx.sc.flt || 'UNK')) +
-                        reas +
-                        ').';
+                    parts.push(
+                        'Broad picture: a mix of lower categories or weather flags in the sample. Stay situationally aware; ' +
+                        'we are not listing individual stations unless you added them in the form.'
+                    );
                 }
             }
-            parts.push(line);
         }
         return parts.join('\n\n');
     }
@@ -409,19 +497,34 @@
         return Math.min(0.95, Math.max(0.1, n));
     }
 
-    function buildBriefPrompts(dataJson) {
+    function buildBriefPrompts(dataJson, userStations, userFocus) {
+        var stList = trim(userStations || '');
+        var focus = trim(userFocus || '');
+        var stationRule = stList
+            ? 'The user asked to call out these station codes (IATA) by name when relevant: ' + stList + '. Otherwise do not name specific airports, cities, or navaids—stay regional and thematic.'
+            : 'Do not name any specific airport, city, or station code. Speak in broad regional terms only (e.g. "parts of the Southeast", "Gulf side", "upper Midwest").';
         var sys = [
-            'You are a Southwest Airlines line operations briefer speaking to a dispatcher or duty manager.',
-            'Be conversational and readable: a short lead-in, then by region, like you are giving a quick verbal brief (not a bullet list of raw stats unless helpful).',
-            'Cover these regions in order with short section labels on their own line: East, Central, West, and Intl-ETOPS (Hawaii, Alaska, Mexico/Caribbean, and other intl in the data).',
-            'Each region: 2-4 short sentences, or if nothing of note, one line like: "East: Nothing jumping out in the current snapshot."',
-            'Tie any concern to the JSON: flight categories, wind, convective or wintry flags implied there. If the JSON is thin for a region, say so in plain language.',
-            'No markdown headings (no #). No numbered lists unless natural. No claims of authority or TFR-level detail. Plain text only.',
-            'The JSON is your only source of "current conditions" — do not invent specific hazards at airports not implied by the data.',
-            'Here is the structured summary JSON:',
+            'You are a Southwest Airlines duty / dispatch-style briefer. Tone: professional, high-level, conversational—like a 30-second desk-to-desk read, not a met brief or a fact sheet.',
+            'OUTPUT FORMAT: Plain text. Start each of these four regions on its own line with a bold label using **double asterisks**, then a newline, then 2–3 short lines for that region. In this order exactly:',
+            '  **East**',
+            '  **Central**',
+            '  **West**',
+            '  **Intl / ETOPS**  (Hawaii, Alaska, Mexico & Caribbean, other intl as one bucket)',
+            'Do not use # headings or numbered lists. No tables.',
+            'CONTENT: Stay broad and strategic. Do not quote visibilities, exact winds, TAF times, or METAR text. The JSON is only a soft snapshot of themes and rough counts (IFR/LIFR density, MVFR, hazard signals)—use it to infer "heavier / lighter / more convective flavour / quieter" at a network level, not to enumerate facts.',
+            stationRule,
+            focus
+                ? 'The user also wrote this focus or concern (weigh it gently; do not contradict the JSON, but you may connect themes): ' + focus
+                : '',
+            'If a region has effectively nothing going on, say that in one short relaxed sentence—no "no operational concerns" boilerplate unless you want a single casual line.',
+            'The aggregated snapshot JSON (no per-airport identities unless your instructions say the user named stations):',
             dataJson
-        ].join('\n\n');
-        return { system: sys, user: 'Give the brief now.' };
+        ]
+            .filter(function (x) {
+                return String(x).length > 0;
+            })
+            .join('\n\n');
+        return { system: sys, user: 'Write the four-region brief now, following the **Region** line format exactly.' };
     }
 
     function gmXhrOpenAiChat(url, bodyObj, headers) {
@@ -602,8 +705,8 @@
         });
     }
 
-    function runBrief() {
-        var reg = buildRegionMap();
+    function runBrief(userStationsRaw, userFocus) {
+        var reg = buildRegionMapForWatchList(userStationsRaw);
         var allIata = [].concat(
             reg['East'] || [],
             reg['Central'] || [],
@@ -639,8 +742,13 @@
                 }
             }
             var st = buildStructuredBrief(reg, byIc);
-            var dataJson = JSON.stringify(st, null, 0);
-            var pr = buildBriefPrompts(dataJson);
+            var agg = buildAggregatedBriefForLlm(st);
+            var dataJson = JSON.stringify(agg, null, 0);
+            var pr = buildBriefPrompts(
+                dataJson,
+                userStationsRaw,
+                userFocus
+            );
             var prov = getPref('briefAiProvider', 'openai_compat');
 
             function doFallback(why) {
@@ -739,7 +847,31 @@
             '] .dc-bai-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;border-bottom:1px solid #334155;background:#0f1419;}' +
             '[' +
             MODAL_ATTR +
-            '] .dc-bai-body{padding:14px 16px;overflow:auto;white-space:pre-wrap;word-break:break-word;}' +
+            '] .dc-bai-body{padding:14px 16px;overflow:auto;word-break:break-word;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-body--brief{font:15px/1.55 system-ui,Segoe UI,sans-serif;color:#e2e8f0;white-space:normal;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-brief-para{margin:0 0 10px;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-brief-title{margin:0 0 2px 0;padding-top:4px;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-brief-title em{font-style:normal;font-weight:700;font-size:0.95em;letter-spacing:.01em;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-compose .dc-bai-field{margin:0 0 10px;display:flex;flex-direction:column;gap:4px;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-compose label{font-size:12px;font-weight:600;color:#94a3b8;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-compose textarea{min-height:64px;resize:vertical;font:13px/1.4 ui-monospace,monospace;box-sizing:border-box;width:100%;padding:8px;border:1px solid #475569;border-radius:6px;background:#0f1419;color:#e2e8f0;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-bai-compose .dc-bai-hint{font-size:11px;color:#64748b;line-height:1.3;}' +
             '[' +
             MODAL_ATTR +
             '] .dc-bai-foot{padding:10px 16px;border-top:1px solid #334155;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}' +
@@ -799,6 +931,67 @@
         addFooter(root);
     }
 
+    function escHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function formatBriefBodyHtml(plain) {
+        var t = String(plain == null ? '' : plain).replace(/\r\n/g, '\n');
+        t = t.replace(/^\s+|\s+$/g, '');
+        if (!t) {
+            return '<div class="dc-bai-body--brief" data-brief="1"></div>';
+        }
+        var parts = t.split(/(?:\n\s*){2,}|\n(?=[\t ]*\*\*)/g);
+        var out = [];
+        var i;
+        for (i = 0; i < parts.length; i++) {
+            var b = String(parts[i] || '')
+                .replace(/^\n+|\n+$/g, '')
+                .trim();
+            if (!b) {
+                continue;
+            }
+            var m = /^\s*\*\*([^*]+?)\*\*[\s:]*/.exec(b);
+            if (m) {
+                var rest = String(b)
+                    .slice(m[0].length)
+                    .replace(/^\n+|\n+$/g, '');
+                out.push(
+                    '<h4 class="dc-bai-brief-title"><em>' +
+                    escHtml(m[1]) +
+                    '</em></h4><p class="dc-bai-brief-para">' +
+                    (rest
+                        ? escHtml(rest)
+                            .split('\n')
+                            .join('<br />')
+                        : '') +
+                    '</p>'
+                );
+            } else {
+                out.push(
+                    '<p class="dc-bai-brief-para">' +
+                    escHtml(b)
+                        .split('\n')
+                        .join('<br />') +
+                    '</p>'
+                );
+            }
+        }
+        if (!out.length) {
+            out.push(
+                '<p class="dc-bai-brief-para">' +
+                escHtml(t)
+                    .split('\n')
+                    .join('<br />') +
+                '</p>'
+            );
+        }
+        return '<div class="dc-bai-body--brief" data-brief="1">' + out.join('') + '</div>';
+    }
+
     function addFooter(root) {
         var foot = root && root.querySelector('.dc-bai-foot');
         if (!foot) {
@@ -810,7 +1003,13 @@
         copy.textContent = 'Copy';
         copy.addEventListener('click', function () {
             var body = root.querySelector('.dc-bai-body');
-            var t = (body && body.textContent) || '';
+            if (!body) {
+                return;
+            }
+            var t = (body.innerText && body.innerText.length
+                ? body.innerText
+                : body.textContent) || '';
+            t = t.replace(/^\s+|\s+$/g, '');
             if (t && navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(t).catch(function () {});
             }
@@ -823,46 +1022,119 @@
         foot.appendChild(cl);
     }
 
-    function startBrief() {
+    function openComposeModal() {
         if (modalOpen) {
             return;
         }
-        var root;
+        ensureStyle();
         try {
-            root = openModalLoading();
-        } catch (e0) {
-            try {
-                window.alert('Brief AI: ' + (e0 && e0.message ? e0.message : e0));
-            } catch (e1) {}
-            return;
+            closeModal();
+        } catch (e0) {}
+        modalOpen = true;
+        var defSt = trim(getPref('briefAiExtraStations', ''));
+        var root = document.createElement('div');
+        root.setAttribute(MODAL_ATTR, '1');
+        root.addEventListener('click', function (e) {
+            if (e.target === root) {
+                closeModal();
+            }
+        });
+        root.innerHTML =
+            '<div class="dc-bai-panel" data-stop-close="1">' +
+            '<div class="dc-bai-head"><span>Brief AI</span><button type="button" data-bai-x style="background:transparent;border:0;color:#94a3b8;font:700 20px/1 system-ui;cursor:pointer" aria-label="Close">&times;</button></div>' +
+            '<div class="dc-bai-body dc-bai-compose">' +
+            '<div class="dc-bai-field">' +
+            '<label for="dc-bai-watch-stations">Stations to watch (optional)</label>' +
+            '<p class="dc-bai-hint">Space- or comma-separated 3-letter codes. Empty = WN default regional lists. Only codes you list may be named in the brief.</p>' +
+            '<textarea id="dc-bai-watch-stations" data-dc-bai-stations="1" rows="2" placeholder="e.g. MCO HOU SJC">' +
+            (defSt
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')) +
+            '</textarea></div>' +
+            '<div class="dc-bai-field">' +
+            '<label for="dc-bai-user-focus">Focus (optional)</label>' +
+            '<p class="dc-bai-hint">Anything the brief should lean toward (e.g. connections, ETOPS, snow risk).</p>' +
+            '<textarea id="dc-bai-user-focus" data-dc-bai-focus="1" rows="3" placeholder=""></textarea></div></div>' +
+            '<div class="dc-bai-foot">' +
+            '<button type="button" data-bai-run style="background:#1a5270;border-color:#334155;color:#e2e8f0">Run brief</button>' +
+            '<button type="button" data-bai-cancel>Cancel</button></div></div>';
+        var panel = root.querySelector('.dc-bai-panel');
+        if (panel) {
+            panel.addEventListener('click', function (e) {
+                e.stopPropagation();
+            });
+        }
+        var xbtn = root.querySelector('[data-bai-x]');
+        if (xbtn) {
+            xbtn.addEventListener('click', function () {
+                closeModal();
+            });
+        }
+        var cancel = root.querySelector('[data-bai-cancel]');
+        if (cancel) {
+            cancel.addEventListener('click', function () {
+                closeModal();
+            });
+        }
+        var runB = root.querySelector('[data-bai-run]');
+        if (runB) {
+            var runFromForm = function () {
+                var ta1 = root.querySelector('[data-dc-bai-stations="1"]');
+                var ta2 = root.querySelector('[data-dc-bai-focus="1"]');
+                var stations = ta1
+                    ? trim(
+                        (ta1.value == null
+                            ? ''
+                            : String(ta1.value)
+                        )
+                    )
+                    : '';
+                var focus = ta2
+                    ? trim(
+                        (ta2.value == null
+                            ? ''
+                            : String(ta2.value)
+                        )
+                    )
+                    : '';
+                var root2;
+                try {
+                    closeModal();
+                    root2 = openModalLoading();
+                } catch (e1) {
+                    try {
+                        window.alert('Brief AI: ' + (e1 && e1.message ? e1.message : e1));
+                    } catch (e2) {}
+                    return;
+                }
+                runBrief(stations, focus).then(
+                    function (text) {
+                        var b = root2 && root2.querySelector('.dc-bai-body');
+                        if (b) {
+                            b.innerHTML = formatBriefBodyHtml(
+                                trim(text) || 'Empty brief.'
+                            );
+                        }
+                        addFooter(root2);
+                    },
+                    function (err) {
+                        fillModalError(
+                            root2,
+                            'Error: ' + (err && err.message ? err.message : String(err))
+                        );
+                    }
+                );
+            };
+            bindWorksheetToolbarButtonActivate(runB, runFromForm);
         }
         try {
-            runBrief().then(
-                function (text) {
-                    var body = root && root.querySelector('.dc-bai-body');
-                    if (body) {
-                        body.textContent = trim(text) || 'Empty brief.';
-                    }
-                    addFooter(root);
-                },
-                function (err) {
-                    fillModalError(
-                        root,
-                        'Error: ' + (err && err.message ? err.message : String(err))
-                    );
-                }
-            );
-        } catch (e2) {
-            if (root) {
-                fillModalError(
-                    root,
-                    'Error: ' + (e2 && e2.message ? e2.message : String(e2))
-                );
-            } else {
-                try {
-                    window.alert('Brief AI: ' + (e2 && e2.message ? e2.message : e2));
-                } catch (e3) {}
-            }
+            document.body.appendChild(root);
+        } catch (e3) {
+            modalOpen = false;
+            try {
+                window.alert('Brief AI: could not open dialog.');
+            } catch (e4) {}
         }
     }
 
@@ -939,7 +1211,7 @@
         b.setAttribute(BTN_ATTR, '1');
         b.textContent = 'Brief AI';
         b.title = 'Regional weather brief (METAR + LLM: Groq/Gemini/Ollama in DonkeyCODE prefs)';
-        bindWorksheetToolbarButtonActivate(b, startBrief);
+        bindWorksheetToolbarButtonActivate(b, openComposeModal);
         return b;
     }
 
