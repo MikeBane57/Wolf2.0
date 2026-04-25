@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Send AC to WS (send late FLT required)
 // @namespace    Wolf 2.0
-// @version      1.1.3
+// @version      1.1.4
 // @description  Right-click AC: send tail to another worksheet. Requires Send late flights to WS Pax Conx on worksheet tabs (BroadcastChannel ws_apply_tail).
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -296,6 +296,56 @@
         return tailFromPlainLine(t);
     }
 
+    function extractTailFromIataTypeInRoot(root) {
+        if (!root || !root.querySelector) {
+            return '';
+        }
+        var el =
+            root.querySelector(
+                '[data-testid="iata-tooltip-type"], [data-testid="iata-display-type"]'
+            ) || null;
+        if (!el) {
+            return '';
+        }
+        var raw = textOneLine(el);
+        if (!raw) {
+            return '';
+        }
+        var parts = raw.split(/\s+/);
+        var i;
+        for (i = parts.length - 1; i >= 0; i--) {
+            var t0 = tailFromPlainLine(parts[i]);
+            if (t0) {
+                return t0;
+            }
+        }
+        return tailFromPlainLine(raw);
+    }
+
+    function ensureTailForPopup(popup, preferFromPopup) {
+        if (preferFromPopup) {
+            var t0 =
+                extractTailFromIataTypeInRoot(popup) ||
+                extractTailFromAcBlock(popup);
+            if (t0) {
+                lastExtractedTail = t0;
+                log('Tail from lock/info popup: ' + t0);
+                return t0;
+            }
+        }
+        var t = String(lastExtractedTail || '').trim();
+        if (t) {
+            return t;
+        }
+        t =
+            extractTailFromIataTypeInRoot(popup) || extractTailFromAcBlock(popup);
+        if (t) {
+            lastExtractedTail = t;
+            log('Tail from popup DOM: ' + t);
+        }
+        return String(lastExtractedTail || '').trim();
+    }
+
     function isLikelyAcContextMenuPopup(popup) {
         if (!popup || !popup.querySelector) {
             return false;
@@ -317,35 +367,72 @@
         return t.indexOf('aircraft') >= 0;
     }
 
-    function wireSendTailMenu(popup) {
+    /**
+     * e.g. lock-tooltip: fleet line/cycles, no "Aircraft" menu — different DOM than right-click menu.
+     */
+    function isLikelyAcInfoOrLockPopup(popup) {
+        if (!popup || !popup.querySelector) {
+            return false;
+        }
+        if (!popup.classList) {
+            return false;
+        }
+        var c = (popup.getAttribute('class') || '') + ' ';
+        if (c.indexOf('popup') < 0) {
+            return false;
+        }
+        if (popup.getAttribute('data-testid') === 'lock-tooltip') {
+            return true;
+        }
+        if (!popup.querySelector('[data-testid="iata-tooltip-type"]')) {
+            return false;
+        }
+        var tx = String(popup.textContent || '').replace(/\s+/g, ' ');
+        return /cycles|hours|line\s+cycles/i.test(tx);
+    }
+
+    function wireSendTailMenu(popup, opts) {
         if (popup.getAttribute('data-dc-ac-tail-ws-wired') === '1') {
             return;
         }
-        var menu = popup.querySelector('div.ui.vertical.menu');
+        opts = opts || {};
+        var menu = opts.menu;
+        if (!menu) {
+            menu = popup.querySelector('div.ui.vertical.menu');
+        }
         if (!menu) {
             menu = popup.querySelector('div[class*="Bw0ugF5aVzw"]');
         }
         if (!menu) {
             menu = popup.querySelector('div[class*="menu"]');
         }
-        if (!menu) {
-            return;
-        }
-        var firstItem = menu.querySelector('a');
+        var firstItem = menu && menu.querySelector('a') ? menu.querySelector('a') : null;
         if (!firstItem) {
-            return;
+            firstItem = {
+                className: 'item',
+                style: { cssText: '' }
+            };
         }
-        if (!String(lastExtractedTail || '').trim()) {
+        if (!String(ensureTailForPopup(popup, opts.standalone) || '').trim()) {
             if (getPref('acTailToWsLog', false) !== false) {
                 log('No tail parsed from AC block, skip menu');
             }
             return;
         }
+        var appendParent = opts.appendParent;
+        if (!appendParent) {
+            if (!menu) {
+                return;
+            }
+            appendParent = menu;
+        }
         popup.setAttribute('data-dc-ac-tail-ws-wired', '1');
 
         var wrap = document.createElement('div');
         wrap.style.cssText =
-            'position:relative!important;display:block!important;';
+            (opts.standalone
+                ? 'border-top:1px solid rgba(34,36,38,.12)!important;margin-top:.3em!important;padding-top:.2em!important;'
+                : '') + 'position:relative!important;display:block!important;';
 
         var trigger = document.createElement('a');
         trigger.setAttribute('role', 'menuitem');
@@ -355,12 +442,18 @@
         if (getComputedStyle(trigger).cursor === 'auto') {
             trigger.style.cursor = 'pointer';
         }
+        if (opts.standalone) {
+            trigger.style.cssText = (trigger.style.cssText || '') +
+                'display:block!important;padding:.65em 1.15em!important;';
+        }
 
         var sub = document.createElement('div');
         sub.setAttribute('data-dc-ac-tail-ws-sub', '1');
-        sub.className =
-            (menu.getAttribute('class') || 'ui vertical menu') +
-            ' dc-ac-tail-ws-flyout';
+        var menuClass =
+            menu && menu.getAttribute
+                ? menu.getAttribute('class') || 'ui vertical menu'
+                : 'ui vertical menu';
+        sub.className = menuClass + ' dc-ac-tail-ws-flyout';
         sub.style.cssText =
             'display:none!important;position:absolute!important;left:100%!important;top:0!important;margin-left:2px!important;' +
             'min-width:220px!important;z-index:10000!important;max-height:50vh!important;overflow-y:auto!important;';
@@ -465,11 +558,19 @@
         sub.addEventListener('mouseleave', scheduleHide);
 
         try {
-            menu.appendChild(wrap);
+            appendParent.appendChild(wrap);
         } catch (e) {
             try {
-                menu.appendChild(wrap);
+                appendParent.appendChild(wrap);
             } catch (e2) {}
+        }
+    }
+
+    function scheduleRescanForPopups() {
+        var delays = [0, 32, 120, 400];
+        var d;
+        for (d = 0; d < delays.length; d++) {
+            setTimeout(scanForMenu, delays[d]);
         }
     }
 
@@ -488,6 +589,11 @@
             }
             if (isLikelyAcContextMenuPopup(p)) {
                 wireSendTailMenu(p);
+            } else if (isLikelyAcInfoOrLockPopup(p)) {
+                wireSendTailMenu(p, {
+                    standalone: true,
+                    appendParent: p
+                });
             }
         }
     }
@@ -507,6 +613,9 @@
         var hasType = el.closest
             ? el.closest('[data-testid="iata-display-type"]')
             : null;
+        var hasTooltipType = el.closest
+            ? el.closest('[data-testid="iata-tooltip-type"]')
+            : null;
         var inBlock =
             (el.closest &&
                 el.closest(
@@ -517,13 +626,18 @@
             lastContextTarget = inBlock;
         } else if (hasType) {
             lastContextTarget = hasType.closest('div') || hasType;
+        } else if (hasTooltipType) {
+            lastContextTarget = hasTooltipType.closest('div') || hasTooltipType;
         } else {
             return;
         }
-        lastExtractedTail = extractTailFromAcBlock(lastContextTarget);
+        lastExtractedTail =
+            extractTailFromIataTypeInRoot(lastContextTarget) ||
+            extractTailFromAcBlock(lastContextTarget);
         if (lastExtractedTail) {
             log('Context AC tail: ' + lastExtractedTail);
         }
+        scheduleRescanForPopups();
     }
 
     function startMenuObserver() {
