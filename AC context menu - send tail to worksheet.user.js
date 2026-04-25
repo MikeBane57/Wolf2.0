@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Send AC to WS (send late FLT required)
 // @namespace    Wolf 2.0
-// @version      1.1.1
+// @version      1.1.2
 // @description  Right-click AC: send tail to another worksheet. Requires Send late flights to WS Pax Conx on worksheet tabs (BroadcastChannel ws_apply_tail).
-// @match        https://opssuitemain.swacorp.com/*
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
 // @donkeycode-pref {"acTailToWsEnabled":{"type":"boolean","group":"AC → worksheet","label":"Enable context menu","default":true},"acTailToWsListWaitMs":{"type":"number","group":"AC → worksheet","label":"Worksheet list wait (ms)","default":2000,"min":100,"max":8000,"step":100,"description":"How long to wait for worksheet tabs to answer ws_list (raise if the list is often empty)."},"acTailToWsLog":{"type":"boolean","group":"AC → worksheet","label":"Debug log","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/AC%20context%20menu%20-%20send%20tail%20to%20worksheet.user.js
@@ -14,6 +14,8 @@
     'use strict';
 
     var BC_WS_NAME = 'dc_pax_late_to_ws_v1';
+    /** Same key as Send late flights to WS Pax Conx — per-tab worksheet identity. */
+    var WS_TAB_ID_KEY = 'dcPaxLateWsTabId';
 
     var ch = null;
     var menuObserver = null;
@@ -137,6 +139,33 @@
                 }, 400);
             });
         });
+    }
+
+    var worksheetTabIdLocal = '';
+
+    /**
+     * Tab id for this worksheet (must match Pax script's getOrCreateWorksheetTabId).
+     */
+    function getOrCreateWorksheetTabIdForThisPage() {
+        if (worksheetTabIdLocal) {
+            return worksheetTabIdLocal;
+        }
+        try {
+            var ex = sessionStorage.getItem(WS_TAB_ID_KEY);
+            if (ex) {
+                worksheetTabIdLocal = ex;
+                return ex;
+            }
+        } catch (e) {}
+        worksheetTabIdLocal =
+            'ws' +
+            String(Date.now()) +
+            '-' +
+            String(Math.random()).slice(2, 10);
+        try {
+            sessionStorage.setItem(WS_TAB_ID_KEY, worksheetTabIdLocal);
+        } catch (e2) {}
+        return worksheetTabIdLocal;
     }
 
     function postApplyTailToWorksheet(tail, targetTabId) {
@@ -292,12 +321,20 @@
                     return;
                 }
                 sub.innerHTML = '';
+                var myId = getOrCreateWorksheetTabIdForThisPage();
+                var hadAny = tabs && tabs.length > 0;
+                if (tabs && tabs.length && myId) {
+                    tabs = tabs.filter(function (x) {
+                        return x && String(x.tabId) !== String(myId);
+                    });
+                }
                 if (!tabs || !tabs.length) {
                     var d0 = document.createElement('a');
                     d0.className = firstItem.className || 'item';
                     d0.href = '#';
-                    d0.textContent =
-                        'No worksheets found — open a worksheet with "Send late flights to WS Pax Conx" (v1.9.9+).';
+                    d0.textContent = hadAny
+                        ? 'No other worksheets — you are on the only target, or open another worksheet tab with "Send late flights to WS Pax Conx" (v1.9.9+).'
+                        : 'No worksheets found — open a worksheet with "Send late flights to WS Pax Conx" (v1.9.9+).';
                     d0.style.cssText = 'color:#e67e22!important;white-space:normal!important;';
                     sub.appendChild(d0);
                     return;
@@ -422,6 +459,7 @@
     }
 
     function init() {
+        getOrCreateWorksheetTabIdForThisPage();
         ensureChannel();
         onCtx = onContextMenu;
         document.addEventListener('contextmenu', onCtx, true);
