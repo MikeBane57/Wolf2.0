@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Send late flights to WS Pax Conx
 // @namespace    Wolf 2.0
-// @version      1.9.10
+// @version      1.9.11
 // @description  Pax connections: tight flights to worksheet; ws_apply_tail for AC script. Tail/flight input retry; ref-leg scope; PAX badges.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -3988,5 +3988,8 @@
                 puck.removeAttribute(BOUND);
             } catch (e) {}
         });
+        try {
+            window.__myScriptCleanup = undefined;
+        } catch (e2) {}
     };
 })();

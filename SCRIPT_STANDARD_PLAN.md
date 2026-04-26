@@ -78,6 +78,7 @@ DonkeyCODE calls **`window.__myScriptCleanup()`** when a script is **disabled** 
 - **`clearInterval` / `clearTimeout`** for timers you created
 - **`removeEventListener`** using the **same function reference** you passed to `addEventListener`
 - **Remove** injected DOM nodes (toolbars, overlays) and **restore** `document.title` / critical styles if feasible
+- **Optional:** set `window.__myScriptCleanup = undefined` at the end so DonkeyCODE can re-inject a fresh handler without a full reload
 
 If cleanup is missing, toggling the script off leaves listeners and DOM changes until a **full page reload**.
 

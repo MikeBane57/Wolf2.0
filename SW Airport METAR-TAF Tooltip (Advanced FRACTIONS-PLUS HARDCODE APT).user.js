@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SW Airport METAR/TAF Tooltip (Advanced FRACTIONS-PLUS HARDCODE APT)
 // @namespace    Wolf 2.0
-// @version      7.4
+// @version      7.5
 // @description  METAR/TAF tooltip with per-token coloring, advanced alerts, prefs; shares METAR/TAF cache with METAR watch (same tab)
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
@@ -522,9 +522,16 @@ window.__myScriptCleanup = function() {
         clearTimeout(tipHideTimer);
         tipHideTimer = null;
     }
-    window.removeEventListener("pointerdown", onPointerDownHide);
-    window.removeEventListener("pointerup", onPointerUpShow, true);
-    try { host.remove(); } catch (e) {}
+    try {
+        window.removeEventListener("pointerdown", onPointerDownHide);
+    } catch (e) {}
+    try {
+        window.removeEventListener("pointerup", onPointerUpShow, true);
+    } catch (e1) {}
+    try {
+        host.remove();
+    } catch (e2) {}
+    window.__myScriptCleanup = undefined;
 };
 
 

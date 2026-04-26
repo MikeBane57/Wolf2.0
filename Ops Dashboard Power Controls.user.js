@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ops Dashboard Power Controls
 // @namespace    Wolf 2.0
-// @version      4.2
+// @version      4.3
 // @description  Toggle + resize panels (width & height) + minimize toolbar; defaults from DonkeyCODE prefs
 // @match        https://opssuitemain.swacorp.com/operational-dashboard*
 // @grant        none
@@ -340,6 +340,9 @@ window.__myScriptCleanup = function() {
             flexItem.style.height = "";
         });
     });
+    try {
+        window.__myScriptCleanup = undefined;
+    } catch (e) {}
 };
 
 })();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Alerts: send tails to worksheet
 // @namespace    Wolf 2.0
-// @version      0.4.1
+// @version      0.4.2
 // @description  /alerts: rules (AND/OR), tail or flight, auto on table change or timer. BroadcastChannel to worksheet. localStorage + modal; optional DonkeyCODE defaults.
 // @match        https://opssuitemain.swacorp.com/alerts*
 // @match        https://opssuitemain.swacorp.com/*/alerts*
@@ -1741,5 +1741,8 @@
             } catch (e) {}
         }
         closePicker();
+        try {
+            window.__myScriptCleanup = undefined;
+        } catch (e) {}
     };
 })();
