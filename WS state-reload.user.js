@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.1.7
-// @description  Worksheet: save named AC tail/line states, recall them later, quick reload/restore, and optionally share cloud states.
+// @version      0.1.8
+// @description  Worksheet state cloud: fix dispatch workflow; clearer session folder label; path pref warning.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
-// @donkeycode-pref {"worksheetStateTeamKey":{"type":"string","group":"Worksheet state cloud","label":"Team key","description":"Shared key for cloud saves. Defaults to wallOfFameTeamKey if blank.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state cloud","label":"JSON repo owner","description":"Repo owner for cloud worksheet states.","default":"","placeholder":"MikeBane57"},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state cloud","label":"JSON repo name","description":"Repo containing WORKSHEET STATES/worksheet-states.json.","default":"","placeholder":"Wolf2.0"},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state cloud","label":"JSON branch","default":"","placeholder":"main"},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state cloud","label":"JSON path","description":"Path for shared cloud states.","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture to console: target + elementFromPoint. Use when DonkeyCODE/React swallows button clicks.","default":false}}
+// @donkeycode-pref {"worksheetStateTeamKey":{"type":"string","group":"Worksheet state cloud","label":"Team key","description":"Shared key for cloud saves. Defaults to wallOfFameTeamKey if blank.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state cloud","label":"JSON repo owner","description":"Repo owner for cloud worksheet states.","default":"","placeholder":"MikeBane57"},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state cloud","label":"JSON repo name","description":"Repo containing WORKSHEET STATES/worksheet-states.json.","default":"","placeholder":"Wolf2.0"},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state cloud","label":"JSON branch","default":"","placeholder":"main"},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state cloud","label":"JSON path in repo","description":"File path inside the repo for worksheet-states.json — NOT the Wall of Fame file. Leave blank for WORKSHEET STATES/worksheet-states.json.","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture to console: target + elementFromPoint. Use when DonkeyCODE/React swallows button clicks.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // ==/UserScript==
@@ -146,23 +146,44 @@
         );
     }
 
+    /**
+     * DonkeyCODE "session folder" name for tags (e.g. Default, or a custom name), not a Git path.
+     * Prefer human session keys; avoid donkeycode_*_sessions_root (often a repo path) for display.
+     */
     function activeDonkeyCodeFolder() {
         var keys = [
-            'donkeycode_session_folder',
-            'donkeycode_active_session_folder',
-            'donkeycode_github_sessions_root',
-            'donkeycode_sessions_root',
+            'donkeycode_current_folder',
             'donkeycode_folder',
-            'donkeycode_current_folder'
+            'donkeycode_active_session_folder',
+            'donkeycode_session_folder',
+            'donkeycode_session_name',
+            'donkeycode_active_session',
+            'donkeycode_active_session_name',
+            'donkeycode_session',
+            'donkeycode_active_tab_folder'
         ];
         var i;
         for (i = 0; i < keys.length; i++) {
             var v = trimText(getPref(keys[i], ''));
             if (v) {
-                return v.replace(/^\/+|\/+$/g, '') || 'Default';
+                var t = v.replace(/^\/+|\/+$/g, '');
+                if (!t) {
+                    continue;
+                }
+                if (/[\\/]/.test(t) && (t.indexOf('github') >= 0 || t.indexOf('.com') >= 0 || t.split('/').length > 2)) {
+                    var seg = t.split(/[\\/]+/).filter(Boolean);
+                    t = seg[seg.length - 1] || t;
+                }
+                return t || 'Default';
             }
         }
         return 'Default';
+    }
+
+    function normalizeFolderForCompare(s) {
+        return String(s == null ? '' : s)
+            .toLowerCase()
+            .replace(/^\/+|\/+$/g, '');
     }
 
     function decodeGithubFileContent(b64) {
@@ -441,11 +462,11 @@
                 return;
             }
             var sameFolder = states.filter(function (st) {
-                return trimText(st.folder) === folder;
+                return normalizeFolderForCompare(st.folder) === normalizeFolderForCompare(folder);
             });
             var list = sameFolder.concat(
                 states.filter(function (st) {
-                    return trimText(st.folder) !== folder;
+                    return normalizeFolderForCompare(st.folder) !== normalizeFolderForCompare(folder);
                 })
             );
             for (var i = 0; i < list.length; i++) {
@@ -466,7 +487,9 @@
         meta.textContent =
             'saved by ' +
             (state.folder || 'Default') +
-            (state.folder === activeFolder ? ' (current folder)' : '') +
+            (normalizeFolderForCompare(state.folder) === normalizeFolderForCompare(activeFolder)
+                ? ' (current session folder)'
+                : '') +
             ' - ' +
             itemSummary(state.items) +
             ' - saved ' +
@@ -521,9 +544,9 @@
         var note = document.createElement('div');
         note.className = 'dc-wss-note';
         note.textContent =
-            'Current DonkeyCODE folder: ' +
+            'Current DonkeyCODE session folder: ' +
             activeDonkeyCodeFolder() +
-            '. Cloud saves are shared with all users and expire after 4 hours.';
+            ' (the name in DonkeyCODE, e.g. Default). Cloud saves are shared and expire after 4 hours.';
         var actions = document.createElement('div');
         actions.className = 'dc-wss-actions';
         var save = document.createElement('button');
@@ -1474,6 +1497,14 @@
         var body = document.createElement('div');
         body.className = 'dc-wss-body';
 
+        var folderBanner = document.createElement('div');
+        folderBanner.className = 'dc-wss-note';
+        folderBanner.textContent =
+            'Current DonkeyCODE session folder: ' +
+            activeDonkeyCodeFolder() +
+            '. This is the session name in DonkeyCODE (e.g. Default or a custom name) — it tags who saved a cloud state; it is not a Git path.';
+        body.appendChild(folderBanner);
+
         addSectionTitle(body, 'Local saves');
         var localNote = document.createElement('div');
         localNote.className = 'dc-wss-note';
@@ -1487,7 +1518,7 @@
         var cloudNote = document.createElement('div');
         cloudNote.className = 'dc-wss-note';
         cloudNote.textContent =
-            'Cloud saves are shared with all users. The DonkeyCODE folder active when saved is shown as "saved by".';
+            'Cloud saves are shared (GitHub). Each row shows saved by <session folder>. If save fails, check Worksheet state cloud prefs: JSON path must be WORKSHEET STATES/… (not the Wall of Fame path), and the repo needs the worksheet-state-put workflow; team key must match WOF_TEAM_KEY or WORKSHEET_STATE_TEAM_KEY.';
         var cloudActions = document.createElement('div');
         cloudActions.className = 'dc-wss-actions';
         var refreshCloud = document.createElement('button');
