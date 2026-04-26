@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.1.9
-// @description  Worksheet toolbar: pointerup+click for SAVE WS / Load / Quick (DonkeyCODE/React).
+// @version      0.2.1
+// @description  Save WS: auto name (title+time); Load WS; rename/to cloud in modal; no save prompts.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
@@ -378,6 +378,13 @@
             }
             return;
         }
+        if (name == null) {
+            name = defaultSaveLabelFromState(state);
+        }
+        name = trimText(name);
+        if (!name) {
+            name = defaultSaveLabelFromState(state);
+        }
         var folder = activeDonkeyCodeFolder();
         state.id = stateId();
         state.name = name;
@@ -421,19 +428,7 @@
             toast('No visible tails or N/A line numbers found to save to cloud.', true);
             return;
         }
-        var name = window.prompt('Name this cloud worksheet state:', defaultStateName());
-        if (name == null) {
-            return;
-        }
-        name = trimText(name);
-        if (!name) {
-            toast('Cloud state name is required.', true);
-            return;
-        }
-        if (!window.confirm('Save "' + name + '" to shared cloud states for folder "' + activeDonkeyCodeFolder() + '"?')) {
-            return;
-        }
-        saveStateToCloud(state, name);
+        saveStateToCloud(state, defaultSaveLabelFromState(state));
     }
 
     function refreshCloudRows() {
@@ -499,6 +494,8 @@
         info.appendChild(name);
         info.appendChild(meta);
 
+        var actions = document.createElement('div');
+        actions.className = 'dc-wss-row-actions';
         var recall = document.createElement('button');
         recall.type = 'button';
         recall.textContent = 'Recall';
@@ -506,11 +503,21 @@
             closeModal();
             applyStateToWorksheet(state, 'cloud state "' + (state.name || '(unnamed)') + '"');
         });
-
-        var spacer = document.createElement('span');
+        var toCloud = document.createElement('button');
+        toCloud.type = 'button';
+        toCloud.textContent = 'Save copy to cloud';
+        toCloud.title = 'Copy this snapshot to shared cloud (same as Load WS → Cloud saves)';
+        toCloud.addEventListener('click', function () {
+            var snap = { items: (state.items || []).slice() };
+            if (state.title) {
+                snap.title = state.title;
+            }
+            saveStateToCloud(snap, state.name);
+        });
+        actions.appendChild(recall);
+        actions.appendChild(toCloud);
         row.appendChild(info);
-        row.appendChild(recall);
-        row.appendChild(spacer);
+        row.appendChild(actions);
         return row;
     }
 
@@ -552,7 +559,14 @@
         var save = document.createElement('button');
         save.type = 'button';
         save.textContent = 'Save current to cloud';
-        save.addEventListener('click', saveCurrentStateToCloud);
+        save.addEventListener('click', function () {
+            var st = collectWorksheetState();
+            if (!st.items.length) {
+                toast('No visible tails or N/A line numbers found to save to cloud.', true);
+                return;
+            }
+            saveStateToCloud(st, defaultSaveLabelFromState(st));
+        });
         var refresh = document.createElement('button');
         refresh.type = 'button';
         refresh.textContent = 'Refresh cloud list';
@@ -646,6 +660,36 @@
 
     function stateId() {
         return 'st-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+    }
+
+    function defaultSaveLabelFromState(state) {
+        var base = 'Worksheet';
+        if (state && state.title) {
+            base = trimText(state.title) || base;
+        } else {
+            try {
+                base = trimText(document.title || '') || base;
+            } catch (e) {
+                base = 'Worksheet';
+            }
+        }
+        var d = new Date();
+        var pad = function (n) {
+            return n < 10 ? '0' + n : String(n);
+        };
+        return (
+            base +
+            ' · ' +
+            d.getFullYear() +
+            '-' +
+            pad(d.getMonth() + 1) +
+            '-' +
+            pad(d.getDate()) +
+            ' ' +
+            pad(d.getHours()) +
+            pad(d.getMinutes()) +
+            pad(d.getSeconds())
+        );
     }
 
     function formatDate(ts) {
@@ -1112,7 +1156,10 @@
             '] .dc-wss-note{font-size:12px;color:#b9c4cf;background:#1b2028;border:1px solid #343f4a;border-radius:6px;padding:8px;}' +
             '[' +
             MODAL_ATTR +
-            '] .dc-wss-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px;border:1px solid #3f4a56;border-radius:7px;background:#262c34;}' +
+            '] .dc-wss-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px;border:1px solid #3f4a56;border-radius:7px;background:#262c34;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-wss-row-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:flex-end;max-width:min(360px,100%);}' +
             '[' +
             MODAL_ATTR +
             '] .dc-wss-name{font-weight:700;}' +
@@ -1241,7 +1288,7 @@
             );
             host.appendChild(
                 makeButton(
-                    'Load worksheet',
+                    'Load WS',
                     'Recall a local or cloud worksheet state',
                     'load'
                 )
@@ -1343,12 +1390,35 @@
         });
     }
 
-    function defaultStateName() {
-        var d = new Date();
-        var pad = function (n) {
-            return n < 10 ? '0' + n : String(n);
+    function uniqueStateNameInStore(baseName, excludeId) {
+        var b = trimText(baseName) || 'Worksheet';
+        var store = readStateStore();
+        var taken = function (cand) {
+            var c = String(cand || '').toLowerCase();
+            var j;
+            for (j = 0; j < store.states.length; j++) {
+                if (store.states[j].id === excludeId) {
+                    continue;
+                }
+                if (String(store.states[j].name || '').toLowerCase() === c) {
+                    return true;
+                }
+            }
+            return false;
         };
-        return 'WS ' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        if (!taken(b)) {
+            return b;
+        }
+        var n = 2;
+        var cand2;
+        while (n < 200) {
+            cand2 = b + ' (' + n + ')';
+            if (!taken(cand2)) {
+                return cand2;
+            }
+            n++;
+        }
+        return b + ' ' + String(Date.now());
     }
 
     function saveCurrentState() {
@@ -1357,41 +1427,15 @@
             toast('No visible tails or N/A line numbers found to save.', true);
             return;
         }
-        var name = window.prompt('Name this worksheet state:', defaultStateName());
-        if (name == null) {
-            return;
-        }
-        name = trimText(name);
-        if (!name) {
-            toast('State name is required.', true);
-            return;
-        }
-        var store = readStateStore();
-        var existingIndex = -1;
-        var i;
-        for (i = 0; i < store.states.length; i++) {
-            if (String(store.states[i].name || '').toLowerCase() === name.toLowerCase()) {
-                existingIndex = i;
-                break;
-            }
-        }
-        state.id = existingIndex >= 0 ? store.states[existingIndex].id || stateId() : stateId();
+        var name = uniqueStateNameInStore(defaultSaveLabelFromState(state), null);
+        state.id = stateId();
         state.name = name;
         state.updatedAt = nowIso();
         state.expiresAt = expiresAtFor(state.updatedAt);
-        if (existingIndex >= 0) {
-            if (!window.confirm('Replace saved state "' + name + '"?')) {
-                return;
-            }
-            store.states[existingIndex] = state;
-        } else {
-            store.states.unshift(state);
-        }
+        var store = readStateStore();
+        store.states.unshift(state);
         if (writeStateStore(store)) {
-            toast('Saved "' + name + '" locally (' + itemSummary(state.items) + '), expires in 4 hours.', false);
-            if (window.confirm('Also save "' + name + '" to cloud for folder "' + activeDonkeyCodeFolder() + '"?')) {
-                saveStateToCloud(collectWorksheetState(), name);
-            }
+            toast('Saved "' + name + '" locally (' + itemSummary(state.items) + '), expires in 4 hours. Rename or cloud in Load WS if needed.', false);
         } else {
             toast('Could not save state. Browser storage may be full or blocked.', true);
         }
@@ -1473,6 +1517,8 @@
         info.appendChild(name);
         info.appendChild(meta);
 
+        var actions = document.createElement('div');
+        actions.className = 'dc-wss-row-actions';
         var recall = document.createElement('button');
         recall.type = 'button';
         recall.textContent = 'Recall';
@@ -1480,7 +1526,21 @@
             closeModal();
             applyStateToWorksheet(state, 'state "' + (state.name || '(unnamed)') + '"');
         });
-
+        var rename = document.createElement('button');
+        rename.type = 'button';
+        rename.textContent = 'Rename';
+        rename.addEventListener('click', function () {
+            var start = String(state.name || state.id || '');
+            var next = window.prompt('New name for this saved state:', start);
+            if (next == null) {
+                return;
+            }
+            if (renameLocalState(state.id, next)) {
+                state.name = trimText(next);
+                name.textContent = state.name || '(unnamed)';
+                toast('Renamed to "' + state.name + '".', false);
+            }
+        });
         var del = document.createElement('button');
         del.type = 'button';
         del.textContent = 'Delete';
@@ -1492,10 +1552,23 @@
             deleteState(state.id);
             refreshLocalRows();
         });
-
+        var toCloud = document.createElement('button');
+        toCloud.type = 'button';
+        toCloud.textContent = 'To cloud';
+        toCloud.title = 'Upload this snapshot to shared cloud states for folder ' + activeDonkeyCodeFolder();
+        toCloud.addEventListener('click', function () {
+            if (!state || !Array.isArray(state.items) || !state.items.length) {
+                toast('This state is empty.', true);
+                return;
+            }
+            saveStateToCloud({ items: state.items.slice() }, state.name);
+        });
+        actions.appendChild(recall);
+        actions.appendChild(rename);
+        actions.appendChild(toCloud);
+        actions.appendChild(del);
         row.appendChild(info);
-        row.appendChild(recall);
-        row.appendChild(del);
+        row.appendChild(actions);
         return row;
     }
 
@@ -1510,6 +1583,38 @@
         }
         store.states = next;
         writeStateStore(store);
+    }
+
+    function renameLocalState(id, newName) {
+        newName = trimText(newName);
+        if (!newName) {
+            toast('State name is required.', true);
+            return false;
+        }
+        var store = readStateStore();
+        var j;
+        for (j = 0; j < store.states.length; j++) {
+            if (
+                store.states[j].id !== id &&
+                String(store.states[j].name || '').toLowerCase() === newName.toLowerCase()
+            ) {
+                toast('Another local save already uses that name.', true);
+                return false;
+            }
+        }
+        var k;
+        for (k = 0; k < store.states.length; k++) {
+            if (store.states[k].id === id) {
+                store.states[k].name = newName;
+                if (writeStateStore(store)) {
+                    return true;
+                }
+                toast('Could not rename. Browser storage may be full or blocked.', true);
+                return false;
+            }
+        }
+        toast('Could not find that state to rename.', true);
+        return false;
     }
 
 
@@ -1555,7 +1660,7 @@
         var head = document.createElement('div');
         head.className = 'dc-wss-head';
         var title = document.createElement('div');
-        title.textContent = 'Load worksheet';
+        title.textContent = 'Load WS';
         var close = document.createElement('button');
         close.type = 'button';
         close.textContent = 'Close';
