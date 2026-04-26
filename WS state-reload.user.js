@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.2
-// @description  Cloud: WoF-style repo fallbacks, clearer GitHub API errors, PAT+workflow note on 403.
+// @version      0.2.3
+// @description  Load WS: Wall of Fame–style cloud sync debug log (copy/clear) + step logging.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
@@ -38,6 +38,9 @@
     var activeApplyTimer = null;
     var cloudRowsHost = null;
     var localRowsHost = null;
+    /** Live reference to the scrollable <pre> in the open Load/Cloud modal (for WoF-style debug log). */
+    var wsCloudLogPre = null;
+    var WS_CLOUD_LOG_ID = 'dc-ws-cloud-sync-log';
 
     function isWorksheetPage() {
         try {
@@ -300,108 +303,223 @@
         return t ? t.slice(0, 200) : '';
     }
 
+    function appendCloudSyncLog(msg) {
+        var line =
+            '[' + new Date().toISOString().replace('T', ' ').slice(0, 23) + '] ' + String(msg == null ? '' : msg);
+        try {
+            console.info('[WS State][cloud]', msg);
+        } catch (e) {}
+        var el = wsCloudLogPre;
+        if (!el) {
+            return;
+        }
+        el.textContent = (el.textContent ? el.textContent + '\n' : '') + line;
+        el.scrollTop = el.scrollHeight;
+    }
+
+    function clearCloudSyncLog() {
+        if (wsCloudLogPre) {
+            wsCloudLogPre.textContent = '';
+        }
+    }
+
+    function createCloudSyncLogSection(headingText) {
+        var wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;flex-shrink:0;margin-top:4px;';
+        var h = document.createElement('div');
+        h.textContent = headingText || 'Cloud sync debug log (same style as Wall of Fame publish log)';
+        h.style.cssText = 'font-size:12px;font-weight:600;color:#5dade2;';
+        var sub = document.createElement('div');
+        sub.textContent = 'Timestamps are UTC. Copy the log if you need support.';
+        sub.style.cssText = 'font-size:10px;color:#7f8c8d;';
+        var act = document.createElement('div');
+        act.className = 'dc-wss-actions';
+        act.style.marginBottom = '0';
+        var btnClear = document.createElement('button');
+        btnClear.type = 'button';
+        btnClear.textContent = 'Clear log';
+        btnClear.addEventListener('click', function () {
+            clearCloudSyncLog();
+        });
+        var btnCopy = document.createElement('button');
+        btnCopy.type = 'button';
+        btnCopy.textContent = 'Copy log';
+        btnCopy.addEventListener('click', function () {
+            var t = wsCloudLogPre ? String(wsCloudLogPre.textContent || '') : '';
+            if (!t) {
+                return;
+            }
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(t);
+                    toast('Log copied to clipboard.', false);
+                } else {
+                    var ta = document.createElement('textarea');
+                    ta.value = t;
+                    ta.style.cssText = 'position:fixed;left:-9999px;';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    toast('Log copied to clipboard.', false);
+                }
+            } catch (e) {
+                toast('Could not copy (browser blocked).', true);
+            }
+        });
+        act.appendChild(btnClear);
+        act.appendChild(btnCopy);
+        var pre = document.createElement('pre');
+        pre.id = WS_CLOUD_LOG_ID;
+        pre.setAttribute('aria-label', 'Worksheet state cloud sync debug log');
+        pre.style.cssText =
+            'width:100%;min-height:72px;max-height:140px;overflow:auto;margin:0;padding:8px;' +
+            'font-family:ui-monospace,monospace;font-size:10px;line-height:1.35;white-space:pre-wrap;word-break:break-word;' +
+            'background:#151820;border:1px solid #343f4a;border-radius:6px;color:#b8c9dc;box-sizing:border-box;';
+        wsCloudLogPre = pre;
+        wrap.appendChild(h);
+        wrap.appendChild(sub);
+        wrap.appendChild(act);
+        wrap.appendChild(pre);
+        return wrap;
+    }
+
     function rawGithubGetCloud(cb) {
-        gmXhr('GET', rawCloudUrl(), { Accept: 'application/json' }, null, function (status, text) {
+        var rawUrl = rawCloudUrl();
+        appendCloudSyncLog('GET (raw) ' + rawUrl);
+        gmXhr('GET', rawUrl, { Accept: 'application/json' }, null, function (status, text) {
             if (status === 404) {
+                appendCloudSyncLog('raw GET: HTTP 404 (no file yet) — using empty document.');
                 cb(cloudDocFor([]), null);
                 return;
             }
             if (status < 200 || status >= 300) {
                 if (!status) {
+                    var err0 =
+                        'raw.githubusercontent.com: ' +
+                        (githubApiErrorSummary(0, text) || 'request failed (private repo needs PAT for API fallback).');
+                    appendCloudSyncLog('raw GET failed: ' + err0);
                     cb(
                         null,
-                        'raw.githubusercontent.com: ' + (githubApiErrorSummary(0, text) || 'request failed (private repo needs PAT for API fallback).')
+                        err0
                     );
                     return;
                 }
+                var err1 =
+                    'raw.githubusercontent.com HTTP ' +
+                    status +
+                    (text ? ' — ' + githubApiErrorSummary(status, text) : ' (is the repo public, or is donkeycode_github_pat set for private read?)');
+                appendCloudSyncLog('raw GET failed: ' + err1);
                 cb(
                     null,
-                    'raw.githubusercontent.com HTTP ' +
-                        status +
-                        (text ? ' — ' + githubApiErrorSummary(status, text) : ' (is the repo public, or is donkeycode_github_pat set for private read?)')
+                    err1
                 );
                 return;
             }
+            appendCloudSyncLog('raw GET: OK, parsing JSON…');
             cb(parseCloudDocument(text || '{"states":[]}'), null);
         });
     }
 
     function githubGetCloud(cb) {
         if (!resolvedGithubPat()) {
-            cb(
-                null,
+            var e =
                 'Set donkeycode_github_pat in DonkeyCODE: needed to read a private ' +
-                    resolvedCloudOwner() +
-                    '/' +
-                    resolvedCloudRepo() +
-                    ' file, or to confirm path exists.'
-            );
+                resolvedCloudOwner() +
+                '/' +
+                resolvedCloudRepo() +
+                ' file, or to confirm path exists.';
+            appendCloudSyncLog('GET /contents/ skipped: no PAT. ' + e);
+            cb(null, e);
             return;
         }
-        gmXhr(
-            'GET',
-            githubContentsApiUrl() + '?ref=' + encodeURIComponent(resolvedCloudBranch()),
-            githubApiHeaders(),
-            null,
-            function (status, text) {
-                if (status === 404) {
-                    cb(cloudDocFor([]), null);
-                    return;
-                }
-                if (status < 200 || status >= 300) {
-                    cb(
-                        null,
-                        'GET /contents/' + resolvedCloudPath() + ' HTTP ' + status + ' — ' + githubApiErrorSummary(status, text)
-                    );
-                    return;
-                }
-                var meta = safeJsonParse(text, null);
-                if (!meta) {
-                    cb(null, 'Contents API: could not parse file metadata JSON.');
-                    return;
-                }
-                cb(parseCloudDocument(decodeGithubFileContent(meta.content || '')), null);
+        var cUrl = githubContentsApiUrl() + '?ref=' + encodeURIComponent(resolvedCloudBranch());
+        appendCloudSyncLog('GET (Contents API) ' + cUrl);
+        gmXhr('GET', cUrl, githubApiHeaders(), null, function (status, text) {
+            if (status === 404) {
+                appendCloudSyncLog('GET /contents/: HTTP 404 (no file yet) — using empty document.');
+                cb(cloudDocFor([]), null);
+                return;
             }
-        );
+            if (status < 200 || status >= 300) {
+                var err2 =
+                    'GET /contents/' + resolvedCloudPath() + ' HTTP ' + status + ' — ' + githubApiErrorSummary(status, text);
+                appendCloudSyncLog('GET /contents/ failed: ' + err2);
+                cb(
+                    null,
+                    err2
+                );
+                return;
+            }
+            var meta = safeJsonParse(text, null);
+            if (!meta) {
+                appendCloudSyncLog('GET /contents/: could not parse metadata JSON.');
+                cb(null, 'Contents API: could not parse file metadata JSON.');
+                return;
+            }
+            appendCloudSyncLog('GET /contents/: OK, decoded blob, parsing document…');
+            cb(parseCloudDocument(decodeGithubFileContent(meta.content || '')), null);
+        });
     }
 
     function fetchCloudStates(cb) {
+        appendCloudSyncLog(
+            'fetchCloudStates: try raw then Contents API. Repo ' +
+                resolvedCloudOwner() +
+                '/' +
+                resolvedCloudRepo() +
+                '@' +
+                resolvedCloudBranch() +
+                ' path ' +
+                resolvedCloudPath() +
+                '.'
+        );
         rawGithubGetCloud(function (doc, rawErr) {
             if (doc) {
+                var n0 = (doc.states && doc.states.length) || 0;
+                appendCloudSyncLog('Load OK (raw): ' + n0 + ' state(s) after parse/prune.');
                 cb(doc, null);
                 return;
             }
+            appendCloudSyncLog('Falling back to GitHub Contents API (private repo or raw failed)…');
             githubGetCloud(function (doc2, apiErr) {
                 if (doc2) {
+                    var n2 = (doc2.states && doc2.states.length) || 0;
+                    appendCloudSyncLog('Load OK (Contents API): ' + n2 + ' state(s) after parse/prune.');
                     cb(doc2, null);
                     return;
                 }
-                cb(
-                    null,
+                var err =
                     apiErr ||
-                        rawErr ||
-                        'Could not load cloud JSON (check worksheetState* / wallOfFameData* repo, branch, and worksheetStateRepoPath).'
-                );
+                    rawErr ||
+                    'Could not load cloud JSON (check worksheetState* / wallOfFameData* repo, branch, and worksheetStateRepoPath).';
+                appendCloudSyncLog('Load failed: ' + err);
+                cb(null, err);
             });
         });
     }
 
     function dispatchCloudDoc(doc, cb) {
         if (!resolvedTeamKey()) {
-            cb(false, 'Set worksheetStateTeamKey or wallOfFameTeamKey in DonkeyCODE prefs.');
+            var a = 'Set worksheetStateTeamKey or wallOfFameTeamKey in DonkeyCODE prefs.';
+            appendCloudSyncLog('Save aborted: ' + a);
+            cb(false, a);
             return;
         }
         if (!resolvedGithubPat()) {
-            cb(false, 'Set donkeycode_github_pat in DonkeyCODE prefs so repository_dispatch can run.');
+            var b = 'Set donkeycode_github_pat in DonkeyCODE prefs so repository_dispatch can run.';
+            appendCloudSyncLog('Save aborted: ' + b);
+            cb(false, b);
             return;
         }
         var headers = githubApiHeaders();
         headers['Content-Type'] = 'application/json';
+        var stArr = (doc && doc.states) || [];
         var body = {
             event_type: CLOUD_EVENT_TYPE,
             client_payload: {
                 team_key: resolvedTeamKey(),
-                document: cloudDocFor(doc.states || []),
+                document: cloudDocFor(stArr),
                 path: resolvedCloudPath()
             }
         };
@@ -411,8 +529,21 @@
             '/' +
             encodeURIComponent(resolvedCloudRepo()) +
             '/dispatches';
+        appendCloudSyncLog(
+            'POST repository_dispatch event ' +
+                CLOUD_EVENT_TYPE +
+                ' to ' +
+                resolvedCloudOwner() +
+                '/' +
+                resolvedCloudRepo() +
+                ', path in payload: ' +
+                resolvedCloudPath() +
+                ', states in merge: ' +
+                stArr.length
+        );
         gmXhr('POST', url, headers, body, function (status, text) {
             if (status === 204) {
+                appendCloudSyncLog('Dispatch accepted: HTTP 204. Check GitHub Actions → Worksheet state sync.');
                 cb(true, null);
                 return;
             }
@@ -424,6 +555,7 @@
                 (status === 403 && /workflow/i.test(String(detail))
                     ? ' Regenerate donkeycode_github_pat with "workflow" scope (same as Wall of Fame).'
                     : '');
+            appendCloudSyncLog('Dispatch failed: ' + msg);
             cb(false, msg);
         });
     }
@@ -451,6 +583,9 @@
         state.updatedAt = state.savedAt;
         state.expiresAt = expiresAtFor(state.savedAt);
         toast('Loading cloud states before save...', false);
+        appendCloudSyncLog(
+            'saveStateToCloud: name="' + name + '", folder=' + folder + ', items=' + (state.items && state.items.length ? state.items.length : 0)
+        );
         fetchCloudStates(function (doc, loadErr) {
             if (!doc) {
                 toast('Could not load cloud: ' + (loadErr || 'unknown error'), true);
@@ -463,6 +598,7 @@
                 return st && st.id !== state.id && !isExpiredState(st);
             });
             states.unshift(normalizeCloudState(state));
+            appendCloudSyncLog('Merged new state; dispatching with total states=' + states.length + '…');
             dispatchCloudDoc(cloudDocFor(states), function (ok, err) {
                 if (!ok) {
                     toast(err || 'Cloud save failed.', true);
@@ -637,10 +773,12 @@
         body.appendChild(note);
         body.appendChild(actions);
         body.appendChild(cloudRowsHost);
+        body.appendChild(createCloudSyncLogSection('Cloud sync debug log (Wall of Fame style)'));
         panel.appendChild(head);
         panel.appendChild(body);
         overlay.appendChild(panel);
         document.body.appendChild(overlay);
+        appendCloudSyncLog('Open: Cloud-only dialog — use Refresh to trace GET, Save current to cloud for full save trace.');
         refreshCloudRows();
     }
 
@@ -1233,7 +1371,8 @@
             '] button:hover{background:#3c4f63;}' +
             '[' +
             MODAL_ATTR +
-            '] button.dc-wss-danger{border-color:#7e3c3c;background:#4c2424;}';
+            '] button.dc-wss-danger{border-color:#7e3c3c;background:#4c2424;}' +
+            '#dc-ws-cloud-sync-log{flex-shrink:0;}';
         document.head.appendChild(st);
     }
 
@@ -1509,6 +1648,7 @@
         }
         cloudRowsHost = null;
         localRowsHost = null;
+        wsCloudLogPre = null;
     }
 
     function openRecallDialog() {
@@ -1764,11 +1904,12 @@
         body.appendChild(cloudNote);
         body.appendChild(cloudActions);
         body.appendChild(cloudRowsHost);
-
+        body.appendChild(createCloudSyncLogSection('Cloud sync debug log (Wall of Fame style)'));
         panel.appendChild(head);
         panel.appendChild(body);
         overlay.appendChild(panel);
         document.body.appendChild(overlay);
+        appendCloudSyncLog('Open: Load WS — use Refresh cloud list to trace raw/API GETs; To cloud or dispatch logs POST 204.');
         refreshLocalRows();
         refreshCloudRows();
     }
