@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.50
-// @description  Airport alert area + notify order; WX button fresh/stale example.
+// @version      2.0.51
+// @description  Quick add sectors/regions; airport alert + WX demo; IATA map gaps.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -3026,7 +3026,71 @@
         EUG: 'KEUG', PSP: 'KPSP', AMA: 'KAMA', LBB: 'KLBB', ICT: 'KICT', MCI: 'KMCI', STL: 'KSTL',
         DSM: 'KDSM', ORD: 'KORD', MKE: 'KMKE', CLE: 'KCLE', ROC: 'KROC', PWM: 'KPWM', PVD: 'KPVD',
         LGA: 'KLGA', RIC: 'KRIC', CLT: 'KCLT', SAV: 'KSAV', MYR: 'KMYR', SRQ: 'KSRQ', PBI: 'KPBI',
-        HAV: 'MUHA', PLS: 'MBPV', ITO: 'PHTO', ANC: 'PANC', LIT: 'KLIT', SDF: 'KSDF', TYS: 'KTYS'
+        HAV: 'MUHA', PLS: 'MBPV', ITO: 'PHTO', ANC: 'PANC', LIT: 'KLIT', SDF: 'KSDF', TYS: 'KTYS',
+        HRL: 'KHRL', KIN: 'MKJS', STS: 'KSTS', SXM: 'TNCM'
+    };
+
+    /**
+     * One-tap add sets for the METAR modal. Keys are used by checkboxes; values are 3-letter IATA.
+     * Region groupings (east/central/west/intl) match ops sectors below.
+     */
+    var METAR_PRESET_SECTORS = {
+        s1: {
+            label: 'Sector 1',
+            sub: 'East Region',
+            iatas: [
+                'ALB', 'BDL', 'BOS', 'BUF', 'BWI', 'DCA', 'IAD', 'ISP', 'LGA', 'MHT', 'ORF', 'PHL', 'PIT', 'PVD',
+                'PWM', 'RIC', 'ROC'
+            ]
+        },
+        s2: {
+            label: 'Sector 2',
+            sub: 'East Region',
+            iatas: [
+                'ATL', 'BHM', 'BNA', 'CHS', 'CLT', 'CVG', 'ECP', 'FLL', 'GSP', 'JAX', 'MCO', 'MEM', 'MIA', 'MSY',
+                'MYR', 'PBI', 'PNS', 'RDU', 'RSW', 'SAV', 'SDF', 'SRQ', 'TPA', 'TYS', 'VPS'
+            ]
+        },
+        s3: {
+            label: 'Sector 3',
+            sub: 'Central Region',
+            iatas: ['CLE', 'CMH', 'DSM', 'DTW', 'GRR', 'IND', 'MDW', 'MKE', 'MSP', 'OMA', 'ORD']
+        },
+        s4: {
+            label: 'Sector 4',
+            sub: 'Central Region',
+            iatas: ['AMA', 'AUS', 'CRP', 'DAL', 'HOU', 'HRL', 'ICT', 'JAN', 'LBB', 'LIT', 'MAF', 'MCI', 'OKC', 'SAT', 'STL', 'TUL']
+        },
+        s5: {
+            label: 'Sector 5',
+            sub: 'West Region',
+            iatas: [
+                'ABQ', 'BOI', 'BZN', 'COS', 'DEN', 'ELP', 'EUG', 'FAT', 'GEG', 'HDN', 'MTJ', 'OAK', 'PDX', 'RNO', 'SEA',
+                'SFO', 'SJC', 'SLC', 'SMF', 'STS'
+            ]
+        },
+        s6: {
+            label: 'Sector 6',
+            sub: 'West Region',
+            iatas: ['BUR', 'LAS', 'LAX', 'LGB', 'ONT', 'PHX', 'PSP', 'SAN', 'SBA', 'SNA', 'TUS']
+        },
+        intl: {
+            label: 'International',
+            sub: 'INTL/ETOPS Region',
+            iatas: ['PLS', 'PUJ', 'KIN', 'PVR', 'CUN', 'LIR', 'SJO', 'HAV', 'GCM', 'NAS', 'BZE', 'STT', 'SJU', 'AUA', 'SXM']
+        },
+        etops: {
+            label: 'ETOPS (Alaska/HI)',
+            sub: 'INTL/ETOPS Region',
+            iatas: ['ANC', 'KOA', 'LIH', 'HNL', 'OGG', 'ITO']
+        }
+    };
+
+    var METAR_PRESET_REGIONS = {
+        east: { label: 'East Region', sub: 'Sectors 1 + 2', sectorKeys: ['s1', 's2'] },
+        central: { label: 'Central Region', sub: 'Sectors 3 + 4', sectorKeys: ['s3', 's4'] },
+        west: { label: 'West Region', sub: 'Sectors 5 + 6', sectorKeys: ['s5', 's6'] },
+        intl_etops: { label: 'INTL/ETOPS Region', sub: 'International + ETOPS lists', sectorKeys: ['intl', 'etops'] }
     };
 
     function applySharedMetarTafToCache(icao, metar, taf, ts) {
@@ -3623,6 +3687,78 @@
             }
         }
         pendingChangeTime = next;
+    }
+
+    function mergePresetIatasIntoStations(orderedIatas) {
+        var out = stationList.slice();
+        var have = {};
+        var hi;
+        for (hi = 0; hi < out.length; hi++) {
+            have[out[hi]] = 1;
+        }
+        var added = [];
+        var j;
+        for (j = 0; j < (orderedIatas || []).length; j++) {
+            var code = String(orderedIatas[j] || '')
+                .trim()
+                .toUpperCase();
+            if (!/^[A-Z]{3}$/.test(code) || !icaoFor(code) || have[code]) {
+                continue;
+            }
+            have[code] = 1;
+            out.push(code);
+            added.push(code);
+        }
+        stationList = out;
+        saveStationList(stationList);
+        normalizePendingChangeTimes();
+        return added;
+    }
+
+    function iatasFromPresetCheckboxes(quickAddHost) {
+        var out = [];
+        var seen = {};
+        var cbs = quickAddHost && quickAddHost.querySelectorAll ? quickAddHost.querySelectorAll('input[type="checkbox"][data-dc-mx-preset-key]') : [];
+        var i;
+        for (i = 0; i < cbs.length; i++) {
+            if (!cbs[i] || !cbs[i].checked) {
+                continue;
+            }
+            var key = String(cbs[i].getAttribute('data-dc-mx-preset-key') || '');
+            var kind = String(cbs[i].getAttribute('data-dc-mx-preset-kind') || '');
+            if (kind === 'region' && METAR_PRESET_REGIONS[key]) {
+                var skA = METAR_PRESET_REGIONS[key].sectorKeys;
+                var si;
+                for (si = 0; si < skA.length; si++) {
+                    var se = METAR_PRESET_SECTORS[skA[si]];
+                    if (!se || !se.iatas) {
+                        continue;
+                    }
+                    var ti;
+                    for (ti = 0; ti < se.iatas.length; ti++) {
+                        var iata = se.iatas[ti];
+                        if (iata && !seen[iata]) {
+                            seen[iata] = 1;
+                            out.push(iata);
+                        }
+                    }
+                }
+            } else if (kind === 'sector' && METAR_PRESET_SECTORS[key]) {
+                var se2 = METAR_PRESET_SECTORS[key];
+                if (!se2 || !se2.iatas) {
+                    continue;
+                }
+                var tj;
+                for (tj = 0; tj < se2.iatas.length; tj++) {
+                    var iat2 = se2.iatas[tj];
+                    if (iat2 && !seen[iat2]) {
+                        seen[iat2] = 1;
+                        out.push(iat2);
+                    }
+                }
+            }
+        }
+        return out;
     }
 
     function startListColorTimer() {
@@ -7394,6 +7530,141 @@
         addRow.style.display = 'flex';
         addRow.style.flexDirection = 'column';
         addRow.style.gap = '8px';
+        var quickAddHost = document.createElement('div');
+        quickAddHost.setAttribute('data-dc-mx-quick-add', '1');
+        quickAddHost.style.cssText = 'margin-top:10px;flex-shrink:0;';
+        var quickDeets = document.createElement('details');
+        quickDeets.style.cssText = 'border:1px solid #3a3a45;border-radius:6px;background:#1e1e24;padding:6px 8px;';
+        var quickSum = document.createElement('summary');
+        quickSum.textContent = 'Quick add: sectors & regions';
+        quickSum.style.cssText = 'cursor:pointer;font-size:12px;font-weight:600;color:#5dade2;user-select:none;';
+        quickSum.title = 'Add many stations from ops sector/region groupings. Duplicates in your list are skipped.';
+        quickDeets.appendChild(quickSum);
+        var quickHint = document.createElement('div');
+        quickHint.textContent = 'Check one or more, then Add selected. Re-open to add another combination.';
+        quickHint.style.cssText = 'font-size:10px;color:#95a5a6;margin:4px 0 8px;line-height:1.4;';
+        quickDeets.appendChild(quickHint);
+        var quickChWrap = document.createElement('div');
+        quickChWrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;font-size:11px;color:#bdc3c7;';
+        var presetNote = document.createElement('div');
+        presetNote.textContent = 'Regions: East / Central / West = pairs of Sectors. INTL/ETOPS = international list + Hawaii/Alaska (ETOPS row).';
+        presetNote.style.cssText = 'color:#7f8c8d;font-size:10px;line-height:1.35;';
+        quickChWrap.appendChild(presetNote);
+        var rKeys = Object.keys(METAR_PRESET_REGIONS);
+        var rki;
+        for (rki = 0; rki < rKeys.length; rki++) {
+            var rkey = rKeys[rki];
+            var rg = METAR_PRESET_REGIONS[rkey];
+            var lbr = document.createElement('label');
+            lbr.style.cssText = 'display:flex;align-items:flex-start;gap:6px;cursor:pointer;user-select:none;';
+            var cbr = document.createElement('input');
+            cbr.type = 'checkbox';
+            cbr.setAttribute('data-dc-mx-preset-key', rkey);
+            cbr.setAttribute('data-dc-mx-preset-kind', 'region');
+            cbr.style.marginTop = '2px';
+            var tdiv = document.createElement('span');
+            tdiv.innerHTML =
+                '<strong style="color:#a569bd;">' +
+                escapeHtml(rg.label) +
+                '</strong> <span style="color:#7f8c8d;">' +
+                escapeHtml(rg.sub) +
+                '</span>';
+            lbr.appendChild(cbr);
+            lbr.appendChild(tdiv);
+            quickChWrap.appendChild(lbr);
+        }
+        var secLab = document.createElement('div');
+        secLab.textContent = 'Individual sectors';
+        secLab.style.cssText = 'font-weight:600;margin-top:4px;color:#3498db;font-size:11px;';
+        quickChWrap.appendChild(secLab);
+        var sKeys = Object.keys(METAR_PRESET_SECTORS);
+        var ski;
+        for (ski = 0; ski < sKeys.length; ski++) {
+            var skey = sKeys[ski];
+            var sec = METAR_PRESET_SECTORS[skey];
+            var lb = document.createElement('label');
+            lb.style.cssText = 'display:flex;align-items:flex-start;gap:6px;cursor:pointer;user-select:none;';
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.setAttribute('data-dc-mx-preset-key', skey);
+            cb.setAttribute('data-dc-mx-preset-kind', 'sector');
+            cb.style.marginTop = '2px';
+            var spanT = document.createElement('span');
+            spanT.innerHTML =
+                '<strong style="color:#ecf0f1;">' +
+                escapeHtml(sec.label) +
+                '</strong> <span style="color:#7f8c8d;">' +
+                escapeHtml(sec.sub) +
+                '</span> <span style="color:#5d6d7a;">(' +
+                String(sec.iatas && sec.iatas.length ? sec.iatas.length : 0) +
+                ')</span>';
+            lb.appendChild(cb);
+            lb.appendChild(spanT);
+            quickChWrap.appendChild(lb);
+        }
+        var quickAct = document.createElement('div');
+        quickAct.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center;';
+        var addPresetBtn = document.createElement('button');
+        addPresetBtn.type = 'button';
+        addPresetBtn.textContent = 'Add selected to list';
+        addPresetBtn.style.cssText = 'padding:6px 10px;font-size:12px;border:none;border-radius:4px;background:#2980b9;color:#fff;cursor:pointer;';
+        addPresetBtn.addEventListener('click', function () {
+            var toAdd = iatasFromPresetCheckboxes(quickAddHost);
+            if (!toAdd.length) {
+                setStatusBar('No preset codes selected, or all already in list / unknown ICAO.');
+                return;
+            }
+            var merged = mergePresetIatasIntoStations(toAdd);
+            if (!merged.length) {
+                setStatusBar('All selected codes were already in your list or lack ICAO in this script.');
+                return;
+            }
+            if (addInput) {
+                addInput.value = '';
+            }
+            if (selectedIata && stationList.indexOf(selectedIata) < 0) {
+                selectedIata = null;
+            }
+            selectedIata = merged[0] || selectedIata || stationList[0] || null;
+            renderStationList();
+            if (selectedIata) {
+                renderDetail(selectedIata, { deferEnrichment: true, skipCodLoop: true });
+            }
+            setStatusBar('Adding ' + merged.length + ' station(s)…');
+            fetchAllStations(
+                merged,
+                function () {
+                    renderStationList();
+                    if (selectedIata) {
+                        renderDetail(selectedIata, { skipCodLoop: true });
+                    }
+                    updateRefreshThisLabel();
+                    updateAlertState();
+                    setStatusBar('Added ' + merged.length + ' to list · ' + new Date().toLocaleTimeString());
+                },
+                function (iata) {
+                    setStatusBar('Loading ' + (iata || '') + '…');
+                },
+                { deferEnrichment: true }
+            );
+        });
+        var clearPresetBtn = document.createElement('button');
+        clearPresetBtn.type = 'button';
+        clearPresetBtn.textContent = 'Clear checkboxes';
+        clearPresetBtn.style.cssText = 'padding:6px 10px;font-size:12px;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ccc;cursor:pointer;';
+        clearPresetBtn.addEventListener('click', function () {
+            var all = quickAddHost.querySelectorAll('input[type="checkbox"][data-dc-mx-preset-key]');
+            var z;
+            for (z = 0; z < all.length; z++) {
+                all[z].checked = false;
+            }
+        });
+        quickAct.appendChild(addPresetBtn);
+        quickAct.appendChild(clearPresetBtn);
+        quickChWrap.appendChild(quickAct);
+        quickDeets.appendChild(quickChWrap);
+        quickAddHost.appendChild(quickDeets);
+
         addInput = document.createElement('input');
         addInput.type = 'text';
         addInput.placeholder = 'KDEN or DEN';
@@ -7473,6 +7744,7 @@
 
         left.appendChild(sortRow);
         left.appendChild(listEl);
+        left.appendChild(quickAddHost);
         left.appendChild(addRow);
 
         detailEl = document.createElement('div');
