@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.46
-// @description  Alert modal: notify/poll prefs + local save; global/per-IATA rules explained (CIG/vis thresholds).
+// @version      2.0.47
+// @description  Alert modal: SW highlights, fresh window, custom rule level, vis fractions; rule-based text highlight when mode off.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -140,6 +140,39 @@
             return ui.metarWatchSharedPoll;
         }
         return boolPref('metarWatchSharedPoll', true);
+    }
+
+    var DEFAULT_FRESH_MINUTES = 5;
+
+    function metarWatchAlertFreshMinutes() {
+        var ui = readMetarWatchUi();
+        if (ui && ui.metarWatchAlertFreshMinutes != null) {
+            var n = Math.floor(Number(ui.metarWatchAlertFreshMinutes));
+            if (Number.isFinite(n)) {
+                return Math.min(120, Math.max(1, n));
+            }
+        }
+        return DEFAULT_FRESH_MINUTES;
+    }
+
+    function metarWatchFreshWindowMs() {
+        return metarWatchAlertFreshMinutes() * 60 * 1000;
+    }
+
+    function metarWatchHighlightWithRulesWhenNotifyOff() {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui.metarWatchHighlightWithRulesWhenNotifyOff === 'boolean') {
+            return ui.metarWatchHighlightWithRulesWhenNotifyOff;
+        }
+        return true;
+    }
+
+    function metarSwStylePrefKey(key) {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui[key] === 'boolean') {
+            return ui[key];
+        }
+        return boolPref(key, true);
     }
 
     function sharedPollEnabled() {
@@ -574,8 +607,32 @@
         return minV === Infinity ? null : minV;
     }
 
+    /**
+     * Parse max visibility for notify rules (user input in modal). Accepts decimals and fractions: 0.5, 1/2, 1 1/2.
+     */
+    function parseVisMaxForRule(str) {
+        var t = String(str == null ? '' : str)
+            .trim()
+            .replace(/\s+/g, ' ');
+        if (!t) {
+            return null;
+        }
+        if (Number.isFinite(Number(t)) && !/^\d+\s+\d/.test(t)) {
+            var n0 = Number(t);
+            if (n0 >= 0 && n0 < 100) {
+                return n0;
+            }
+        }
+        var p = parseOneVisToken(t + (/\bSM$/i.test(t) ? '' : 'SM'));
+        if (p !== null && Number.isFinite(p) && p >= 0 && p < 100) {
+            return p;
+        }
+        return null;
+    }
+
     var DEFAULT_COLOR_HIGH = '#c0392b';
     var DEFAULT_COLOR_ADVISORY = '#d68910';
+    var DEFAULT_COLOR_CUSTOM = '#9b59b6';
 
     function normalizeRuleHex(s) {
         if (s == null || s === undefined) {
@@ -629,7 +686,10 @@
             return 'advisory';
         }
         var l = String(rule.level || 'advisory').toLowerCase();
-        return l === 'high' ? 'high' : 'advisory';
+        if (l === 'high' || l === 'custom' || l === 'priority') {
+            return l;
+        }
+        return 'advisory';
     }
 
     function parseRuleColor(rule) {
@@ -637,6 +697,17 @@
             return '';
         }
         return normalizeRuleHex(rule.color) || '';
+    }
+
+    function ruleHighlightPriority(rule) {
+        var lv = parseRuleLevel(rule);
+        if (lv === 'high') {
+            return 3;
+        }
+        if (lv === 'priority' || lv === 'custom') {
+            return 2;
+        }
+        return 1;
     }
 
     function effectiveHighlightColorForRule(rule) {
@@ -647,7 +718,19 @@
         var ui = readNotifyRulesUi();
         var h = (ui && ui.colorHigh) || DEFAULT_COLOR_HIGH;
         var a = (ui && ui.colorAdvisory) || DEFAULT_COLOR_ADVISORY;
-        return parseRuleLevel(rule) === 'high' ? h : a;
+        var c = (ui && ui.colorCustom) || DEFAULT_COLOR_CUSTOM;
+        var p = (ui && ui.colorPriority) || h;
+        var lv = parseRuleLevel(rule);
+        if (lv === 'high') {
+            return h;
+        }
+        if (lv === 'custom') {
+            return c;
+        }
+        if (lv === 'priority') {
+            return p;
+        }
+        return a;
     }
 
     function ruleMatchesOne(rule, metar, taf) {
@@ -668,10 +751,15 @@
                         okM = false;
                     }
                 }
-                if (okM && rm.visibilitySmMax != null && Number.isFinite(Number(rm.visibilitySmMax))) {
-                    var vm = minVisibilitySmInText(metar);
-                    if (vm === null || vm > Number(rm.visibilitySmMax)) {
+                if (okM && rm.visibilitySmMax != null) {
+                    var maxVsM = Number(rm.visibilitySmMax);
+                    if (!Number.isFinite(maxVsM)) {
                         okM = false;
+                    } else {
+                        var vm = minVisibilitySmInText(metar);
+                        if (vm === null || vm > maxVsM) {
+                            okM = false;
+                        }
                     }
                 }
             } else {
@@ -689,10 +777,15 @@
                         okT = false;
                     }
                 }
-                if (okT && rt.visibilitySmMax != null && Number.isFinite(Number(rt.visibilitySmMax))) {
-                    var vt = minVisibilitySmInText(taf);
-                    if (vt === null || vt > Number(rt.visibilitySmMax)) {
+                if (okT && rt.visibilitySmMax != null) {
+                    var maxVsT = Number(rt.visibilitySmMax);
+                    if (!Number.isFinite(maxVsT)) {
                         okT = false;
+                    } else {
+                        var vt = minVisibilitySmInText(taf);
+                        if (vt === null || vt > maxVsT) {
+                            okT = false;
+                        }
                     }
                 }
             } else {
@@ -757,7 +850,7 @@
                             start: cra[ci].start,
                             end: cra[ci].end,
                             color: col,
-                            pri: parseRuleLevel(rule) === 'high' ? 2 : 1,
+                            pri: ruleHighlightPriority(rule),
                             label: notifyRuleLineForTooltip(ri, rule, which, 'ceiling', maxCeil)
                         });
                     }
@@ -773,7 +866,7 @@
                             start: vra[vi].start,
                             end: vra[vi].end,
                             color: col,
-                            pri: parseRuleLevel(rule) === 'high' ? 2 : 1,
+                            pri: ruleHighlightPriority(rule),
                             label: notifyRuleLineForTooltip(ri, rule, which, 'vis', maxVis)
                         });
                     }
@@ -859,7 +952,9 @@
         var n = (Number(ri) >= 0 ? Number(ri) + 1 : 0);
         var pre = n ? 'Notify rule ' + n + ' — ' : 'Notify rule — ';
         var section = which === 'metar' ? 'METAR' : 'TAF';
-        var L = parseRuleLevel(rule) === 'high' ? 'High' : 'Advisory';
+        var lv = parseRuleLevel(rule);
+        var L =
+            lv === 'high' ? 'High' : lv === 'custom' ? 'Custom' : lv === 'priority' ? 'Priority' : 'Advisory';
         var base = pre + section + ' · ' + L;
         if (kind === 'ceiling') {
             return base + ': ceiling ≤ ' + String(maxVal) + ' ft';
@@ -886,7 +981,7 @@
         if (!pk) {
             return cls;
         }
-        return boolPref(pk, true) ? cls : null;
+        return metarSwStylePrefKey(pk) ? cls : null;
     }
 
     function parseVisibilityTokenForSwStyle(token) {
@@ -1046,7 +1141,7 @@
     }
 
     function findSwStyleHighlightSpans(plain, which) {
-        if (!boolPref('metarWatchTextHighlightSwStyle', true)) {
+        if (!metarSwStylePrefKey('metarWatchTextHighlightSwStyle')) {
             return [];
         }
         var s = String(plain || '');
@@ -1141,11 +1236,18 @@
         return outM;
     }
 
+    function shouldUseNotifyRulesForHighlights(rules) {
+        if (notifyRulesMode() !== 'off' && rules && rules.length) {
+            return true;
+        }
+        return metarWatchHighlightWithRulesWhenNotifyOff() && rules && rules.length;
+    }
+
     function applyMetarTafMetarBlockHighlights(plainLinesJoined, iata) {
         var s = String(plainLinesJoined || '');
         var rules = mergeNotifyRulesForIata(iata);
-        var useRules = notifyRulesMode() !== 'off' && rules && rules.length;
-        if (!useRules && !boolPref('metarWatchTextHighlightSwStyle', true)) {
+        var useRules = shouldUseNotifyRulesForHighlights(rules);
+        if (!useRules && !metarSwStylePrefKey('metarWatchTextHighlightSwStyle')) {
             return escapeHtml(s).replace(/\n/g, '<br>');
         }
         return applyHighlightsToPlainString(
@@ -1159,8 +1261,8 @@
     function applyMetarTafTafBlockHighlights(plainTaf, iata) {
         var s = String(plainTaf || '');
         var rules = mergeNotifyRulesForIata(iata);
-        var useRules = notifyRulesMode() !== 'off' && rules && rules.length;
-        if (!useRules && !boolPref('metarWatchTextHighlightSwStyle', true)) {
+        var useRules = shouldUseNotifyRulesForHighlights(rules);
+        if (!useRules && !metarSwStylePrefKey('metarWatchTextHighlightSwStyle')) {
             return escapeHtml(s).replace(/\n/g, '<br>');
         }
         return applyHighlightsToPlainString(
@@ -1178,11 +1280,11 @@
         iata = iata || '';
         var which = block === 'taf' ? 'taf' : 'metar';
         var hSpans = [];
-        if (notifyRulesMode() !== 'off' && rules && rules.length) {
+        if (shouldUseNotifyRulesForHighlights(rules)) {
             hSpans = hSpans.concat(findHighlightSpansForText(s, which, rules));
         }
         var swSpans = [];
-        if (boolPref('metarWatchTextHighlightSwStyle', true)) {
+        if (metarSwStylePrefKey('metarWatchTextHighlightSwStyle')) {
             swSpans = findSwStyleHighlightSpans(s, which);
         }
         hSpans = mergeRuleSpansWithSwSpans(hSpans, swSpans);
@@ -1268,7 +1370,17 @@
             var perMap = per && typeof per === 'object' ? per : {};
             var ch = normalizeRuleHex(o.colorHigh) || DEFAULT_COLOR_HIGH;
             var ca = normalizeRuleHex(o.colorAdvisory) || DEFAULT_COLOR_ADVISORY;
-            return { mode: mode, global: globalArr, perIata: perMap, colorHigh: ch, colorAdvisory: ca };
+            var cc = normalizeRuleHex(o.colorCustom) || DEFAULT_COLOR_CUSTOM;
+            var cp = normalizeRuleHex(o.colorPriority) || DEFAULT_COLOR_HIGH;
+            return {
+                mode: mode,
+                global: globalArr,
+                perIata: perMap,
+                colorHigh: ch,
+                colorAdvisory: ca,
+                colorCustom: cc,
+                colorPriority: cp
+            };
         } catch (e) {
             return null;
         }
@@ -1291,7 +1403,8 @@
         if (!rule || typeof rule !== 'object') {
             return o;
         }
-        o.level = parseRuleLevel(rule) === 'high' ? 'high' : 'advisory';
+        var pl = parseRuleLevel(rule);
+        o.level = pl === 'high' || pl === 'custom' || pl === 'priority' ? pl : 'advisory';
         var pc = parseRuleColor(rule);
         if (pc) {
             o.useCustomColor = true;
@@ -1318,8 +1431,12 @@
 
     function rowValuesToRule(mC, mV, tC, tV, level, useCustomColor, customColor) {
         var rule = {};
-        var lv = String(level || 'advisory').toLowerCase() === 'high' ? 'high' : 'advisory';
-        rule.level = lv;
+        var lvs = String(level || 'advisory').toLowerCase();
+        if (lvs === 'high' || lvs === 'custom' || lvs === 'priority') {
+            rule.level = lvs;
+        } else {
+            rule.level = 'advisory';
+        }
         if (useCustomColor && normalizeRuleHex(customColor)) {
             rule.color = normalizeRuleHex(customColor);
         }
@@ -1331,8 +1448,11 @@
         if (mc.length && Number.isFinite(Number(mc))) {
             m.ceilingFtMax = Number(mc);
         }
-        if (mv.length && Number.isFinite(Number(mv))) {
-            m.visibilitySmMax = Number(mv);
+        if (mv.length) {
+            var pvm = parseVisMaxForRule(mv);
+            if (pvm != null) {
+                m.visibilitySmMax = pvm;
+            }
         }
         if (Object.keys(m).length) {
             rule.metar = m;
@@ -1341,8 +1461,11 @@
         if (tc.length && Number.isFinite(Number(tc))) {
             t.ceilingFtMax = Number(tc);
         }
-        if (tv.length && Number.isFinite(Number(tv))) {
-            t.visibilitySmMax = Number(tv);
+        if (tv.length) {
+            var pvt = parseVisMaxForRule(tv);
+            if (pvt != null) {
+                t.visibilitySmMax = pvt;
+            }
         }
         if (Object.keys(t).length) {
             rule.taf = t;
@@ -1369,6 +1492,12 @@
         var mode = notifyRulesMode();
         var ui = readNotifyRulesUi();
         if (ui) {
+            if (!ui.colorCustom) {
+                ui.colorCustom = DEFAULT_COLOR_CUSTOM;
+            }
+            if (!ui.colorPriority) {
+                ui.colorPriority = DEFAULT_COLOR_HIGH;
+            }
             var globalArr = Array.isArray(ui.global) ? ui.global : [];
             if (mode === 'global') {
                 return globalArr;
@@ -2864,6 +2993,11 @@
     var alertMetarSettingsPoll = null;
     var alertMetarSettingsConc = null;
     var alertMetarSettingsShared = null;
+    var alertMetarSettingsFresh = null;
+    var alertMetarSettingsHiRules = null;
+    var alertMetarSettingsSw = {};
+    var alertRulesColorCustomInp = null;
+    var alertRulesColorPriorityInp = null;
     /** Last station we started the COD loop for (avoid restart on timer-only detail refresh). */
     var lastCodLoopIata = null;
     var cacheByIcao = {};
@@ -2976,14 +3110,14 @@
         return base;
     }
 
-    /** Yellow: change within 5 min; red: older than 5 min (still unseen). */
+    /** Yellow: change within configured minutes; red: older (still unseen). */
     function pendingChangeAgeClass(iata) {
         var t = pendingChangeTime[iata];
         if (typeof t !== 'number' || !Number.isFinite(t)) {
             return null;
         }
         var age = Date.now() - t;
-        if (age <= 5 * 60 * 1000) {
+        if (age <= metarWatchFreshWindowMs()) {
             return 'fresh';
         }
         return 'stale';
@@ -5588,7 +5722,8 @@
         row.style.alignItems = 'end';
         row.style.marginBottom = '8px';
         var level = document.createElement('select');
-        level.title = 'High vs Advisory (default colors unless custom swatch)';
+        level.title =
+            'Default underline color: Advisory / High / Custom (preset) / Priority (preset). Or check custom swatch to set this row’s color.';
         level.style.cssText =
             'width:100%;padding:4px 4px;font-size:10px;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
         var lo = document.createElement('option');
@@ -5597,9 +5732,21 @@
         var lh = document.createElement('option');
         lh.value = 'high';
         lh.textContent = 'High';
+        var lcu = document.createElement('option');
+        lcu.value = 'custom';
+        lcu.textContent = 'Custom (preset)';
+        var lpr = document.createElement('option');
+        lpr.value = 'priority';
+        lpr.textContent = 'Priority (preset)';
         level.appendChild(lo);
         level.appendChild(lh);
-        level.value = v.level === 'high' ? 'high' : 'advisory';
+        level.appendChild(lcu);
+        level.appendChild(lpr);
+        if (v.level === 'high' || v.level === 'custom' || v.level === 'priority') {
+            level.value = v.level;
+        } else {
+            level.value = 'advisory';
+        }
         var useColor = document.createElement('input');
         useColor.type = 'checkbox';
         useColor.title = 'Custom color for this rule';
@@ -5626,11 +5773,21 @@
         });
         var mC = elNumInput('METAR ceil max');
         mC.value = v.mC;
-        var mV = elNumInput('METAR vis max (sm)');
+        var mV = elNumInput('');
+        mV.type = 'text';
+        mV.removeAttribute('min');
+        mV.inputMode = 'decimal';
+        mV.placeholder = '1.5, 1/2, 1 1/2';
+        mV.title = 'Max vis in statute miles: decimal or fraction (e.g. 0.5, 1/2, 1 1/2)';
         mV.value = v.mV;
         var tC = elNumInput('TAF ceil max');
         tC.value = v.tC;
-        var tV = elNumInput('TAF vis max (sm)');
+        var tV = elNumInput('');
+        tV.type = 'text';
+        tV.removeAttribute('min');
+        tV.inputMode = 'decimal';
+        tV.placeholder = '1.5, 1/2';
+        tV.title = 'TAF vis max (SM), same as METAR vis';
         tV.value = v.tV;
         row._inputs = { level: level, useCustomColor: useColor, customColor: colorInp, mC: mC, mV: mV, tC: tC, tV: tV };
         row.appendChild(level);
@@ -5699,6 +5856,18 @@
         if (alertMetarSettingsShared) {
             alertMetarSettingsShared.checked = metarSharedPollEnabled();
         }
+        if (alertMetarSettingsFresh) {
+            alertMetarSettingsFresh.value = String(metarWatchAlertFreshMinutes());
+        }
+        if (alertMetarSettingsHiRules) {
+            alertMetarSettingsHiRules.checked = metarWatchHighlightWithRulesWhenNotifyOff();
+        }
+        var ssw;
+        for (ssw in alertMetarSettingsSw) {
+            if (Object.prototype.hasOwnProperty.call(alertMetarSettingsSw, ssw) && alertMetarSettingsSw[ssw]) {
+                alertMetarSettingsSw[ssw].checked = metarSwStylePrefKey(ssw);
+            }
+        }
     }
 
     function readMetarSettingsIntoStorage() {
@@ -5720,6 +5889,21 @@
         if (alertMetarSettingsShared) {
             o.metarWatchSharedPoll = !!alertMetarSettingsShared.checked;
         }
+        if (alertMetarSettingsFresh) {
+            var fwm = Math.floor(Number(alertMetarSettingsFresh.value));
+            o.metarWatchAlertFreshMinutes = Number.isFinite(fwm)
+                ? Math.min(120, Math.max(1, fwm))
+                : metarWatchAlertFreshMinutes();
+        }
+        if (alertMetarSettingsHiRules) {
+            o.metarWatchHighlightWithRulesWhenNotifyOff = !!alertMetarSettingsHiRules.checked;
+        }
+        var ssw2;
+        for (ssw2 in alertMetarSettingsSw) {
+            if (Object.prototype.hasOwnProperty.call(alertMetarSettingsSw, ssw2) && alertMetarSettingsSw[ssw2]) {
+                o[ssw2] = !!alertMetarSettingsSw[ssw2].checked;
+            }
+        }
         writeMetarWatchUi(o);
         try {
             restartPollTimer();
@@ -5734,6 +5918,8 @@
         var g = mode === 'off' ? [] : collectRuleRowsFromHost(alertRulesGlobalHost);
         var ch = (alertRulesColorHighInp && normalizeRuleHex(alertRulesColorHighInp.value)) || DEFAULT_COLOR_HIGH;
         var ca = (alertRulesColorAdvisoryInp && normalizeRuleHex(alertRulesColorAdvisoryInp.value)) || DEFAULT_COLOR_ADVISORY;
+        var cc = (alertRulesColorCustomInp && normalizeRuleHex(alertRulesColorCustomInp.value)) || DEFAULT_COLOR_CUSTOM;
+        var cpr = (alertRulesColorPriorityInp && normalizeRuleHex(alertRulesColorPriorityInp.value)) || DEFAULT_COLOR_HIGH;
         var perIata = {};
         if (mode === 'per_iata' && alertRulesPerHost) {
             var bl = alertRulesPerHost.querySelectorAll('[data-dc-arule-airport]');
@@ -5766,7 +5952,15 @@
                 }
             }
         }
-        writeNotifyRulesUi({ mode: mode, global: g, perIata: perIata, colorHigh: ch, colorAdvisory: ca });
+        writeNotifyRulesUi({
+            mode: mode,
+            global: g,
+            perIata: perIata,
+            colorHigh: ch,
+            colorAdvisory: ca,
+            colorCustom: cc,
+            colorPriority: cpr
+        });
         readMetarSettingsIntoStorage();
     }
 
@@ -5884,6 +6078,20 @@
                     s2.style.background = alertRulesColorAdvisoryInp.value;
                 }
             }
+            if (alertRulesColorCustomInp) {
+                alertRulesColorCustomInp.value = stored.colorCustom || DEFAULT_COLOR_CUSTOM;
+                var s2c = alertRulesColorCustomInp.nextElementSibling;
+                if (s2c && s2c.style) {
+                    s2c.style.background = alertRulesColorCustomInp.value;
+                }
+            }
+            if (alertRulesColorPriorityInp) {
+                alertRulesColorPriorityInp.value = stored.colorPriority || DEFAULT_COLOR_HIGH;
+                var s2p = alertRulesColorPriorityInp.nextElementSibling;
+                if (s2p && s2p.style) {
+                    s2p.style.background = alertRulesColorPriorityInp.value;
+                }
+            }
             var g = stored.global && Array.isArray(stored.global) ? stored.global : [];
             if (!g.length) {
                 g = [null];
@@ -5914,6 +6122,20 @@
                 var s1b = alertRulesColorHighInp.nextElementSibling;
                 if (s1b && s1b.style) {
                     s1b.style.background = alertRulesColorHighInp.value;
+                }
+            }
+            if (alertRulesColorCustomInp) {
+                alertRulesColorCustomInp.value = DEFAULT_COLOR_CUSTOM;
+                var s3c = alertRulesColorCustomInp.nextElementSibling;
+                if (s3c && s3c.style) {
+                    s3c.style.background = alertRulesColorCustomInp.value;
+                }
+            }
+            if (alertRulesColorPriorityInp) {
+                alertRulesColorPriorityInp.value = DEFAULT_COLOR_HIGH;
+                var s3p = alertRulesColorPriorityInp.nextElementSibling;
+                if (s3p && s3p.style) {
+                    s3p.style.background = alertRulesColorPriorityInp.value;
                 }
             }
             var mExt =
@@ -5964,7 +6186,7 @@
         var sub = document.createElement('div');
         sub.style.cssText = 'font-size:11px;font-weight:400;color:#95a5a6;margin-top:4px;line-height:1.4;';
         sub.textContent =
-            'Saves in this browser (overrides DonkeyCODE defaults for these fields). Global rules apply to every station; Per IATA adds more OR-matched rule rows for that airport. Each global row is an alternative: if any row matches, that station is eligible. Within one row, if you set both METAR and TAF columns, both sides must pass; only METAR or only TAF = only that product is checked. "M/T ceil max" and "M/T vis max" mean: alert if ceiling is at or below that value (ft AGL) and/or if visibility (statute miles) is at or below that value — e.g. METAR CIG 1000 alerts for ceilings ≤ 1000 ft. Empty = ignore that column. High/Advisory and custom swatch = highlight level in the list and detail text.';
+            'Saves in this browser. Global/Per IATA: OR between rows. Rule level (Advisory/High/Custom/Priority) picks default underlines, or use the per-rule custom color check + swatch. Vis columns accept decimals and fractions (e.g. 0.5, 1/2, 1 1/2). The “Fresh” minutes setting controls how long the list stays yellow after a change before turning red. SW-style and notify-rule underlines: rules win on overlap.';
 
         var sc = document.createElement('div');
         sc.style.cssText = 'padding:12px 16px;overflow:auto;flex:1;min-height:0;';
@@ -6066,6 +6288,79 @@
             'Saved in this browser when you click Save (below). Changing poll time restarts the background refresh timer on this page.';
         setHint.style.cssText = 'font-size:10px;color:#7f8c8d;margin-top:8px;line-height:1.35;';
         settingsWrap.appendChild(setHint);
+
+        var moreTitle = document.createElement('div');
+        moreTitle.textContent = 'List / badge timing & text highlights';
+        moreTitle.style.cssText = 'font-size:12px;font-weight:600;margin:14px 0 8px;color:#9b59b6;';
+        settingsWrap.appendChild(moreTitle);
+
+        var moreGrid = document.createElement('div');
+        moreGrid.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px 16px;align-items:flex-end;';
+        var cellF = document.createElement('div');
+        cellF.style.minWidth = '120px';
+        var labF = document.createElement('label');
+        labF.textContent = '“Fresh” alert window (min)';
+        labF.style.cssText = 'font-size:11px;color:#bdc3c7;display:block;margin-bottom:2px;';
+        labF.title = 'List row stays yellow (fresh) for this long after a rules-matching change; after that, red (stale).';
+        cellF.appendChild(labF);
+        alertMetarSettingsFresh = mkNumIn('5', '64px');
+        alertMetarSettingsFresh.min = '1';
+        alertMetarSettingsFresh.max = '120';
+        cellF.appendChild(alertMetarSettingsFresh);
+        moreGrid.appendChild(cellF);
+        var cellH = document.createElement('div');
+        cellH.style.minWidth = '200px';
+        var rowH2 = document.createElement('div');
+        rowH2.style.display = 'flex';
+        rowH2.style.alignItems = 'center';
+        rowH2.style.gap = '6px';
+        alertMetarSettingsHiRules = document.createElement('input');
+        alertMetarSettingsHiRules.type = 'checkbox';
+        var labH2 = document.createElement('span');
+        labH2.textContent = 'Apply notify rules to METAR/TAF underlines (when mode = Off, if rules are defined)';
+        labH2.style.fontSize = '11px';
+        labH2.title =
+            'When “Notify only when rules match” is Off, still underline tokens that match your CIG/vis rules (if any), instead of only SW-style colors.';
+        rowH2.appendChild(alertMetarSettingsHiRules);
+        rowH2.appendChild(labH2);
+        cellH.appendChild(rowH2);
+        moreGrid.appendChild(cellH);
+        settingsWrap.appendChild(moreGrid);
+
+        var swLab = document.createElement('div');
+        swLab.textContent = 'SW-style highlights (per-token IFR, MVFR, etc.)';
+        swLab.style.cssText = 'font-size:11px;color:#95a5a6;margin:8px 0 4px;';
+        settingsWrap.appendChild(swLab);
+        var swMap = [
+            ['metarWatchTextHighlightSwStyle', 'On (master)'],
+            ['metarHighlightIFR', 'IFR'],
+            ['metarHighlightMVFR', 'MVFR'],
+            ['metarHighlightCrosswind', 'Crosswind'],
+            ['metarHighlightLLWS', 'LLWS'],
+            ['metarHighlightIcing', 'Icing'],
+            ['metarHighlightTS', 'T-storms']
+        ];
+        var swR = document.createElement('div');
+        swR.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;';
+        var sxi;
+        for (sxi = 0; sxi < swMap.length; sxi++) {
+            var wk = swMap[sxi][0];
+            var wl = document.createElement('label');
+            wl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10px;cursor:pointer;user-select:none;';
+            var wcb = document.createElement('input');
+            wcb.type = 'checkbox';
+            wcb.setAttribute('data-dc-mx-sw', wk);
+            alertMetarSettingsSw[wk] = wcb;
+            wl.appendChild(wcb);
+            wl.appendChild(document.createTextNode(swMap[sxi][1]));
+            swR.appendChild(wl);
+        }
+        settingsWrap.appendChild(swR);
+
+        var moreNote = document.createElement('div');
+        moreNote.textContent = 'List colors use the fresh window. Detail METAR/TAF: notify-rule underlines and SW-style can both apply (rule wins on overlap).';
+        moreNote.style.cssText = 'font-size:10px;color:#7f8c8d;margin-top:8px;line-height:1.35;';
+        settingsWrap.appendChild(moreNote);
         sc.appendChild(settingsWrap);
 
         var modeRow = document.createElement('div');
@@ -6131,11 +6426,49 @@
         alertRulesColorAdvisoryInp.addEventListener('change', syncAd);
         adWrap.appendChild(alertRulesColorAdvisoryInp);
         adWrap.appendChild(adSw);
+        var cuWrap = document.createElement('label');
+        cuWrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#ecf0f1;';
+        cuWrap.appendChild(document.createTextNode('Custom (level)'));
+        alertRulesColorCustomInp = document.createElement('input');
+        alertRulesColorCustomInp.type = 'color';
+        alertRulesColorCustomInp.value = DEFAULT_COLOR_CUSTOM;
+        alertRulesColorCustomInp.title = '“Custom (preset)” rule level (no per-rule color)';
+        alertRulesColorCustomInp.style.cssText = 'width:28px;height:28px;padding:0;border:none;cursor:pointer;';
+        var cuSw = document.createElement('span');
+        cuSw.style.cssText = 'display:inline-block;width:28px;height:28px;border-radius:4px;border:1px solid #555;vertical-align:middle;';
+        function syncCu() {
+            cuSw.style.background = alertRulesColorCustomInp.value;
+        }
+        alertRulesColorCustomInp.addEventListener('input', syncCu);
+        alertRulesColorCustomInp.addEventListener('change', syncCu);
+        cuWrap.appendChild(alertRulesColorCustomInp);
+        cuWrap.appendChild(cuSw);
+        var prWrap = document.createElement('label');
+        prWrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#ecf0f1;';
+        prWrap.appendChild(document.createTextNode('Priority (level)'));
+        alertRulesColorPriorityInp = document.createElement('input');
+        alertRulesColorPriorityInp.type = 'color';
+        alertRulesColorPriorityInp.value = DEFAULT_COLOR_HIGH;
+        alertRulesColorPriorityInp.title = '“Priority (preset)” rule level; usually same as High';
+        alertRulesColorPriorityInp.style.cssText = 'width:28px;height:28px;padding:0;border:none;cursor:pointer;';
+        var prSw = document.createElement('span');
+        prSw.style.cssText = 'display:inline-block;width:28px;height:28px;border-radius:4px;border:1px solid #555;vertical-align:middle;';
+        function syncPr() {
+            prSw.style.background = alertRulesColorPriorityInp.value;
+        }
+        alertRulesColorPriorityInp.addEventListener('input', syncPr);
+        alertRulesColorPriorityInp.addEventListener('change', syncPr);
+        prWrap.appendChild(alertRulesColorPriorityInp);
+        prWrap.appendChild(prSw);
         catRow.appendChild(catLab);
         catRow.appendChild(hiWrap);
         catRow.appendChild(adWrap);
+        catRow.appendChild(cuWrap);
+        catRow.appendChild(prWrap);
         syncHi();
         syncAd();
+        syncCu();
+        syncPr();
         sc.appendChild(catRow);
 
         alertRulesGlobalBlock = document.createElement('div');
