@@ -1,7 +1,6 @@
-# Worksheet State: team key lives in repo secret WORKSHEET_STATE_TEAM_KEY or WOF_TEAM_KEY.
-# Userscript sends repository_dispatch with the same key in client_payload; this workflow writes
-# WORKSHEET STATES/worksheet-states.json using GITHUB_TOKEN.
-name: Worksheet State sync
+# Worksheet cloud states: same team key as Wall of Fame (WOF_TEAM_KEY) or a dedicated secret.
+# Userscript sends repository_dispatch event_type: worksheet-state-put (see WS state-reload.user.js).
+name: Worksheet state sync
 
 on:
   repository_dispatch:
@@ -20,8 +19,8 @@ jobs:
       - name: Validate team key and write JSON
         uses: actions/github-script@v7
         env:
-          WORKSHEET_STATE_TEAM_KEY: ${{ secrets.WORKSHEET_STATE_TEAM_KEY }}
           WOF_TEAM_KEY: ${{ secrets.WOF_TEAM_KEY }}
+          WORKSHEET_STATE_TEAM_KEY: ${{ secrets.WORKSHEET_STATE_TEAM_KEY }}
         with:
           script: |
             const fs = require('fs');
@@ -31,28 +30,19 @@ jobs:
             const cp = context.payload.client_payload || {};
             const got = cp.team_key;
             if (!expected) {
-              core.setFailed('Repository secret WORKSHEET_STATE_TEAM_KEY or WOF_TEAM_KEY is not set.');
+              core.setFailed('Set repository secret WORKSHEET_STATE_TEAM_KEY (or WOF_TEAM_KEY) to match worksheetStateTeamKey in DonkeyCODE.');
               return;
             }
             if (String(got) !== String(expected)) {
-              core.setFailed('Invalid team key.');
+              core.setFailed('Invalid team key for worksheet state sync.');
               return;
             }
             const doc = cp.document;
             if (!doc || typeof doc !== 'object' || !Array.isArray(doc.states)) {
-              core.setFailed('client_payload.document must be { states: [], updatedAt?: number }');
+              core.setFailed('client_payload.document must include states[] (worksheet state bundle).');
               return;
             }
-            const now = Date.now();
-            const ttlMs = Number(doc.ttlMs) || 4 * 60 * 60 * 1000;
-            doc.updatedAt = Number(doc.updatedAt) || now;
-            doc.ttlMs = ttlMs;
-            doc.states = doc.states
-              .filter((state) => state && typeof state === 'object')
-              .filter((state) => {
-                const expiresAt = Date.parse(state.expiresAt || '');
-                return Number.isFinite(expiresAt) ? expiresAt > now : true;
-              });
+            doc.updatedAt = Number(doc.updatedAt) || Date.now();
             let rel = (cp.path && String(cp.path).trim()) || 'WORKSHEET STATES/worksheet-states.json';
             rel = rel.replace(/^\/+/, '').replace(/\.\./g, '');
             const dir = path.dirname(rel);
@@ -60,15 +50,15 @@ jobs:
               fs.mkdirSync(dir, { recursive: true });
             }
             fs.writeFileSync(rel, JSON.stringify(doc, null, 2) + '\n', 'utf8');
-            fs.writeFileSync('worksheet-state-git-path.txt', rel, 'utf8');
+            fs.writeFileSync('ws-state-git-path.txt', rel, 'utf8');
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          REL="$(cat worksheet-state-git-path.txt)"
+          REL="$(cat ws-state-git-path.txt)"
           git add -- "$REL"
-          rm -f worksheet-state-git-path.txt
+          rm -f ws-state-git-path.txt
           if git diff --staged --quiet; then
             echo "No changes."
             exit 0

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.47
-// @description  Alert modal: SW highlights, fresh window, custom rule level, vis fractions; rule-based text highlight when mode off.
+// @version      2.0.49
+// @description  Save alert modal to DonkeyCODE prefs; sync; Fresh help + UI cleanup.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -13,7 +13,7 @@
 // @connect      atis.info
 // @connect      api.open-meteo.com
 // @connect      weather.cod.edu
-// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchNotifyRulesMode":{"type":"select","group":"METAR watch · notify rules","label":"Notify only when rules match","description":"Off: notify on any METAR/TAF change. Global: JSON rules apply to every station. Per IATA: global rules plus optional per-airport JSON overrides.","default":"off","options":[{"value":"off","label":"Off (any change)"},{"value":"global","label":"Global rules only"},{"value":"per_iata","label":"Global + per-IATA overrides"}]},"metarWatchNotifyRulesGlobal":{"type":"string","group":"METAR watch · notify rules","label":"Global rules (JSON, optional)","description":"Use the modal 'Alert rules' form instead. If you save the form, it overrides this string. Array of rules, OR empty. Example: [{\"metar\":{\"ceilingFtMax\":1000}},{\"taf\":{\"visibilitySmMax\":0.5}}].","default":""},"metarWatchNotifyRulesPerIata":{"type":"string","group":"METAR watch · notify rules","label":"Per-IATA rules (JSON, optional)","description":"Form overrides when saved. Example: {\"ATL\":[{\"metar\":{\"ceilingFtMax\":500}}]}.","default":""},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1},"metarWatchCodPrefetchSectors":{"type":"boolean","group":"METAR watch · panels","label":"COD: prefetch tracked sectors","description":"After each METAR poll, background-download COD frames once per NEXLAB sector covering your station list (same cache for all airports in that sector). Turn off to save bandwidth.","default":true},"metarWatchSharedPoll":{"type":"boolean","group":"METAR watch","label":"Share poll across tabs","description":"One browser tab leads background METAR/TAF polls and broadcasts results to other Ops Suite tabs; reduces duplicate API traffic. Best with the same station list in each tab.","default":true},"metarWatchTextHighlightSwStyle":{"type":"boolean","group":"METAR watch · text colors","label":"SW-style token colors in METAR/TAF","description":"In the detail panel, color tokens like the SW Airport tooltip (IFR red, MVFR orange, etc.). Optional notify-rule highlights still take priority.","default":true},"metarHighlightIFR":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight IFR (ceiling/vis)","default":true},"metarHighlightMVFR":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight MVFR","default":true},"metarHighlightCrosswind":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight crosswind","default":true},"metarHighlightLLWS":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight LLWS / WS","default":true},"metarHighlightIcing":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight icing","default":true},"metarHighlightTS":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight thunderstorms","default":true}}
+// @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchNotifyRulesMode":{"type":"select","group":"METAR watch · notify rules","label":"Notify only when rules match","description":"Off: notify on any METAR/TAF change. Global: JSON rules apply to every station. Per IATA: global rules plus optional per-airport JSON overrides.","default":"off","options":[{"value":"off","label":"Off (any change)"},{"value":"global","label":"Global rules only"},{"value":"per_iata","label":"Global + per-IATA overrides"}]},"metarWatchNotifyRulesGlobal":{"type":"string","group":"METAR watch · notify rules","label":"Global rules (JSON, optional)","description":"Use the modal 'Alert rules' form instead. If you save the form, it overrides this string. Array of rules, OR empty. Example: [{\"metar\":{\"ceilingFtMax\":1000}},{\"taf\":{\"visibilitySmMax\":0.5}}].","default":""},"metarWatchNotifyRulesPerIata":{"type":"string","group":"METAR watch · notify rules","label":"Per-IATA rules (JSON, optional)","description":"Form overrides when saved. Example: {\"ATL\":[{\"metar\":{\"ceilingFtMax\":500}}]}.","default":""},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1},"metarWatchCodPrefetchSectors":{"type":"boolean","group":"METAR watch · panels","label":"COD: prefetch tracked sectors","description":"After each METAR poll, background-download COD frames once per NEXLAB sector covering your station list (same cache for all airports in that sector). Turn off to save bandwidth.","default":true},"metarWatchSharedPoll":{"type":"boolean","group":"METAR watch","label":"Sync alerts across tabs","description":"One tab leads background METAR/TAF polls; other tabs receive the same fetches and can share the leader’s alert/notification state. Reduces duplicate traffic. Best with the same station list.","default":true},"metarWatchTextHighlightSwStyle":{"type":"boolean","group":"METAR watch · text colors","label":"SW-style token colors in METAR/TAF","description":"In the detail panel, color tokens like the SW Airport tooltip (IFR red, MVFR orange, etc.). Optional notify-rule highlights still take priority.","default":true},"metarHighlightIFR":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight IFR (ceiling/vis)","default":true},"metarHighlightMVFR":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight MVFR","default":true},"metarHighlightCrosswind":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight crosswind","default":true},"metarHighlightLLWS":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight LLWS / WS","default":true},"metarHighlightIcing":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight icing","default":true},"metarHighlightTS":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight thunderstorms","default":true},"metarWatchModalStateJson":{"type":"string","group":"METAR watch · saved from modal","label":"Alert modal bundle (auto)","description":"Written when you save Notification alert conditions. Syncs via DonkeyCODE session storage.","default":""}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // ==/UserScript==
@@ -39,6 +39,9 @@
     var LS_NOTIFY_RULES_UI = 'dc-metar-watch-notify-rules-ui-v1';
     /** In-modal notify + timing (overrides DonkeyCODE defaults for this browser when set). */
     var LS_METAR_UI_SETTINGS = 'dc-metar-watch-ui-settings-v1';
+    /** One-time: apply bundled DonkeyCODE modal snapshot if local storage was empty. */
+    var LS_METAR_MODAL_BUNDLE_APPLIED = 'dc-metar-modal-bundle-pref-v1';
+    var METAR_MODAL_BUNDLE_VERSION = 1;
     var lastAppliedPollResultsTs = 0;
     var SHARED_METAR_TAF_TTL_MS = 8 * 60 * 1000;
     var metarTafSharedChannel = null;
@@ -165,6 +168,82 @@
             return ui.metarWatchHighlightWithRulesWhenNotifyOff;
         }
         return true;
+    }
+
+    function metarWatchNotifyOnColored() {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui.metarWatchNotifyOnColored === 'boolean') {
+            return ui.metarWatchNotifyOnColored;
+        }
+        return true;
+    }
+
+    function metarWatchNotifyOnSpecial() {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui.metarWatchNotifyOnSpecial === 'boolean') {
+            return ui.metarWatchNotifyOnSpecial;
+        }
+        return true;
+    }
+
+    function hasDefinedNotifyRules() {
+        var uiR = readNotifyRulesUi();
+        if (uiR) {
+            var g = Array.isArray(uiR.global) ? uiR.global : [];
+            if (g.length) {
+                return true;
+            }
+            var p = uiR.perIata && typeof uiR.perIata === 'object' ? uiR.perIata : {};
+            var k;
+            for (k in p) {
+                if (Object.prototype.hasOwnProperty.call(p, k) && p[k] && p[k].length) {
+                    return true;
+                }
+            }
+        }
+        if (typeof donkeycodeGetPref !== 'function') {
+            return false;
+        }
+        var dG = parseNotifyRulesArray(String(donkeycodeGetPref('metarWatchNotifyRulesGlobal') != null ? donkeycodeGetPref('metarWatchNotifyRulesGlobal') : ''));
+        if (dG && dG.length) {
+            return true;
+        }
+        var mP = parseNotifyRulesPerIataMap(donkeycodeGetPref('metarWatchNotifyRulesPerIata'));
+        for (k in mP) {
+            if (Object.prototype.hasOwnProperty.call(mP, k) && mP[k] && mP[k].length) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function isSpecialMetarTaf(metar, taf) {
+        var m = String(metar || '');
+        var t = String(taf || '');
+        if (m && /\bSPECI\b/i.test(m)) {
+            return true;
+        }
+        if (t && /\b(TEMPO|BECMG|PROB\d+|FM\d{6})\b/.test(t)) {
+            return true;
+        }
+        return false;
+    }
+
+    function shouldSendDesktopNotificationForContent(iata, rec) {
+        if (!rec) {
+            return false;
+        }
+        if (metarWatchNotifyOnSpecial() && isSpecialMetarTaf(rec.metar, rec.taf)) {
+            return true;
+        }
+        if (metarWatchNotifyOnColored()) {
+            var rules = mergeNotifyRulesForIata(iata);
+            if (rules && rules.length) {
+                return notifyRulesPassForStation(iata, rec);
+            }
+            return notifyRulesMode() === 'off';
+        }
+        return notifyRulesPassForStation(iata, rec);
     }
 
     function metarSwStylePrefKey(key) {
@@ -710,6 +789,61 @@
         return 1;
     }
 
+    function metarTafPartHasExtraConstraints(part) {
+        if (!part || typeof part !== 'object') {
+            return false;
+        }
+        if (part.requireTs) {
+            return true;
+        }
+        if (part.requireLlws) {
+            return true;
+        }
+        if (part.speciOnly) {
+            return true;
+        }
+        if (String(part.textContains == null ? '' : part.textContains).trim().length) {
+            return true;
+        }
+        return false;
+    }
+
+    function metarTafPartExtraPass(part, text) {
+        if (!part || typeof part !== 'object' || !String(text || '').length) {
+            return !metarTafPartHasExtraConstraints(part);
+        }
+        if (!metarTafPartHasExtraConstraints(part)) {
+            return true;
+        }
+        var u = String(text || '').toUpperCase();
+        if (part.speciOnly) {
+            if (u.indexOf('TAF') >= 0) {
+                if (!/\b(PROB|BECMG|FM\d|TEMPO)\b/.test(String(text)) && u.indexOf('TEMPO') < 0) {
+                    return false;
+                }
+            } else if (u.indexOf('SPECI') < 0) {
+                return false;
+            }
+        }
+        if (part.requireTs) {
+            if (!/\b(TS|TSRA|VCTS|TSTM|TSNO)\b/i.test(String(text)) && !/[-+]TS/.test(String(text))) {
+                return false;
+            }
+        }
+        if (part.requireLlws) {
+            if (u.indexOf('LLWS') < 0 && u.indexOf('LO LV') < 0 && u.indexOf('W/S') < 0) {
+                return false;
+            }
+        }
+        var tsub = String(part.textContains == null ? '' : part.textContains).trim();
+        if (tsub.length) {
+            if (String(text || '').toLowerCase().indexOf(tsub.toLowerCase()) < 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     function effectiveHighlightColorForRule(rule) {
         var custom = parseRuleColor(rule);
         if (custom) {
@@ -733,6 +867,44 @@
         return a;
     }
 
+    function partHasCigOrVis(rm) {
+        if (!rm || typeof rm !== 'object') {
+            return false;
+        }
+        return (
+            (rm.ceilingFtMax != null && Number.isFinite(Number(rm.ceilingFtMax))) ||
+            (rm.visibilitySmMax != null && Number.isFinite(Number(rm.visibilitySmMax)))
+        );
+    }
+
+    function partMatchesMetarTaf(rm, text) {
+        if (!rm || typeof rm !== 'object' || !String(text || '').length) {
+            return false;
+        }
+        if (partHasCigOrVis(rm)) {
+            if (rm.ceilingFtMax != null && Number.isFinite(Number(rm.ceilingFtMax))) {
+                var c = ceilingFtFromMetar(text);
+                if (c === null || c > Number(rm.ceilingFtMax)) {
+                    return false;
+                }
+            }
+            if (rm.visibilitySmMax != null) {
+                var maxVsM = Number(rm.visibilitySmMax);
+                if (Number.isFinite(maxVsM)) {
+                    var vm = minVisibilitySmInText(text);
+                    if (vm === null || vm > maxVsM) {
+                        return false;
+                    }
+                }
+            }
+        } else {
+            if (!metarTafPartHasExtraConstraints(rm)) {
+                return true;
+            }
+        }
+        return metarTafPartExtraPass(rm, text);
+    }
+
     function ruleMatchesOne(rule, metar, taf) {
         if (!rule || typeof rule !== 'object') {
             return false;
@@ -740,56 +912,26 @@
         if (!rule.metar && !rule.taf) {
             return false;
         }
+        var mStr = String(metar || '');
+        var tStr = String(taf || '');
+        var hasM = mStr.length > 0;
+        var hasT = tStr.length > 0;
         var okM = true;
-        var okT = true;
         if (rule.metar && typeof rule.metar === 'object') {
-            var rm = rule.metar;
-            if (String(metar || '').length) {
-                if (rm.ceilingFtMax != null && Number.isFinite(Number(rm.ceilingFtMax))) {
-                    var c = ceilingFtFromMetar(metar);
-                    if (c === null || c > Number(rm.ceilingFtMax)) {
-                        okM = false;
-                    }
-                }
-                if (okM && rm.visibilitySmMax != null) {
-                    var maxVsM = Number(rm.visibilitySmMax);
-                    if (!Number.isFinite(maxVsM)) {
-                        okM = false;
-                    } else {
-                        var vm = minVisibilitySmInText(metar);
-                        if (vm === null || vm > maxVsM) {
-                            okM = false;
-                        }
-                    }
-                }
-            } else {
+            if (!hasM) {
                 okM = false;
+            } else {
+                okM = partMatchesMetarTaf(rule.metar, mStr);
             }
         } else {
             okM = true;
         }
+        var okT = true;
         if (rule.taf && typeof rule.taf === 'object') {
-            var rt = rule.taf;
-            if (String(taf || '').length) {
-                if (rt.ceilingFtMax != null && Number.isFinite(Number(rt.ceilingFtMax))) {
-                    var ct = ceilingFtFromMetar(taf);
-                    if (ct === null || ct > Number(rt.ceilingFtMax)) {
-                        okT = false;
-                    }
-                }
-                if (okT && rt.visibilitySmMax != null) {
-                    var maxVsT = Number(rt.visibilitySmMax);
-                    if (!Number.isFinite(maxVsT)) {
-                        okT = false;
-                    } else {
-                        var vt = minVisibilitySmInText(taf);
-                        if (vt === null || vt > maxVsT) {
-                            okT = false;
-                        }
-                    }
-                }
-            } else {
+            if (!hasT) {
                 okT = false;
+            } else {
+                okT = partMatchesMetarTaf(rule.taf, tStr);
             }
         } else {
             okT = true;
@@ -1360,18 +1502,41 @@
             if (!o || typeof o !== 'object') {
                 return null;
             }
-            var mode = String(o.mode || 'off').toLowerCase();
-            if (mode !== 'off' && mode !== 'global' && mode !== 'per_iata') {
-                mode = 'off';
-            }
             var g = o.global;
             var globalArr = Array.isArray(g) ? g : [];
             var per = o.perIata;
             var perMap = per && typeof per === 'object' ? per : {};
+            var mode;
+            if ('mode' in o) {
+                mode = String(o.mode || 'off').toLowerCase();
+                if (mode !== 'off' && mode !== 'global' && mode !== 'per_iata') {
+                    mode = 'off';
+                }
+            } else {
+                var pk0 = perMap && typeof perMap === 'object' ? Object.keys(perMap) : [];
+                if (pk0.length) {
+                    mode = 'per_iata';
+                } else if (globalArr && globalArr.length) {
+                    mode = 'global';
+                } else {
+                    mode = 'off';
+                }
+            }
             var ch = normalizeRuleHex(o.colorHigh) || DEFAULT_COLOR_HIGH;
             var ca = normalizeRuleHex(o.colorAdvisory) || DEFAULT_COLOR_ADVISORY;
             var cc = normalizeRuleHex(o.colorCustom) || DEFAULT_COLOR_CUSTOM;
             var cp = normalizeRuleHex(o.colorPriority) || DEFAULT_COLOR_HIGH;
+            if (mode === 'off') {
+                if (perMap && typeof perMap === 'object') {
+                    var pk1 = Object.keys(perMap);
+                    if (pk1.length) {
+                        mode = 'per_iata';
+                    }
+                }
+            }
+            if (mode === 'off' && globalArr && globalArr.length) {
+                mode = 'global';
+            }
             return {
                 mode: mode,
                 global: globalArr,
@@ -1398,8 +1563,179 @@
         } catch (e) {}
     }
 
+    function buildMetarModalStateBundle() {
+        return {
+            v: METAR_MODAL_BUNDLE_VERSION,
+            ui: readMetarWatchUi() || {},
+            rules: readNotifyRulesUi() || null
+        };
+    }
+
+    function tryDonkeycodeSetScriptPref(key, value) {
+        if (value === undefined) {
+            return;
+        }
+        var g = typeof globalThis !== 'undefined' ? globalThis : window;
+        var names = [
+            'donkeycodeSetPref',
+            'donkeycodeSetUserPref',
+            'donkeycodeScriptSetPref',
+            'dcSetPref'
+        ];
+        var ni;
+        for (ni = 0; ni < names.length; ni++) {
+            if (typeof g[names[ni]] === 'function') {
+                try {
+                    g[names[ni]](key, value);
+                    return;
+                } catch (e) {}
+            }
+        }
+    }
+
+    function tryDonkeycodeRequestPreferenceSync() {
+        var w = window;
+        var payload = { type: 'donkeycode:save-prefs' };
+        try {
+            w.postMessage(payload, '*');
+        } catch (e1) {}
+        try {
+            w.postMessage({ source: 'donkeycode', action: 'savePreferences' }, '*');
+        } catch (e0b) {}
+        if (w.parent && w.parent !== w) {
+            try {
+                w.parent.postMessage(payload, '*');
+            } catch (e2) {}
+        }
+    }
+
+    function applyMetarModalStateBundle(b) {
+        if (!b || b.v !== METAR_MODAL_BUNDLE_VERSION) {
+            return;
+        }
+        if (b.ui && typeof b.ui === 'object') {
+            try {
+                localStorage.setItem(LS_METAR_UI_SETTINGS, JSON.stringify(b.ui));
+            } catch (e) {}
+        }
+        if (b.rules && typeof b.rules === 'object') {
+            try {
+                localStorage.setItem(LS_NOTIFY_RULES_UI, JSON.stringify(b.rules));
+            } catch (e2) {}
+        }
+    }
+
+    function pushNotifyRulesToLegacyStringPrefs(rules) {
+        if (!rules || typeof rules !== 'object' || typeof donkeycodeGetPref !== 'function') {
+            return;
+        }
+        var mode = String(rules.mode || 'off');
+        var g = Array.isArray(rules.global) ? rules.global : [];
+        var p = rules.perIata && typeof rules.perIata === 'object' ? rules.perIata : {};
+        try {
+            tryDonkeycodeSetScriptPref('metarWatchNotifyRulesMode', mode);
+            tryDonkeycodeSetScriptPref('metarWatchNotifyRulesGlobal', JSON.stringify(g));
+            tryDonkeycodeSetScriptPref('metarWatchNotifyRulesPerIata', JSON.stringify(p));
+        } catch (e) {}
+    }
+
+    function pushMetarModalStateToDonkeycodePrefs() {
+        if (typeof donkeycodeGetPref !== 'function') {
+            return;
+        }
+        var b = buildMetarModalStateBundle();
+        var json;
+        try {
+            json = JSON.stringify(b);
+        } catch (e) {
+            return;
+        }
+        tryDonkeycodeSetScriptPref('metarWatchModalStateJson', json);
+        if (b.rules) {
+            pushNotifyRulesToLegacyStringPrefs(b.rules);
+        }
+        var ui = b.ui;
+        if (ui && typeof ui === 'object') {
+            if (ui.metarWatchNotify != null) {
+                tryDonkeycodeSetScriptPref('metarWatchNotify', !!ui.metarWatchNotify);
+            }
+            if (ui.metarWatchPollMinutes != null) {
+                tryDonkeycodeSetScriptPref('metarWatchPollMinutes', Math.floor(Number(ui.metarWatchPollMinutes)) || 5);
+            }
+            if (ui.metarWatchConcurrentStations != null) {
+                tryDonkeycodeSetScriptPref('metarWatchConcurrentStations', Math.floor(Number(ui.metarWatchConcurrentStations)) || 10);
+            }
+            if (ui.metarWatchSharedPoll != null) {
+                tryDonkeycodeSetScriptPref('metarWatchSharedPoll', !!ui.metarWatchSharedPoll);
+            }
+        }
+        tryDonkeycodeRequestPreferenceSync();
+    }
+
+    function migrateMetarModalBundleFromPrefs() {
+        try {
+            if (localStorage.getItem(LS_METAR_MODAL_BUNDLE_APPLIED)) {
+                return;
+            }
+        } catch (e) {
+            return;
+        }
+        if (typeof donkeycodeGetPref !== 'function') {
+            return;
+        }
+        var hasLocal =
+            (function () {
+                try {
+                    return (
+                        (localStorage.getItem(LS_METAR_UI_SETTINGS) && localStorage.getItem(LS_METAR_UI_SETTINGS).length > 2) ||
+                        localStorage.getItem(LS_NOTIFY_RULES_UI)
+                    );
+                } catch (e2) {
+                    return true;
+                }
+            })();
+        if (hasLocal) {
+            try {
+                localStorage.setItem(LS_METAR_MODAL_BUNDLE_APPLIED, '1');
+            } catch (e3) {}
+            return;
+        }
+        var raw = String(donkeycodeGetPref('metarWatchModalStateJson', '') || '').trim();
+        if (!raw) {
+            try {
+                localStorage.setItem(LS_METAR_MODAL_BUNDLE_APPLIED, '1');
+            } catch (e4) {}
+            return;
+        }
+        try {
+            var o = JSON.parse(raw);
+            if (o && o.v === METAR_MODAL_BUNDLE_VERSION) {
+                applyMetarModalStateBundle(o);
+            }
+        } catch (e5) {}
+        try {
+            localStorage.setItem(LS_METAR_MODAL_BUNDLE_APPLIED, '1');
+        } catch (e6) {}
+    }
+
     function ruleToRowValues(rule) {
-        var o = { level: 'advisory', useCustomColor: false, customColor: '#888888', mC: '', mV: '', tC: '', tV: '' };
+        var o = {
+            level: 'advisory',
+            useCustomColor: false,
+            customColor: '#888888',
+            mC: '',
+            mV: '',
+            mTs: false,
+            mLws: false,
+            mTxt: '',
+            mSpeci: false,
+            tC: '',
+            tV: '',
+            tTs: false,
+            tLws: false,
+            tTxt: '',
+            tSpeci: false
+        };
         if (!rule || typeof rule !== 'object') {
             return o;
         }
@@ -1411,61 +1747,94 @@
             o.customColor = pc;
         }
         if (rule.metar && typeof rule.metar === 'object') {
-            if (rule.metar.ceilingFtMax != null && Number.isFinite(Number(rule.metar.ceilingFtMax))) {
-                o.mC = String(rule.metar.ceilingFtMax);
+            var m = rule.metar;
+            if (m.ceilingFtMax != null && Number.isFinite(Number(m.ceilingFtMax))) {
+                o.mC = String(m.ceilingFtMax);
             }
-            if (rule.metar.visibilitySmMax != null && Number.isFinite(Number(rule.metar.visibilitySmMax))) {
-                o.mV = String(rule.metar.visibilitySmMax);
+            if (m.visibilitySmMax != null && Number.isFinite(Number(m.visibilitySmMax))) {
+                o.mV = String(m.visibilitySmMax);
             }
+            o.mTs = !!m.requireTs;
+            o.mLws = !!m.requireLlws;
+            o.mSpeci = !!m.speciOnly;
+            o.mTxt = m.textContains != null ? String(m.textContains) : '';
         }
         if (rule.taf && typeof rule.taf === 'object') {
-            if (rule.taf.ceilingFtMax != null && Number.isFinite(Number(rule.taf.ceilingFtMax))) {
-                o.tC = String(rule.taf.ceilingFtMax);
+            var t = rule.taf;
+            if (t.ceilingFtMax != null && Number.isFinite(Number(t.ceilingFtMax))) {
+                o.tC = String(t.ceilingFtMax);
             }
-            if (rule.taf.visibilitySmMax != null && Number.isFinite(Number(rule.taf.visibilitySmMax))) {
-                o.tV = String(rule.taf.visibilitySmMax);
+            if (t.visibilitySmMax != null && Number.isFinite(Number(t.visibilitySmMax))) {
+                o.tV = String(t.visibilitySmMax);
             }
+            o.tTs = !!t.requireTs;
+            o.tLws = !!t.requireLlws;
+            o.tSpeci = !!t.speciOnly;
+            o.tTxt = t.textContains != null ? String(t.textContains) : '';
         }
         return o;
     }
 
-    function rowValuesToRule(mC, mV, tC, tV, level, useCustomColor, customColor) {
+    function rowValuesToRule(inp) {
+        if (!inp || typeof inp !== 'object') {
+            return null;
+        }
         var rule = {};
-        var lvs = String(level || 'advisory').toLowerCase();
+        var lvs = String((inp.level != null && inp.level.value) || 'advisory').toLowerCase();
         if (lvs === 'high' || lvs === 'custom' || lvs === 'priority') {
             rule.level = lvs;
         } else {
             rule.level = 'advisory';
         }
-        if (useCustomColor && normalizeRuleHex(customColor)) {
-            rule.color = normalizeRuleHex(customColor);
+        if (inp.useCustomColor && inp.useCustomColor.checked && normalizeRuleHex(inp.customColor && inp.customColor.value)) {
+            rule.color = normalizeRuleHex(inp.customColor.value);
         }
-        var m = {};
-        var mc = String(mC == null ? '' : mC).trim();
-        var mv = String(mV == null ? '' : mV).trim();
-        var tc = String(tC == null ? '' : tC).trim();
-        var tv = String(tV == null ? '' : tV).trim();
-        if (mc.length && Number.isFinite(Number(mc))) {
-            m.ceilingFtMax = Number(mc);
-        }
-        if (mv.length) {
-            var pvm = parseVisMaxForRule(mv);
-            if (pvm != null) {
-                m.visibilitySmMax = pvm;
+        function buildPart(ceil, vis, ts, lws, txt, spec) {
+            var p = {};
+            var mc = String(ceil == null ? '' : ceil).trim();
+            var mv = String(vis == null ? '' : vis).trim();
+            if (mc.length && Number.isFinite(Number(mc))) {
+                p.ceilingFtMax = Number(mc);
             }
+            if (mv.length) {
+                var pvm = parseVisMaxForRule(mv);
+                if (pvm != null) {
+                    p.visibilitySmMax = pvm;
+                }
+            }
+            if (ts && ts.checked) {
+                p.requireTs = true;
+            }
+            if (lws && lws.checked) {
+                p.requireLlws = true;
+            }
+            if (spec && spec.checked) {
+                p.speciOnly = true;
+            }
+            var tx = String(txt == null ? '' : txt).trim();
+            if (tx.length) {
+                p.textContains = tx;
+            }
+            return p;
         }
+        var m = buildPart(
+            inp.mC && inp.mC.value,
+            inp.mV && inp.mV.value,
+            inp.mTs,
+            inp.mLws,
+            inp.mTxt,
+            inp.mSpeci
+        );
+        var t = buildPart(
+            inp.tC && inp.tC.value,
+            inp.tV && inp.tV.value,
+            inp.tTs,
+            inp.tLws,
+            inp.tTxt,
+            inp.tSpeci
+        );
         if (Object.keys(m).length) {
             rule.metar = m;
-        }
-        var t = {};
-        if (tc.length && Number.isFinite(Number(tc))) {
-            t.ceilingFtMax = Number(tc);
-        }
-        if (tv.length) {
-            var pvt = parseVisMaxForRule(tv);
-            if (pvt != null) {
-                t.visibilitySmMax = pvt;
-            }
         }
         if (Object.keys(t).length) {
             rule.taf = t;
@@ -1478,12 +1847,35 @@
 
     function notifyRulesMode() {
         var ui = readNotifyRulesUi();
-        if (ui && ui.mode) {
-            return ui.mode === 'global' || ui.mode === 'per_iata' ? ui.mode : 'off';
+        if (ui) {
+            var gN = Array.isArray(ui.global) && ui.global.length;
+            var pm = ui.perIata && typeof ui.perIata === 'object' ? ui.perIata : {};
+            var pN = false;
+            var pk;
+            for (pk in pm) {
+                if (Object.prototype.hasOwnProperty.call(pm, pk) && pm[pk] && pm[pk].length) {
+                    pN = true;
+                    break;
+                }
+            }
+            var m0 = String(ui.mode || 'off').toLowerCase();
+            if (m0 === 'per_iata' || pN) {
+                return pN || gN ? 'per_iata' : (gN ? 'global' : 'off');
+            }
+            if (m0 === 'global') {
+                return gN ? 'global' : (pN ? 'per_iata' : 'off');
+            }
+            if (!gN && !pN) {
+                return 'off';
+            }
+            return pN ? 'per_iata' : 'global';
         }
-        var v = String(getPref('metarWatchNotifyRulesMode', 'off') || 'off').toLowerCase();
-        if (v === 'global' || v === 'per_iata') {
-            return v;
+        var v0 = String(getPref('metarWatchNotifyRulesMode', 'off') || 'off').toLowerCase();
+        if (v0 === 'per_iata' || v0 === 'global') {
+            if (!hasDefinedNotifyRules()) {
+                return 'off';
+            }
+            return v0;
         }
         return 'off';
     }
@@ -1542,22 +1934,31 @@
     }
 
     function notifyRulesPassForStation(iata, rec) {
-        if (notifyRulesMode() === 'off') {
-            return true;
-        }
-        var rules = mergeNotifyRulesForIata(iata);
-        if (!rules.length) {
+        var metar = rec && rec.metar != null ? String(rec.metar) : '';
+        var taf = rec && rec.taf != null ? String(rec.taf) : '';
+        function anyRuleMatches() {
+            var rules = mergeNotifyRulesForIata(iata);
+            if (!rules || !rules.length) {
+                return false;
+            }
+            var i;
+            for (i = 0; i < rules.length; i++) {
+                if (ruleMatchesOne(rules[i], metar, taf)) {
+                    return true;
+                }
+            }
             return false;
         }
-        var metar = rec && rec.metar ? String(rec.metar) : '';
-        var taf = rec && rec.taf ? String(rec.taf) : '';
-        var i;
-        for (i = 0; i < rules.length; i++) {
-            if (ruleMatchesOne(rules[i], metar, taf)) {
-                return true;
+        if (notifyRulesMode() === 'off') {
+            if (metarWatchNotifyOnColored() && hasDefinedNotifyRules()) {
+                return anyRuleMatches();
             }
+            return true;
         }
-        return false;
+        if (!anyRuleMatches()) {
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -2982,7 +3383,6 @@
     var codLoadBtn = null;
     var alertRulesBackdrop = null;
     var alertRulesModal = null;
-    var alertRulesModeSelect = null;
     var alertRulesGlobalBlock = null;
     var alertRulesGlobalHost = null;
     var alertRulesPerSectionWrap = null;
@@ -2996,6 +3396,9 @@
     var alertMetarSettingsFresh = null;
     var alertMetarSettingsHiRules = null;
     var alertMetarSettingsSw = {};
+    var alertMetarSettingsNotifyColored = null;
+    var alertMetarSettingsNotifySpecial = null;
+    var metarSettingsApplySwTokenMaster = null;
     var alertRulesColorCustomInp = null;
     var alertRulesColorPriorityInp = null;
     /** Last station we started the COD loop for (avoid restart on timer-only detail refresh). */
@@ -4498,7 +4901,7 @@
             }
             var rec = cacheByIcao[icao];
             var iataForNotify = iataFromIcao(icao);
-            if (iataForNotify && !notifyRulesPassForStation(iataForNotify, rec)) {
+            if (iataForNotify && !shouldSendDesktopNotificationForContent(iataForNotify, rec)) {
                 notifyShownForCurrent[icao] = true;
                 continue;
             }
@@ -4552,7 +4955,6 @@
             }
         }
         if (stale.length) {
-            var mode = notifyRulesMode();
             var hasRuleMatch = false;
             var hasRuleMatchOld = false;
             var si2;
@@ -4561,9 +4963,6 @@
                 var ix = iataFromIcao(icx);
                 var rx = cacheByIcao[icx];
                 var pass = ix && rx && notifyRulesPassForStation(ix, rx);
-                if (mode === 'off') {
-                    pass = true;
-                }
                 if (pass) {
                     hasRuleMatch = true;
                     if (ix && pendingChangeAgeClass(ix) === 'stale') {
@@ -5712,15 +6111,55 @@
         return i;
     }
 
+    function mkRuleExtraLine(label, vObj, which) {
+        var pfx = which === 't' ? 't' : 'm';
+        var wrap = document.createElement('div');
+        wrap.style.cssText =
+            'display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:10px;color:#bdc3c7;';
+        var sp = document.createElement('span');
+        sp.textContent = label;
+        sp.style.minWidth = '40px';
+        sp.style.color = which === 't' ? '#9b59b6' : '#3498db';
+        sp.style.fontWeight = '600';
+        wrap.appendChild(sp);
+        function addCb(txt, k, title) {
+            var lb = document.createElement('label');
+            lb.style.cssText = 'display:inline-flex;align-items:center;gap:3px;cursor:pointer;user-select:none;';
+            var c = document.createElement('input');
+            c.type = 'checkbox';
+            c.checked = !!vObj[k];
+            c.title = title;
+            c.style.width = '12px';
+            c.style.height = '12px';
+            lb.appendChild(c);
+            lb.appendChild(document.createTextNode(txt));
+            wrap.appendChild(lb);
+            return c;
+        }
+        var tsB = addCb('TS', pfx + 'Ts', 'Meteorological thunderstorm (TS+/-, VCTS, etc.)');
+        var llB = addCb('LLWS', pfx + 'Lws', 'LLWS, LO LV, W/S, etc.');
+        var specB = addCb('Spec', pfx + 'Speci', which === 't' ? 'TEMPO, BECMG, PROB, FM, etc. (TAF only)' : 'SPECI in METAR');
+        var ti = document.createElement('input');
+        ti.type = 'text';
+        ti.placeholder = 'text contains…';
+        ti.title = 'Case-insensitive substring; applies to the corresponding METAR or TAF line';
+        ti.value = vObj[pfx + 'Txt'] || '';
+        ti.style.cssText =
+            'min-width:120px;flex:1 1 120px;max-width:100%;box-sizing:border-box;padding:2px 6px;font-size:10px;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+        wrap.appendChild(ti);
+        return { wrap: wrap, ts: tsB, ll: llB, spec: specB, txt: ti };
+    }
+
     function buildRuleRowEl(rule) {
         var v = ruleToRowValues(rule || null);
         var row = document.createElement('div');
         row.setAttribute('data-dc-arule-row', '1');
-        row.style.display = 'grid';
-        row.style.gridTemplateColumns = 'minmax(88px,0.9fr) 22px 22px 1fr 1fr 1fr 1fr';
-        row.style.gap = '6px';
-        row.style.alignItems = 'end';
-        row.style.marginBottom = '8px';
+        row.style.cssText = 'margin-bottom:10px;border-bottom:1px solid #2c2c36;padding-bottom:6px;';
+        var line1 = document.createElement('div');
+        line1.style.display = 'grid';
+        line1.style.gridTemplateColumns = 'minmax(88px,0.9fr) 22px 22px 1fr 1fr 1fr 1fr';
+        line1.style.gap = '6px';
+        line1.style.alignItems = 'end';
         var level = document.createElement('select');
         level.title =
             'Default underline color: Advisory / High / Custom (preset) / Priority (preset). Or check custom swatch to set this row’s color.';
@@ -5789,14 +6228,38 @@
         tV.placeholder = '1.5, 1/2';
         tV.title = 'TAF vis max (SM), same as METAR vis';
         tV.value = v.tV;
-        row._inputs = { level: level, useCustomColor: useColor, customColor: colorInp, mC: mC, mV: mV, tC: tC, tV: tV };
-        row.appendChild(level);
-        row.appendChild(useColor);
-        row.appendChild(colorInp);
-        row.appendChild(mC);
-        row.appendChild(mV);
-        row.appendChild(tC);
-        row.appendChild(tV);
+        line1.appendChild(level);
+        line1.appendChild(useColor);
+        line1.appendChild(colorInp);
+        line1.appendChild(mC);
+        line1.appendChild(mV);
+        line1.appendChild(tC);
+        line1.appendChild(tV);
+        var mEx = mkRuleExtraLine('M', v, 'm');
+        var tEx = mkRuleExtraLine('T', v, 't');
+        var line2 = document.createElement('div');
+        line2.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-top:4px;';
+        line2.appendChild(mEx.wrap);
+        line2.appendChild(tEx.wrap);
+        row._inputs = {
+            level: level,
+            useCustomColor: useColor,
+            customColor: colorInp,
+            mC: mC,
+            mV: mV,
+            tC: tC,
+            tV: tV,
+            mTs: mEx.ts,
+            mLws: mEx.ll,
+            mSpeci: mEx.spec,
+            mTxt: mEx.txt,
+            tTs: tEx.ts,
+            tLws: tEx.ll,
+            tSpeci: tEx.spec,
+            tTxt: tEx.txt
+        };
+        row.appendChild(line1);
+        row.appendChild(line2);
         return row;
     }
 
@@ -5813,15 +6276,7 @@
             if (!inp) {
                 continue;
             }
-            var r = rowValuesToRule(
-                inp.mC.value,
-                inp.mV.value,
-                inp.tC.value,
-                inp.tV.value,
-                inp.level && inp.level.value,
-                inp.useCustomColor && inp.useCustomColor.checked,
-                inp.customColor && inp.customColor.value
-            );
+            var r = rowValuesToRule(inp);
             if (r) {
                 out.push(r);
             }
@@ -5830,15 +6285,10 @@
     }
 
     function syncAlertModeUi() {
-        if (!alertRulesModeSelect) {
-            return;
-        }
-        var m = String(alertRulesModeSelect.value || 'off');
-        if (alertRulesGlobalBlock) {
-            alertRulesGlobalBlock.style.display = m === 'off' ? 'none' : 'block';
-        }
         if (alertRulesPerSectionWrap) {
-            alertRulesPerSectionWrap.style.display = m === 'per_iata' ? 'block' : 'none';
+            var perHas =
+                (alertRulesPerHost && alertRulesPerHost.querySelector && alertRulesPerHost.querySelector('[data-dc-arule-airport]')) || null;
+            alertRulesPerSectionWrap.style.display = perHas ? 'block' : 'none';
         }
     }
 
@@ -5862,11 +6312,20 @@
         if (alertMetarSettingsHiRules) {
             alertMetarSettingsHiRules.checked = metarWatchHighlightWithRulesWhenNotifyOff();
         }
+        if (alertMetarSettingsNotifyColored) {
+            alertMetarSettingsNotifyColored.checked = metarWatchNotifyOnColored();
+        }
+        if (alertMetarSettingsNotifySpecial) {
+            alertMetarSettingsNotifySpecial.checked = metarWatchNotifyOnSpecial();
+        }
         var ssw;
         for (ssw in alertMetarSettingsSw) {
             if (Object.prototype.hasOwnProperty.call(alertMetarSettingsSw, ssw) && alertMetarSettingsSw[ssw]) {
                 alertMetarSettingsSw[ssw].checked = metarSwStylePrefKey(ssw);
             }
+        }
+        if (typeof metarSettingsApplySwTokenMaster === 'function') {
+            metarSettingsApplySwTokenMaster();
         }
     }
 
@@ -5898,6 +6357,12 @@
         if (alertMetarSettingsHiRules) {
             o.metarWatchHighlightWithRulesWhenNotifyOff = !!alertMetarSettingsHiRules.checked;
         }
+        if (alertMetarSettingsNotifyColored) {
+            o.metarWatchNotifyOnColored = !!alertMetarSettingsNotifyColored.checked;
+        }
+        if (alertMetarSettingsNotifySpecial) {
+            o.metarWatchNotifyOnSpecial = !!alertMetarSettingsNotifySpecial.checked;
+        }
         var ssw2;
         for (ssw2 in alertMetarSettingsSw) {
             if (Object.prototype.hasOwnProperty.call(alertMetarSettingsSw, ssw2) && alertMetarSettingsSw[ssw2]) {
@@ -5911,17 +6376,16 @@
     }
 
     function readAlertFormIntoStorage() {
-        if (!alertRulesModeSelect) {
+        if (!alertRulesGlobalHost) {
             return;
         }
-        var mode = String(alertRulesModeSelect.value || 'off');
-        var g = mode === 'off' ? [] : collectRuleRowsFromHost(alertRulesGlobalHost);
+        var g = collectRuleRowsFromHost(alertRulesGlobalHost);
         var ch = (alertRulesColorHighInp && normalizeRuleHex(alertRulesColorHighInp.value)) || DEFAULT_COLOR_HIGH;
         var ca = (alertRulesColorAdvisoryInp && normalizeRuleHex(alertRulesColorAdvisoryInp.value)) || DEFAULT_COLOR_ADVISORY;
         var cc = (alertRulesColorCustomInp && normalizeRuleHex(alertRulesColorCustomInp.value)) || DEFAULT_COLOR_CUSTOM;
         var cpr = (alertRulesColorPriorityInp && normalizeRuleHex(alertRulesColorPriorityInp.value)) || DEFAULT_COLOR_HIGH;
         var perIata = {};
-        if (mode === 'per_iata' && alertRulesPerHost) {
+        if (alertRulesPerHost) {
             var bl = alertRulesPerHost.querySelectorAll('[data-dc-arule-airport]');
             var b;
             for (b = 0; b < bl.length; b++) {
@@ -5952,6 +6416,22 @@
                 }
             }
         }
+        var hasPer = false;
+        var hpk;
+        for (hpk in perIata) {
+            if (Object.prototype.hasOwnProperty.call(perIata, hpk) && perIata[hpk] && perIata[hpk].length) {
+                hasPer = true;
+                break;
+            }
+        }
+        var mode;
+        if (!g.length && !hasPer) {
+            mode = 'off';
+        } else if (hasPer) {
+            mode = 'per_iata';
+        } else {
+            mode = 'global';
+        }
         writeNotifyRulesUi({
             mode: mode,
             global: g,
@@ -5962,6 +6442,9 @@
             colorPriority: cpr
         });
         readMetarSettingsIntoStorage();
+        try {
+            pushMetarModalStateToDonkeycodePrefs();
+        } catch (eSync) {}
     }
 
     function addGlobalRuleRow() {
@@ -6049,6 +6532,9 @@
         wrap.appendChild(top);
         wrap.appendChild(rh);
         alertRulesPerHost.appendChild(wrap);
+        try {
+            syncAlertModeUi();
+        } catch (e0) {}
     }
 
     function addPerBlockEmpty() {
@@ -6056,14 +6542,13 @@
     }
 
     function populateAlertRulesForm() {
-        if (!alertRulesGlobalHost || !alertRulesPerHost || !alertRulesModeSelect) {
+        if (!alertRulesGlobalHost || !alertRulesPerHost) {
             return;
         }
         alertRulesGlobalHost.innerHTML = '';
         alertRulesPerHost.innerHTML = '';
         var stored = readNotifyRulesUi();
         if (stored) {
-            alertRulesModeSelect.value = stored.mode || 'off';
             if (alertRulesColorHighInp) {
                 alertRulesColorHighInp.value = stored.colorHigh || DEFAULT_COLOR_HIGH;
                 var s1 = alertRulesColorHighInp.nextElementSibling;
@@ -6138,9 +6623,6 @@
                     s3p.style.background = alertRulesColorPriorityInp.value;
                 }
             }
-            var mExt =
-                typeof donkeycodeGetPref === 'function' ? String(donkeycodeGetPref('metarWatchNotifyRulesMode') || 'off') : 'off';
-            alertRulesModeSelect.value = mExt.toLowerCase();
             if (typeof donkeycodeGetPref === 'function') {
                 var gArr = parseNotifyRulesArray(String(donkeycodeGetPref('metarWatchNotifyRulesGlobal') != null ? donkeycodeGetPref('metarWatchNotifyRulesGlobal') : ''));
                 if (!gArr.length) {
@@ -6150,7 +6632,8 @@
                 for (gk = 0; gk < gArr.length; gk++) {
                     alertRulesGlobalHost.appendChild(buildRuleRowEl(gArr[gk]));
                 }
-                if (String(alertRulesModeSelect.value || '').toLowerCase() === 'per_iata') {
+                var mExt = String(donkeycodeGetPref('metarWatchNotifyRulesMode') || 'off').toLowerCase();
+                if (mExt === 'per_iata') {
                     var pmap = parseNotifyRulesPerIataMap(donkeycodeGetPref('metarWatchNotifyRulesPerIata'));
                     var pk;
                     for (pk in pmap) {
@@ -6183,11 +6666,6 @@
         hdr.style.cssText =
             'padding:12px 16px;background:#1e1e24;border-bottom:1px solid #333;font-weight:600;font-size:15px;';
         hdr.textContent = 'Notification alert conditions';
-        var sub = document.createElement('div');
-        sub.style.cssText = 'font-size:11px;font-weight:400;color:#95a5a6;margin-top:4px;line-height:1.4;';
-        sub.textContent =
-            'Saves in this browser. Global/Per IATA: OR between rows. Rule level (Advisory/High/Custom/Priority) picks default underlines, or use the per-rule custom color check + swatch. Vis columns accept decimals and fractions (e.g. 0.5, 1/2, 1 1/2). The “Fresh” minutes setting controls how long the list stays yellow after a change before turning red. SW-style and notify-rule underlines: rules win on overlap.';
-
         var sc = document.createElement('div');
         sc.style.cssText = 'padding:12px 16px;overflow:auto;flex:1;min-height:0;';
 
@@ -6262,7 +6740,7 @@
         cell4.style.minWidth = '200px';
         cell4.style.flex = '1 1 200px';
         cell4.appendChild(
-            mkLabel('Share poll across tabs', 'One tab can lead background polls to reduce duplicate traffic.')
+            mkLabel('Sync alerts across tabs', 'One tab leads background polls; other tabs get the same data and can share leader alert state. Reduces duplicate traffic.')
         );
         var rowS = document.createElement('div');
         rowS.style.display = 'flex';
@@ -6283,11 +6761,6 @@
         setGrid.appendChild(cell4);
         settingsWrap.appendChild(setTitle);
         settingsWrap.appendChild(setGrid);
-        var setHint = document.createElement('div');
-        setHint.textContent =
-            'Saved in this browser when you click Save (below). Changing poll time restarts the background refresh timer on this page.';
-        setHint.style.cssText = 'font-size:10px;color:#7f8c8d;margin-top:8px;line-height:1.35;';
-        settingsWrap.appendChild(setHint);
 
         var moreTitle = document.createElement('div');
         moreTitle.textContent = 'List / badge timing & text highlights';
@@ -6308,27 +6781,76 @@
         alertMetarSettingsFresh.max = '120';
         cellF.appendChild(alertMetarSettingsFresh);
         moreGrid.appendChild(cellF);
-        var cellH = document.createElement('div');
-        cellH.style.minWidth = '200px';
-        var rowH2 = document.createElement('div');
-        rowH2.style.display = 'flex';
-        rowH2.style.alignItems = 'center';
-        rowH2.style.gap = '6px';
-        alertMetarSettingsHiRules = document.createElement('input');
-        alertMetarSettingsHiRules.type = 'checkbox';
-        var labH2 = document.createElement('span');
-        labH2.textContent = 'Apply notify rules to METAR/TAF underlines (when mode = Off, if rules are defined)';
-        labH2.style.fontSize = '11px';
-        labH2.title =
-            'When “Notify only when rules match” is Off, still underline tokens that match your CIG/vis rules (if any), instead of only SW-style colors.';
-        rowH2.appendChild(alertMetarSettingsHiRules);
-        rowH2.appendChild(labH2);
-        cellH.appendChild(rowH2);
-        moreGrid.appendChild(cellH);
+        var cellNsp = document.createElement('div');
+        cellNsp.style.minWidth = '220px';
+        cellNsp.style.flex = '1 1 200px';
+        var rowNsp1 = document.createElement('div');
+        rowNsp1.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+        alertMetarSettingsNotifyColored = document.createElement('input');
+        alertMetarSettingsNotifyColored.type = 'checkbox';
+        alertMetarSettingsNotifyColored.title =
+            'When on, a desktop notification is sent if text matches your custom rules. When you have no rules, every METAR/TAF change still alerts.';
+        var labNsp1 = document.createElement('span');
+        labNsp1.textContent = 'Notify for the above color coding (rules; else any change if no rules)';
+        labNsp1.style.cssText = 'font-size:11px;color:#bdc3c7;';
+        rowNsp1.appendChild(alertMetarSettingsNotifyColored);
+        rowNsp1.appendChild(labNsp1);
+        cellNsp.appendChild(rowNsp1);
+        var rowNsp2 = document.createElement('div');
+        rowNsp2.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        alertMetarSettingsNotifySpecial = document.createElement('input');
+        alertMetarSettingsNotifySpecial.type = 'checkbox';
+        alertMetarSettingsNotifySpecial.title =
+            'Also notify on SPECI METARs, or TAFs with TEMPO/BECMG/PROB/FM groups. Independent of the rule list.';
+        var labNsp2 = document.createElement('span');
+        labNsp2.textContent = 'Notify for special TAF or METAR (e.g. SPECI, TEMPO/BECMG/PROB)';
+        labNsp2.style.cssText = 'font-size:11px;color:#bdc3c7;';
+        rowNsp2.appendChild(alertMetarSettingsNotifySpecial);
+        rowNsp2.appendChild(labNsp2);
+        cellNsp.appendChild(rowNsp2);
+        moreGrid.appendChild(cellNsp);
         settingsWrap.appendChild(moreGrid);
 
+        var freshHelp = document.createElement('div');
+        freshHelp.style.cssText =
+            'margin:8px 0 0;padding:8px 10px;background:#1e1e24;border:1px solid #333;border-radius:6px;font-size:10px;color:#bdc3c7;line-height:1.45;';
+        var freshP1 = document.createElement('div');
+        freshP1.textContent =
+            '“Fresh” minutes: for an unseen, rules-matching change, the station list and the GMT/weather button stay in a yellow “fresh” look for that many minutes, then turn red “stale” if you have still not opened the detail.';
+        var freshP2 = document.createElement('div');
+        freshP2.style.marginTop = '6px';
+        freshP2.textContent = 'Example — toolbar button (same data attribute as the real control):';
+        var freshRow1 = document.createElement('div');
+        freshRow1.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap;';
+        var s1 = document.createElement('span');
+        s1.setAttribute(WX_BTN_ATTR, '1');
+        s1.textContent = 'GMT';
+        s1.title = 'Fresh: within the window';
+        s1.style.cssText =
+            'display:inline-flex;align-items:center;justify-content:center;min-width:40px;padding:2px 8px;font-size:12px;font-weight:600;border-radius:4px;background:#2c3e50;color:#f1c40f;border:1px solid #444;';
+        var s2 = document.createElement('span');
+        s2.setAttribute(WX_BTN_ATTR, '1');
+        s2.textContent = 'GMT';
+        s2.title = 'Stale: past the window';
+        s2.style.cssText =
+            'display:inline-flex;align-items:center;justify-content:center;min-width:40px;padding:2px 8px;font-size:12px;font-weight:600;border-radius:4px;background:#c0392b;color:#fff;border:1px solid #633;';
+        var freshLbl = document.createElement('span');
+        freshLbl.style.cssText = 'color:#95a5a6;font-size:9px;';
+        freshLbl.textContent = 'fresh';
+        var staleLbl = document.createElement('span');
+        staleLbl.style.cssText = 'color:#95a5a6;font-size:9px;';
+        staleLbl.textContent = 'stale';
+        freshRow1.appendChild(s1);
+        freshRow1.appendChild(freshLbl);
+        freshRow1.appendChild(s2);
+        freshRow1.appendChild(staleLbl);
+        freshHelp.appendChild(freshP1);
+        freshHelp.appendChild(freshP2);
+        freshHelp.appendChild(freshRow1);
+        settingsWrap.appendChild(freshHelp);
+
         var swLab = document.createElement('div');
-        swLab.textContent = 'SW-style highlights (per-token IFR, MVFR, etc.)';
+        swLab.textContent = 'Color coding for METAR/TAF (per-token IFR, MVFR, etc.)';
         swLab.style.cssText = 'font-size:11px;color:#95a5a6;margin:8px 0 4px;';
         settingsWrap.appendChild(swLab);
         var swMap = [
@@ -6346,46 +6868,70 @@
         for (sxi = 0; sxi < swMap.length; sxi++) {
             var wk = swMap[sxi][0];
             var wl = document.createElement('label');
+            wl.setAttribute('data-dc-mx-swl', wk);
             wl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10px;cursor:pointer;user-select:none;';
             var wcb = document.createElement('input');
             wcb.type = 'checkbox';
             wcb.setAttribute('data-dc-mx-sw', wk);
             alertMetarSettingsSw[wk] = wcb;
+            if (wk !== 'metarWatchTextHighlightSwStyle') {
+                wl.style.color = '#95a5a6';
+            }
             wl.appendChild(wcb);
             wl.appendChild(document.createTextNode(swMap[sxi][1]));
             swR.appendChild(wl);
         }
+        var masterW = alertMetarSettingsSw['metarWatchTextHighlightSwStyle'];
+        function applySwTokenMasterState() {
+            var on = masterW && !!masterW.checked;
+            var sxi2;
+            for (sxi2 = 0; sxi2 < swMap.length; sxi2++) {
+                if (swMap[sxi2][0] === 'metarWatchTextHighlightSwStyle') {
+                    continue;
+                }
+                var cbx = alertMetarSettingsSw[swMap[sxi2][0]];
+                if (!cbx) {
+                    continue;
+                }
+                cbx.disabled = !on;
+                cbx.title = on ? '' : 'Turn on the master to edit';
+                if (!on) {
+                    cbx.checked = false;
+                }
+                var le = cbx.parentElement;
+                if (le) {
+                    le.style.opacity = on ? '1' : '0.4';
+                }
+            }
+        }
+        if (masterW) {
+            masterW.addEventListener('change', applySwTokenMasterState);
+        }
         settingsWrap.appendChild(swR);
 
-        var moreNote = document.createElement('div');
-        moreNote.textContent = 'List colors use the fresh window. Detail METAR/TAF: notify-rule underlines and SW-style can both apply (rule wins on overlap).';
-        moreNote.style.cssText = 'font-size:10px;color:#7f8c8d;margin-top:8px;line-height:1.35;';
-        settingsWrap.appendChild(moreNote);
-        sc.appendChild(settingsWrap);
+        var afterSwLine = document.createElement('div');
+        afterSwLine.style.cssText = 'margin:10px 0 0;padding:8px 0 0;border-top:1px solid #2c2c36;';
+        var afterSwL = document.createElement('div');
+        afterSwL.style.cssText = 'font-size:10px;color:#95a5a6;margin-bottom:6px;';
+        afterSwL.textContent = 'Underlines: apply your notify rules in text (in addition to color coding above, when rules are defined).';
+        afterSwLine.appendChild(afterSwL);
+        var rowHi = document.createElement('div');
+        rowHi.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        alertMetarSettingsHiRules = document.createElement('input');
+        alertMetarSettingsHiRules.type = 'checkbox';
+        var labH2b = document.createElement('span');
+        labH2b.textContent = 'Apply rules to METAR/TAF underlines when you have no rule-based notifications (see toggles above)';
+        labH2b.style.cssText = 'font-size:11px;color:#bdc3c7;';
+        labH2b.title =
+            'If you are not using rule-only notifications, still show CIG/vis/rule underlines in the text when rules are defined, not only the color-coding line highlights.';
+        rowHi.appendChild(alertMetarSettingsHiRules);
+        rowHi.appendChild(labH2b);
+        afterSwLine.appendChild(rowHi);
+        settingsWrap.appendChild(afterSwLine);
+        metarSettingsApplySwTokenMaster = applySwTokenMasterState;
+        applySwTokenMasterState();
 
-        var modeRow = document.createElement('div');
-        modeRow.style.marginBottom = '12px';
-        var modeLab = document.createElement('label');
-        modeLab.textContent = 'Mode';
-        modeLab.style.cssText = 'font-size:12px;display:block;margin-bottom:4px;color:#bdc3c7;';
-        alertRulesModeSelect = document.createElement('select');
-        alertRulesModeSelect.style.cssText = 'width:100%;max-width:360px;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
-        var mo = [
-            ['off', 'Off — alert on any METAR/TAF change'],
-            ['global', 'Global — only when a rule matches (all stations)'],
-            ['per_iata', 'Per IATA — global rules plus per-airport rules']
-        ];
-        var mi;
-        for (mi = 0; mi < mo.length; mi++) {
-            var o = document.createElement('option');
-            o.value = mo[mi][0];
-            o.textContent = mo[mi][1];
-            alertRulesModeSelect.appendChild(o);
-        }
-        alertRulesModeSelect.addEventListener('change', syncAlertModeUi);
-        modeRow.appendChild(modeLab);
-        modeRow.appendChild(alertRulesModeSelect);
-        sc.appendChild(modeRow);
+        sc.appendChild(settingsWrap);
 
         var catRow = document.createElement('div');
         catRow.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin-bottom:12px;padding:8px 10px;background:#1e1e24;border-radius:6px;border:1px solid #333;';
@@ -6472,16 +7018,20 @@
         sc.appendChild(catRow);
 
         alertRulesGlobalBlock = document.createElement('div');
+        var gHead = document.createElement('div');
+        gHead.style.cssText = 'display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;';
         var gLab = document.createElement('div');
         gLab.textContent = 'Global rules (any row can match; OR across rows)';
-        gLab.style.cssText = 'font-size:12px;font-weight:600;margin-bottom:6px;color:#3498db;';
+        gLab.style.cssText = 'font-size:12px;font-weight:600;color:#3498db;flex:1;min-width:0;';
         gLab.setAttribute('data-dc-glab', '1');
-        alertRulesGlobalHost = document.createElement('div');
         var addG = document.createElement('button');
         addG.type = 'button';
-        addG.textContent = 'Add global rule line';
-        addG.style.cssText = 'font-size:11px;padding:4px 10px;margin-bottom:8px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+        addG.textContent = 'Add rule';
+        addG.style.cssText = 'font-size:11px;padding:4px 10px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
         addG.addEventListener('click', addGlobalRuleRow);
+        gHead.appendChild(gLab);
+        gHead.appendChild(addG);
+        alertRulesGlobalHost = document.createElement('div');
         var gColH = document.createElement('div');
         gColH.style.cssText =
             'display:grid;grid-template-columns:minmax(88px,0.9fr) 16px 22px 1fr 1fr 1fr 1fr;gap:6px;font-size:9px;color:#7f8c8d;margin-bottom:2px;align-items:end;';
@@ -6507,28 +7057,30 @@
         gColH.appendChild(h2);
         gColH.appendChild(h3);
         gColH.appendChild(h4);
-        alertRulesGlobalBlock.appendChild(gLab);
+        alertRulesGlobalBlock.appendChild(gHead);
         alertRulesGlobalBlock.appendChild(gColH);
         alertRulesGlobalBlock.appendChild(alertRulesGlobalHost);
-        alertRulesGlobalBlock.appendChild(addG);
         sc.appendChild(alertRulesGlobalBlock);
 
         var pWrap = document.createElement('div');
         pWrap.style.cssText = 'display:none;';
         alertRulesPerSectionWrap = pWrap;
         pWrap.setAttribute('data-dc-per-wrap', '1');
+        var pHead = document.createElement('div');
+        pHead.style.cssText = 'display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:12px 0 6px;';
         var pTitle = document.createElement('div');
         pTitle.textContent = 'Per-airport extra rules (OR with global for that IATA)';
-        pTitle.style.cssText = 'font-size:12px;font-weight:600;margin:12px 0 6px;color:#9b59b6;';
+        pTitle.style.cssText = 'font-size:12px;font-weight:600;color:#9b59b6;flex:1;min-width:0;';
         var addP = document.createElement('button');
         addP.type = 'button';
-        addP.textContent = 'Add airport block';
-        addP.style.cssText = 'font-size:11px;padding:4px 10px;margin-bottom:8px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+        addP.textContent = 'Add rule';
+        addP.style.cssText = 'font-size:11px;padding:4px 10px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
         addP.addEventListener('click', addPerBlockEmpty);
         alertRulesPerHost = document.createElement('div');
-        pWrap.appendChild(pTitle);
+        pHead.appendChild(pTitle);
+        pHead.appendChild(addP);
+        pWrap.appendChild(pHead);
         pWrap.appendChild(alertRulesPerHost);
-        pWrap.appendChild(addP);
         sc.appendChild(pWrap);
 
         var foot = document.createElement('div');
@@ -6564,6 +7116,13 @@
                     localStorage.removeItem(LS_METAR_UI_SETTINGS);
                 } catch (e) {}
                 try {
+                    tryDonkeycodeSetScriptPref('metarWatchModalStateJson', '');
+                    tryDonkeycodeSetScriptPref('metarWatchNotifyRulesMode', 'off');
+                    tryDonkeycodeSetScriptPref('metarWatchNotifyRulesGlobal', '[]');
+                    tryDonkeycodeSetScriptPref('metarWatchNotifyRulesPerIata', '{}');
+                    tryDonkeycodeRequestPreferenceSync();
+                } catch (e3) {}
+                try {
                     restartPollTimer();
                 } catch (e2) {}
                 updateAlertState();
@@ -6575,7 +7134,6 @@
         foot.appendChild(saveB);
         var hdrBlock = document.createElement('div');
         hdrBlock.appendChild(hdr);
-        hdrBlock.appendChild(sub);
         alertRulesModal.appendChild(hdrBlock);
         alertRulesModal.appendChild(sc);
         alertRulesModal.appendChild(foot);
@@ -6590,9 +7148,6 @@
         populateMetarSettingsForm();
         populateAlertRulesForm();
         syncAlertModeUi();
-        if (alertRulesModeSelect && alertRulesModeSelect.value === 'per_iata' && alertRulesPerHost && !alertRulesPerHost.children.length) {
-            addPerBlockEmpty();
-        }
         if (alertRulesBackdrop) {
             alertRulesBackdrop.style.display = 'block';
         }
@@ -7021,6 +7576,9 @@
     }
 
     function init() {
+        try {
+            migrateMetarModalBundleFromPrefs();
+        } catch (eMig) {}
         ensureWorksheetToolbarClickDebug();
         buildModal();
         mountButtonNearClock();
@@ -7101,7 +7659,9 @@
         } catch (e) {}
         alertRulesBackdrop = null;
         alertRulesModal = null;
-        alertRulesModeSelect = null;
+        metarSettingsApplySwTokenMaster = null;
+        alertMetarSettingsNotifyColored = null;
+        alertMetarSettingsNotifySpecial = null;
         alertRulesGlobalBlock = null;
         alertRulesGlobalHost = null;
         alertRulesPerSectionWrap = null;

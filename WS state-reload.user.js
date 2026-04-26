@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.3.0
-// @description  Worksheet: one-click save (title + time); Load WS: folder, rename, local→cloud, recall.
+// @version      0.1.8
+// @description  Worksheet state cloud: fix dispatch workflow; clearer session folder label; path pref warning.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
-// @donkeycode-pref {"worksheetStateTeamKey":{"type":"string","group":"Worksheet state cloud","label":"Team key","description":"Shared key for cloud saves. Defaults to wallOfFameTeamKey if blank.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state cloud","label":"JSON repo owner","description":"Repo owner for cloud worksheet states.","default":"","placeholder":"MikeBane57"},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state cloud","label":"JSON repo name","description":"Repo containing WORKSHEET STATES/worksheet-states.json.","default":"","placeholder":"Wolf2.0"},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state cloud","label":"JSON branch","default":"","placeholder":"main"},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state cloud","label":"JSON path","description":"Path for shared cloud states.","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture to console: target + elementFromPoint. Use when DonkeyCODE/React swallows button clicks.","default":false}}
+// @donkeycode-pref {"worksheetStateTeamKey":{"type":"string","group":"Worksheet state cloud","label":"Team key","description":"Shared key for cloud saves. Defaults to wallOfFameTeamKey if blank.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state cloud","label":"JSON repo owner","description":"Repo owner for cloud worksheet states.","default":"","placeholder":"MikeBane57"},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state cloud","label":"JSON repo name","description":"Repo containing WORKSHEET STATES/worksheet-states.json.","default":"","placeholder":"Wolf2.0"},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state cloud","label":"JSON branch","default":"","placeholder":"main"},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state cloud","label":"JSON path in repo","description":"File path inside the repo for worksheet-states.json — NOT the Wall of Fame file. Leave blank for WORKSHEET STATES/worksheet-states.json.","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture to console: target + elementFromPoint. Use when DonkeyCODE/React swallows button clicks.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // ==/UserScript==
@@ -23,6 +23,7 @@
     var SS_QUICK_STATE = 'dc_ws_state_reload_quick_state_v1';
     var SS_QUICK_RESTORE = 'dc_ws_state_reload_restore_after_reload_v1';
     var WX_BTN_SELECTOR = '[data-dc-metar-watch-btn="1"]';
+    var BRIEF_HOST_ID = 'dc-brief-ai-ws-host';
     var STATE_TTL_MS = 4 * 60 * 60 * 1000;
     var GITHUB_OWNER = 'MikeBane57';
     var GITHUB_REPO = 'Wolf2.0';
@@ -145,23 +146,44 @@
         );
     }
 
+    /**
+     * DonkeyCODE "session folder" name for tags (e.g. Default, or a custom name), not a Git path.
+     * Prefer human session keys; avoid donkeycode_*_sessions_root (often a repo path) for display.
+     */
     function activeDonkeyCodeFolder() {
         var keys = [
-            'donkeycode_session_folder',
-            'donkeycode_active_session_folder',
-            'donkeycode_github_sessions_root',
-            'donkeycode_sessions_root',
+            'donkeycode_current_folder',
             'donkeycode_folder',
-            'donkeycode_current_folder'
+            'donkeycode_active_session_folder',
+            'donkeycode_session_folder',
+            'donkeycode_session_name',
+            'donkeycode_active_session',
+            'donkeycode_active_session_name',
+            'donkeycode_session',
+            'donkeycode_active_tab_folder'
         ];
         var i;
         for (i = 0; i < keys.length; i++) {
             var v = trimText(getPref(keys[i], ''));
             if (v) {
-                return v.replace(/^\/+|\/+$/g, '') || 'Default';
+                var t = v.replace(/^\/+|\/+$/g, '');
+                if (!t) {
+                    continue;
+                }
+                if (/[\\/]/.test(t) && (t.indexOf('github') >= 0 || t.indexOf('.com') >= 0 || t.split('/').length > 2)) {
+                    var seg = t.split(/[\\/]+/).filter(Boolean);
+                    t = seg[seg.length - 1] || t;
+                }
+                return t || 'Default';
             }
         }
         return 'Default';
+    }
+
+    function normalizeFolderForCompare(s) {
+        return String(s == null ? '' : s)
+            .toLowerCase()
+            .replace(/^\/+|\/+$/g, '');
     }
 
     function decodeGithubFileContent(b64) {
@@ -399,7 +421,18 @@
             toast('No visible tails or N/A line numbers found to save to cloud.', true);
             return;
         }
-        var name = defaultSaveLabelFromState(state);
+        var name = window.prompt('Name this cloud worksheet state:', defaultStateName());
+        if (name == null) {
+            return;
+        }
+        name = trimText(name);
+        if (!name) {
+            toast('Cloud state name is required.', true);
+            return;
+        }
+        if (!window.confirm('Save "' + name + '" to shared cloud states for folder "' + activeDonkeyCodeFolder() + '"?')) {
+            return;
+        }
         saveStateToCloud(state, name);
     }
 
@@ -429,11 +462,11 @@
                 return;
             }
             var sameFolder = states.filter(function (st) {
-                return trimText(st.folder) === folder;
+                return normalizeFolderForCompare(st.folder) === normalizeFolderForCompare(folder);
             });
             var list = sameFolder.concat(
                 states.filter(function (st) {
-                    return trimText(st.folder) !== folder;
+                    return normalizeFolderForCompare(st.folder) !== normalizeFolderForCompare(folder);
                 })
             );
             for (var i = 0; i < list.length; i++) {
@@ -454,14 +487,15 @@
         meta.textContent =
             'saved by ' +
             (state.folder || 'Default') +
-            (state.folder === activeFolder ? ' (current folder)' : '') +
+            (normalizeFolderForCompare(state.folder) === normalizeFolderForCompare(activeFolder)
+                ? ' (current session folder)'
+                : '') +
             ' - ' +
             itemSummary(state.items) +
             ' - saved ' +
             formatDate(state.savedAt || state.updatedAt || state.capturedAt) +
             ' - ' +
-            formatExpiresLabel(state.expiresAt) +
-            (state.title ? ' - ' + state.title : '');
+            formatExpiresLabel(state.expiresAt);
         info.appendChild(name);
         info.appendChild(meta);
 
@@ -473,13 +507,68 @@
             applyStateToWorksheet(state, 'cloud state "' + (state.name || '(unnamed)') + '"');
         });
 
-        var ph1 = document.createElement('span');
-        var ph2 = document.createElement('span');
+        var spacer = document.createElement('span');
         row.appendChild(info);
         row.appendChild(recall);
-        row.appendChild(ph1);
-        row.appendChild(ph2);
+        row.appendChild(spacer);
         return row;
+    }
+
+    function openCloudDialog() {
+        closeModal();
+        var overlay = document.createElement('div');
+        overlay.setAttribute(MODAL_ATTR, '1');
+        overlay.addEventListener('click', function (ev) {
+            if (ev.target === overlay) {
+                closeModal();
+            }
+        });
+        var panel = document.createElement('div');
+        panel.className = 'dc-wss-panel';
+        panel.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+        });
+        var head = document.createElement('div');
+        head.className = 'dc-wss-head';
+        var title = document.createElement('div');
+        title.textContent = 'Cloud worksheet states';
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = 'Close';
+        close.addEventListener('click', closeModal);
+        head.appendChild(title);
+        head.appendChild(close);
+
+        var body = document.createElement('div');
+        body.className = 'dc-wss-body';
+        var note = document.createElement('div');
+        note.className = 'dc-wss-note';
+        note.textContent =
+            'Current DonkeyCODE session folder: ' +
+            activeDonkeyCodeFolder() +
+            ' (the name in DonkeyCODE, e.g. Default). Cloud saves are shared and expire after 4 hours.';
+        var actions = document.createElement('div');
+        actions.className = 'dc-wss-actions';
+        var save = document.createElement('button');
+        save.type = 'button';
+        save.textContent = 'Save current to cloud';
+        save.addEventListener('click', saveCurrentStateToCloud);
+        var refresh = document.createElement('button');
+        refresh.type = 'button';
+        refresh.textContent = 'Refresh cloud list';
+        refresh.addEventListener('click', refreshCloudRows);
+        actions.appendChild(save);
+        actions.appendChild(refresh);
+        cloudRowsHost = document.createElement('div');
+        cloudRowsHost.className = 'dc-wss-cloud-rows';
+        body.appendChild(note);
+        body.appendChild(actions);
+        body.appendChild(cloudRowsHost);
+        panel.appendChild(head);
+        panel.appendChild(body);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+        refreshCloudRows();
     }
 
     function expiresAtFor(ts) {
@@ -770,9 +859,10 @@
             return;
         }
         var wxn = helper.querySelector('[data-dc-metar-watch-btn="1"]');
+        var br = document.getElementById(BRIEF_HOST_ID);
         var st = document.getElementById(HOST_ID);
         var i;
-        var list = [wxn, st];
+        var list = [wxn, br, st];
         for (i = 0; i < list.length; i++) {
             var n = list[i];
             if (n && n.parentNode === helper) {
@@ -826,7 +916,7 @@
         if (
             helper &&
             !helper.querySelector(
-                'button, #' + HOST_ID + ', [data-dc-metar-watch-btn="1"]'
+                'button, #' + HOST_ID + ', #dc-brief-ai-ws-host, [data-dc-metar-watch-btn="1"]'
             )
         ) {
             try {
@@ -867,6 +957,10 @@
     }
 
     function findMountAnchor() {
+        var brief = document.getElementById(BRIEF_HOST_ID);
+        if (brief) {
+            return brief;
+        }
         var wx = document.querySelector(WX_BTN_SELECTOR);
         if (wx) {
             return wx;
@@ -884,6 +978,9 @@
         var t = (el.getAttribute('data-dc-ws-action') && ' [data-dc-ws-action=' + el.getAttribute('data-dc-ws-action') + ']') || '';
         if (el.getAttribute && el.getAttribute('data-dc-metar-watch-btn')) {
             t += ' [data-dc-metar-watch-btn]';
+        }
+        if (el.getAttribute && el.getAttribute('data-dc-brief-ai-btn')) {
+            t += ' [data-dc-brief-ai-btn]';
         }
         return '<' + tag + id + cls + '>' + t;
     }
@@ -932,6 +1029,7 @@
                 pickPath.push(
                     hlp.querySelector('[data-dc-metar-watch-btn="1"]') || null
                 );
+                pickPath.push(document.getElementById(BRIEF_HOST_ID) || null);
                 pickPath.push(document.getElementById(HOST_ID) || null);
             }
             var lines = ['[Wolf2.0][WS] toolbar ' + ev.type, '  target: ' + elDesc(t), '  elementFromPoint: ' + elDesc(pick)];
@@ -974,10 +1072,7 @@
         st.textContent =
             '[data-dc-worksheet-helper-buttons="1"],#' +
             HOST_ID +
-            ',button[data-dc-metar-watch-btn="1"]{' +
-            'position:relative!important;z-index:2147482000!important;pointer-events:auto!important;}' +
-            'button[data-testid="transaction-toggle-button"],' +
-            '.one.wide.column:has(> .ui.form button[data-testid="transaction-toggle-button"]){' +
+            ',#dc-brief-ai-ws-host,button[data-dc-metar-watch-btn="1"]{' +
             'position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}' +
             '#' +
             HOST_ID +
@@ -1017,16 +1112,13 @@
             '] .dc-wss-note{font-size:12px;color:#b9c4cf;background:#1b2028;border:1px solid #343f4a;border-radius:6px;padding:8px;}' +
             '[' +
             MODAL_ATTR +
-            '] .dc-wss-row{display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:start;padding:8px;border:1px solid #3f4a56;border-radius:7px;background:#262c34;}' +
+            '] .dc-wss-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px;border:1px solid #3f4a56;border-radius:7px;background:#262c34;}' +
             '[' +
             MODAL_ATTR +
             '] .dc-wss-name{font-weight:700;}' +
             '[' +
             MODAL_ATTR +
             '] .dc-wss-meta{font-size:11px;color:#b9c4cf;margin-top:2px;}' +
-            '[' +
-            MODAL_ATTR +
-            '] input.dc-wss-rename{width:100%;box-sizing:border-box;font:12px system-ui,Segoe UI,sans-serif;padding:4px 6px;border-radius:4px;border:1px solid #56616f;background:#1b2028;color:#ecf0f1;}' +
             '[' +
             MODAL_ATTR +
             '] button{font:600 12px system-ui,Segoe UI,sans-serif;border:1px solid #56616f;border-radius:5px;background:#2f3d4d;color:#ecf0f1;padding:6px 10px;cursor:pointer;}' +
@@ -1037,77 +1129,6 @@
             MODAL_ATTR +
             '] button.dc-wss-danger{border-color:#7e3c3c;background:#4c2424;}';
         document.head.appendChild(st);
-    }
-
-    /**
-     * Convivio / React can preventDefault on pointerdown, which cancels the synthesized click.
-     * We run the action on capture-phase pointerup and dedupe the following click.
-     */
-    function bindWorksheetToolbarButtonActivate(el, run) {
-        if (!el || el.getAttribute('data-dc-toolbar-activate') === '1') {
-            return;
-        }
-        el.setAttribute('data-dc-toolbar-activate', '1');
-        var suppressClick = false;
-        var tClear = 0;
-        el.addEventListener(
-            'pointerup',
-            function (ev) {
-                if (!ev || ev.isTrusted === false) {
-                    return;
-                }
-                if (ev.button != null && ev.button !== 0) {
-                    return;
-                }
-                suppressClick = true;
-                if (tClear) {
-                    try {
-                        clearTimeout(tClear);
-                    } catch (e) {}
-                }
-                tClear = setTimeout(function () {
-                    suppressClick = false;
-                }, 800);
-                try {
-                    ev.preventDefault();
-                    ev.stopPropagation();
-                    if (ev.stopImmediatePropagation) {
-                        ev.stopImmediatePropagation();
-                    }
-                } catch (e2) {}
-                try {
-                    run(ev);
-                } catch (e3) {}
-            },
-            true
-        );
-        el.addEventListener(
-            'click',
-            function (ev) {
-                if (!ev || ev.isTrusted === false) {
-                    return;
-                }
-                if (ev.button != null && ev.button !== 0) {
-                    return;
-                }
-                if (suppressClick) {
-                    suppressClick = false;
-                    try {
-                        ev.preventDefault();
-                        ev.stopPropagation();
-                    } catch (e) {}
-                    return;
-                }
-                try {
-                    ev.preventDefault();
-                    ev.stopPropagation();
-                } catch (e2) {}
-                try {
-                    run(ev);
-                } catch (e3) {}
-            },
-            true
-        );
     }
 
     function makeButton(label, title, action) {
@@ -1123,7 +1144,9 @@
         } else {
             b.setAttribute('data-dc-ws-save', '1');
         }
-        function doAction() {
+        b.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
             if (action === 'load') {
                 openLoadDialog();
             } else if (action === 'quick') {
@@ -1131,8 +1154,7 @@
             } else {
                 saveCurrentState();
             }
-        }
-        bindWorksheetToolbarButtonActivate(b, doAction);
+        });
         return b;
     }
 
@@ -1146,11 +1168,11 @@
             host = document.createElement('span');
             host.id = HOST_ID;
             host.appendChild(
-                makeButton('SAVE WS', 'Save tab title + time to local list (no prompts). Use Load WS to rename, cloud, recall.', 'save')
+                makeButton('SAVE WS', 'Save visible AC tails and N/A line fallbacks', 'save')
             );
             host.appendChild(
                 makeButton(
-                    'Load WS',
+                    'Load worksheet',
                     'Recall a local or cloud worksheet state',
                     'load'
                 )
@@ -1252,16 +1274,12 @@
         });
     }
 
-    function defaultSaveLabelFromState(state) {
-        var t = trimText((state && state.title) || document.title || 'Worksheet');
-        if (t.length > 80) {
-            t = t.slice(0, 80) + '…';
-        }
+    function defaultStateName() {
         var d = new Date();
         var pad = function (n) {
             return n < 10 ? '0' + n : String(n);
         };
-        return t + ' · ' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        return 'WS ' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
     }
 
     function saveCurrentState() {
@@ -1270,17 +1288,41 @@
             toast('No visible tails or N/A line numbers found to save.', true);
             return;
         }
-        var name = defaultSaveLabelFromState(state);
-        var folder = activeDonkeyCodeFolder();
+        var name = window.prompt('Name this worksheet state:', defaultStateName());
+        if (name == null) {
+            return;
+        }
+        name = trimText(name);
+        if (!name) {
+            toast('State name is required.', true);
+            return;
+        }
         var store = readStateStore();
-        state.id = stateId();
+        var existingIndex = -1;
+        var i;
+        for (i = 0; i < store.states.length; i++) {
+            if (String(store.states[i].name || '').toLowerCase() === name.toLowerCase()) {
+                existingIndex = i;
+                break;
+            }
+        }
+        state.id = existingIndex >= 0 ? store.states[existingIndex].id || stateId() : stateId();
         state.name = name;
-        state.folder = folder;
         state.updatedAt = nowIso();
         state.expiresAt = expiresAtFor(state.updatedAt);
-        store.states.unshift(state);
+        if (existingIndex >= 0) {
+            if (!window.confirm('Replace saved state "' + name + '"?')) {
+                return;
+            }
+            store.states[existingIndex] = state;
+        } else {
+            store.states.unshift(state);
+        }
         if (writeStateStore(store)) {
-            toast('Saved locally: ' + name + ' (' + itemSummary(state.items) + '). Open Load WS to rename, push to cloud, or recall.', false);
+            toast('Saved "' + name + '" locally (' + itemSummary(state.items) + '), expires in 4 hours.', false);
+            if (window.confirm('Also save "' + name + '" to cloud for folder "' + activeDonkeyCodeFolder() + '"?')) {
+                saveStateToCloud(collectWorksheetState(), name);
+            }
         } else {
             toast('Could not save state. Browser storage may be full or blocked.', true);
         }
@@ -1297,116 +1339,92 @@
         localRowsHost = null;
     }
 
-    function findLocalStateById(id) {
+    function openRecallDialog() {
+        closeModal();
         var store = readStateStore();
-        var i;
-        for (i = 0; i < store.states.length; i++) {
-            if (store.states[i].id === id) {
-                return store.states[i];
+        var overlay = document.createElement('div');
+        overlay.setAttribute(MODAL_ATTR, '1');
+        overlay.addEventListener('click', function (ev) {
+            if (ev.target === overlay) {
+                closeModal();
             }
-        }
-        return null;
-    }
+        });
 
-    function renameLocalState(id, newName) {
-        newName = trimText(newName);
-        if (!newName) {
-            toast('Name cannot be empty.', true);
-            return;
-        }
-        var store = readStateStore();
-        var i;
-        for (i = 0; i < store.states.length; i++) {
-            if (store.states[i].id === id) {
-                store.states[i].name = newName;
-                writeStateStore(store);
-                refreshLocalRows();
-                return;
+        var panel = document.createElement('div');
+        panel.className = 'dc-wss-panel';
+        panel.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+        });
+
+        var head = document.createElement('div');
+        head.className = 'dc-wss-head';
+        var title = document.createElement('div');
+        title.textContent = 'Recall worksheet state';
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = 'Close';
+        close.addEventListener('click', closeModal);
+        head.appendChild(title);
+        head.appendChild(close);
+
+        var body = document.createElement('div');
+        body.className = 'dc-wss-body';
+        if (!store.states.length) {
+            var empty = document.createElement('div');
+            empty.textContent = 'No saved states yet. Use Save state first.';
+            body.appendChild(empty);
+        } else {
+            var i;
+            for (i = 0; i < store.states.length; i++) {
+                body.appendChild(buildStateRow(store.states[i]));
             }
         }
+
+        panel.appendChild(head);
+        panel.appendChild(body);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
     }
 
     function buildStateRow(state) {
         var row = document.createElement('div');
         row.className = 'dc-wss-row';
         var info = document.createElement('div');
+        var name = document.createElement('div');
+        name.className = 'dc-wss-name';
+        name.textContent = state.name || '(unnamed)';
         var meta = document.createElement('div');
         meta.className = 'dc-wss-meta';
-        var folder = trimText(state.folder || activeDonkeyCodeFolder()) || 'Default';
-        var cur = activeDonkeyCodeFolder();
         meta.textContent =
-            (folder === cur ? 'DonkeyCODE folder: ' : 'Folder when saved: ') +
-            folder +
-            (folder === cur ? ' (current)' : '') +
-            ' · ' +
             itemSummary(state.items) +
-            ' · ' +
+            ' - saved ' +
             formatDate(state.updatedAt || state.capturedAt) +
-            ' · ' +
-            formatExpiresLabel(state.expiresAt) +
-            (state.title ? ' · ' + state.title : '');
-        var nameInp = document.createElement('input');
-        nameInp.className = 'dc-wss-rename';
-        nameInp.type = 'text';
-        nameInp.value = state.name || '';
-        nameInp.title = 'Worksheet title + time (edit to rename this save)';
-        var saveRename = function () {
-            var v = trimText(nameInp.value);
-            if (v && v !== trimText(state.name)) {
-                renameLocalState(state.id, v);
-            }
-        };
-        nameInp.addEventListener('change', saveRename);
-        nameInp.addEventListener('keydown', function (ev) {
-            if (ev.key === 'Enter') {
-                saveRename();
-            }
-        });
-        info.appendChild(nameInp);
+            ' - ' +
+            formatExpiresLabel(state.expiresAt);
+        info.appendChild(name);
         info.appendChild(meta);
-
-        var cloudBtn = document.createElement('button');
-        cloudBtn.type = 'button';
-        cloudBtn.textContent = 'Cloud';
-        cloudBtn.title = 'Push this snapshot to shared cloud (uses current DonkeyCODE folder as “saved by”)';
-        cloudBtn.addEventListener('click', function () {
-            var st = findLocalStateById(state.id) || state;
-            if (!st || !st.items || !st.items.length) {
-                toast('Nothing to push for this save.', true);
-                return;
-            }
-            var displayName = trimText(nameInp.value) || st.name || 'WS save';
-            var payload = {
-                version: 1,
-                items: st.items,
-                title: st.title,
-                url: st.url,
-                capturedAt: st.capturedAt || st.updatedAt
-            };
-            saveStateToCloud(payload, displayName);
-        });
 
         var recall = document.createElement('button');
         recall.type = 'button';
         recall.textContent = 'Recall';
         recall.addEventListener('click', function () {
-            var st = findLocalStateById(state.id) || state;
             closeModal();
-            applyStateToWorksheet(st, 'state "' + (st.name || '(unnamed)') + '"');
+            applyStateToWorksheet(state, 'state "' + (state.name || '(unnamed)') + '"');
         });
 
         var del = document.createElement('button');
         del.type = 'button';
         del.textContent = 'Delete';
         del.className = 'dc-wss-danger';
-        del.title = 'Delete this local save (no confirmation)';
         del.addEventListener('click', function () {
+            if (!window.confirm('Delete saved state "' + (state.name || '(unnamed)') + '"?')) {
+                return;
+            }
             deleteState(state.id);
             refreshLocalRows();
         });
 
         row.appendChild(info);
-        row.appendChild(cloudBtn);
         row.appendChild(recall);
         row.appendChild(del);
         return row;
@@ -1468,7 +1486,7 @@
         var head = document.createElement('div');
         head.className = 'dc-wss-head';
         var title = document.createElement('div');
-        title.textContent = 'Load WS';
+        title.textContent = 'Load worksheet';
         var close = document.createElement('button');
         close.type = 'button';
         close.textContent = 'Close';
@@ -1482,16 +1500,15 @@
         var folderBanner = document.createElement('div');
         folderBanner.className = 'dc-wss-note';
         folderBanner.textContent =
-            'Current DonkeyCODE folder: ' +
+            'Current DonkeyCODE session folder: ' +
             activeDonkeyCodeFolder() +
-            ' (new local saves and new cloud pushes are tagged with this folder so you can see who saved).';
+            '. This is the session name in DonkeyCODE (e.g. Default or a custom name) — it tags who saved a cloud state; it is not a Git path.';
         body.appendChild(folderBanner);
 
         addSectionTitle(body, 'Local saves');
         var localNote = document.createElement('div');
         localNote.className = 'dc-wss-note';
-        localNote.textContent =
-            'SAVE WS saves the tab title with a timestamp (no popups). Rename below, recall, delete, or push a row to cloud.';
+        localNote.textContent = 'Local saves are listed first and stay in this browser only.';
         localRowsHost = document.createElement('div');
         localRowsHost.className = 'dc-wss-local-rows';
         body.appendChild(localNote);
@@ -1501,19 +1518,13 @@
         var cloudNote = document.createElement('div');
         cloudNote.className = 'dc-wss-note';
         cloudNote.textContent =
-            'Cloud list is shared. “saved by” is the DonkeyCODE folder active when that save was pushed.';
+            'Cloud saves are shared (GitHub). Each row shows saved by <session folder>. If save fails, check Worksheet state cloud prefs: JSON path must be WORKSHEET STATES/… (not the Wall of Fame path), and the repo needs the worksheet-state-put workflow; team key must match WOF_TEAM_KEY or WORKSHEET_STATE_TEAM_KEY.';
         var cloudActions = document.createElement('div');
         cloudActions.className = 'dc-wss-actions';
-        var saveCloudNow = document.createElement('button');
-        saveCloudNow.type = 'button';
-        saveCloudNow.textContent = 'Save current to cloud now';
-        saveCloudNow.title = 'Same as Local row “Cloud” but uses the worksheet as it is right now';
-        saveCloudNow.addEventListener('click', saveCurrentStateToCloud);
         var refreshCloud = document.createElement('button');
         refreshCloud.type = 'button';
         refreshCloud.textContent = 'Refresh cloud list';
         refreshCloud.addEventListener('click', refreshCloudRows);
-        cloudActions.appendChild(saveCloudNow);
         cloudActions.appendChild(refreshCloud);
         cloudRowsHost = document.createElement('div');
         cloudRowsHost.className = 'dc-wss-cloud-rows';
