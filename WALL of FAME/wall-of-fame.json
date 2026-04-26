@@ -63,15 +63,7 @@
       "note": "164.3 lbs",
       "sortOrder": 8,
       "updatedAt": 1777166005700
-    },
-    {
-      "id": "wof-1777168900775",
-      "title": "testing",
-      "holder": "Test",
-      "note": "test",
-      "sortOrder": 9,
-      "updatedAt": 1777168900775
     }
   ],
-  "updatedAt": 1777168902390
+  "updatedAt": 1777169216888
 }
