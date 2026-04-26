@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.5
-// @description  Cloud default: direct Contents API PUT; optional Actions (repository_dispatch).
+// @version      0.2.6
+// @description  Load WS UI trim; collapsed cloud debug log; direct/Actions cloud.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -376,11 +376,15 @@
     }
 
     function createCloudSyncLogSection(headingText) {
-        var wrap = document.createElement('div');
-        wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;flex-shrink:0;margin-top:4px;';
-        var h = document.createElement('div');
-        h.textContent = headingText || 'Cloud sync debug log (same style as Wall of Fame publish log)';
-        h.style.cssText = 'font-size:12px;font-weight:600;color:#5dade2;';
+        var deets = document.createElement('details');
+        deets.setAttribute('data-dc-ws-cloud-log-details', '1');
+        deets.style.cssText = 'flex-shrink:0;margin-top:4px;';
+        var sum = document.createElement('summary');
+        sum.textContent = headingText || 'Cloud sync debug log';
+        sum.title = 'Expand to view fetch/dispatch log (Wall of Fame style)';
+        sum.style.cssText = 'cursor:pointer;user-select:none;font-size:12px;font-weight:600;color:#5dade2;';
+        var inner = document.createElement('div');
+        inner.style.cssText = 'display:flex;flex-direction:column;gap:6px;padding:8px 0 0;';
         var sub = document.createElement('div');
         sub.textContent = 'Timestamps are UTC. Copy the log if you need support.';
         sub.style.cssText = 'font-size:10px;color:#7f8c8d;';
@@ -390,13 +394,21 @@
         var btnClear = document.createElement('button');
         btnClear.type = 'button';
         btnClear.textContent = 'Clear log';
-        btnClear.addEventListener('click', function () {
+        btnClear.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            try {
+                deets.open = true;
+            } catch (e) {}
             clearCloudSyncLog();
         });
         var btnCopy = document.createElement('button');
         btnCopy.type = 'button';
         btnCopy.textContent = 'Copy log';
-        btnCopy.addEventListener('click', function () {
+        btnCopy.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            try {
+                deets.open = true;
+            } catch (e) {}
             var t = wsCloudLogPre ? String(wsCloudLogPre.textContent || '') : '';
             if (!t) {
                 return;
@@ -429,11 +441,12 @@
             'font-family:ui-monospace,monospace;font-size:10px;line-height:1.35;white-space:pre-wrap;word-break:break-word;' +
             'background:#151820;border:1px solid #343f4a;border-radius:6px;color:#b8c9dc;box-sizing:border-box;';
         wsCloudLogPre = pre;
-        wrap.appendChild(h);
-        wrap.appendChild(sub);
-        wrap.appendChild(act);
-        wrap.appendChild(pre);
-        return wrap;
+        deets.appendChild(sum);
+        inner.appendChild(sub);
+        inner.appendChild(act);
+        inner.appendChild(pre);
+        deets.appendChild(inner);
+        return deets;
     }
 
     function rawGithubGetCloud(cb) {
@@ -824,12 +837,12 @@
                 })
             );
             for (var i = 0; i < list.length; i++) {
-                cloudRowsHost.appendChild(buildCloudStateRow(list[i], folder));
+                cloudRowsHost.appendChild(buildCloudStateRow(list[i]));
             }
         });
     }
 
-    function buildCloudStateRow(state, activeFolder) {
+    function buildCloudStateRow(state) {
         var row = document.createElement('div');
         row.className = 'dc-wss-row';
         var info = document.createElement('div');
@@ -839,12 +852,6 @@
         var meta = document.createElement('div');
         meta.className = 'dc-wss-meta';
         meta.textContent =
-            'saved by ' +
-            (state.folder || 'Default') +
-            (normalizeFolderForCompare(state.folder) === normalizeFolderForCompare(activeFolder)
-                ? ' (current session folder)'
-                : '') +
-            ' - ' +
             itemSummary(state.items) +
             ' - saved ' +
             formatDate(state.savedAt || state.updatedAt || state.capturedAt) +
@@ -907,12 +914,6 @@
 
         var body = document.createElement('div');
         body.className = 'dc-wss-body';
-        var note = document.createElement('div');
-        note.className = 'dc-wss-note';
-        note.textContent =
-            'Current DonkeyCODE session folder: ' +
-            activeDonkeyCodeFolder() +
-            ' (the name in DonkeyCODE, e.g. Default). Cloud saves are shared and expire after 4 hours.';
         var actions = document.createElement('div');
         actions.className = 'dc-wss-actions';
         var save = document.createElement('button');
@@ -934,7 +935,6 @@
         actions.appendChild(refresh);
         cloudRowsHost = document.createElement('div');
         cloudRowsHost.className = 'dc-wss-cloud-rows';
-        body.appendChild(note);
         body.appendChild(actions);
         body.appendChild(cloudRowsHost);
         body.appendChild(createCloudSyncLogSection('Cloud sync debug log (Wall of Fame style)'));
@@ -2034,14 +2034,6 @@
         var body = document.createElement('div');
         body.className = 'dc-wss-body';
 
-        var folderBanner = document.createElement('div');
-        folderBanner.className = 'dc-wss-note';
-        folderBanner.textContent =
-            'Current DonkeyCODE session folder: ' +
-            activeDonkeyCodeFolder() +
-            '. This is the session name in DonkeyCODE (e.g. Default or a custom name) — it tags who saved a cloud state; it is not a Git path.';
-        body.appendChild(folderBanner);
-
         addSectionTitle(body, 'Local saves');
         var localNote = document.createElement('div');
         localNote.className = 'dc-wss-note';
@@ -2052,10 +2044,6 @@
         body.appendChild(localRowsHost);
 
         addSectionTitle(body, 'Cloud saves');
-        var cloudNote = document.createElement('div');
-        cloudNote.className = 'dc-wss-note';
-        cloudNote.textContent =
-            'Cloud: same patterns as Wall of Fame — set donkeycode_github_owner/repo/branch in DonkeyCODE (or override worksheet + wallOfFame data prefs). worksheetStateUseGithubActions on = repository_dispatch + team key; off = direct Contents API PUT (PAT only, no team key). @connect * for optional proxy hosts.';
         var cloudActions = document.createElement('div');
         cloudActions.className = 'dc-wss-actions';
         var refreshCloud = document.createElement('button');
@@ -2065,7 +2053,6 @@
         cloudActions.appendChild(refreshCloud);
         cloudRowsHost = document.createElement('div');
         cloudRowsHost.className = 'dc-wss-cloud-rows';
-        body.appendChild(cloudNote);
         body.appendChild(cloudActions);
         body.appendChild(cloudRowsHost);
         body.appendChild(createCloudSyncLogSection('Cloud sync debug log (Wall of Fame style)'));
