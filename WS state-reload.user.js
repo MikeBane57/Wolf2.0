@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.1.8
-// @description  Worksheet state cloud: fix dispatch workflow; clearer session folder label; path pref warning.
+// @version      0.1.9
+// @description  Worksheet toolbar: pointerup+click for SAVE WS / Load / Quick (DonkeyCODE/React).
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
@@ -1131,6 +1131,77 @@
         document.head.appendChild(st);
     }
 
+    /**
+     * DonkeyCODE/React may cancel default on pointerdown so a plain click handler never runs.
+     * Use capture-phase pointerup (same idea as METAR watch toolbar) plus click with suppression.
+     */
+    function bindWorksheetToolbarButtonActivate(el, run) {
+        if (!el || el.getAttribute('data-dc-ws-btn-activate') === '1') {
+            return;
+        }
+        el.setAttribute('data-dc-ws-btn-activate', '1');
+        var suppressClick = false;
+        var tClear = 0;
+        el.addEventListener(
+            'pointerup',
+            function (ev) {
+                if (!ev || ev.isTrusted === false) {
+                    return;
+                }
+                if (ev.button != null && ev.button !== 0) {
+                    return;
+                }
+                suppressClick = true;
+                if (tClear) {
+                    try {
+                        clearTimeout(tClear);
+                    } catch (e) {}
+                }
+                tClear = setTimeout(function () {
+                    suppressClick = false;
+                }, 800);
+                try {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    if (ev.stopImmediatePropagation) {
+                        ev.stopImmediatePropagation();
+                    }
+                } catch (e2) {}
+                try {
+                    run(ev);
+                } catch (e3) {}
+            },
+            true
+        );
+        el.addEventListener(
+            'click',
+            function (ev) {
+                if (!ev || ev.isTrusted === false) {
+                    return;
+                }
+                if (ev.button != null && ev.button !== 0) {
+                    return;
+                }
+                if (suppressClick) {
+                    suppressClick = false;
+                    try {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                    } catch (e) {}
+                    return;
+                }
+                try {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                } catch (e2) {}
+                try {
+                    run(ev);
+                } catch (e3) {}
+            },
+            true
+        );
+    }
+
     function makeButton(label, title, action) {
         var b = document.createElement('button');
         b.type = 'button';
@@ -1144,9 +1215,7 @@
         } else {
             b.setAttribute('data-dc-ws-save', '1');
         }
-        b.addEventListener('click', function (ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
+        bindWorksheetToolbarButtonActivate(b, function () {
             if (action === 'load') {
                 openLoadDialog();
             } else if (action === 'quick') {
