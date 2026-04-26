@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.42
-// @description  Token hover: plain rule text (IFR, MVFR, etc.); notify rules unchanged.
+// @version      2.0.48
+// @description  Alert rules: text/TS/LLWS/SPECI; no mode dropdown; color-code METAR/TAF; extra notify toggles.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -37,6 +37,8 @@
     var LS_POLL_RESULTS = 'dc-metar-watch-poll-results-v1';
     /** In-modal “Alert rules” form overrides DonkeyCODE JSON string prefs when set. */
     var LS_NOTIFY_RULES_UI = 'dc-metar-watch-notify-rules-ui-v1';
+    /** In-modal notify + timing (overrides DonkeyCODE defaults for this browser when set). */
+    var LS_METAR_UI_SETTINGS = 'dc-metar-watch-ui-settings-v1';
     var lastAppliedPollResultsTs = 0;
     var SHARED_METAR_TAF_TTL_MS = 8 * 60 * 1000;
     var metarTafSharedChannel = null;
@@ -83,8 +85,174 @@
         return def;
     }
 
-    function sharedPollEnabled() {
+    function readMetarWatchUi() {
+        try {
+            var raw = localStorage.getItem(LS_METAR_UI_SETTINGS);
+            if (!raw) {
+                return null;
+            }
+            var o = JSON.parse(raw);
+            return o && typeof o === 'object' ? o : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function writeMetarWatchUi(obj) {
+        try {
+            localStorage.setItem(LS_METAR_UI_SETTINGS, JSON.stringify(obj));
+        } catch (e) {}
+    }
+
+    function metarWatchNotifyEnabled() {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui.metarWatchNotify === 'boolean') {
+            return ui.metarWatchNotify;
+        }
+        return boolPref('metarWatchNotify', true);
+    }
+
+    function metarPollMinutesEffective() {
+        var ui = readMetarWatchUi();
+        if (ui && ui.metarWatchPollMinutes != null) {
+            var n = Math.floor(Number(ui.metarWatchPollMinutes));
+            if (Number.isFinite(n)) {
+                return Math.min(120, Math.max(1, n));
+            }
+        }
+        return numPref('metarWatchPollMinutes', 5, 1, 120);
+    }
+
+    function metarConcurrentStationsEffective() {
+        var ui = readMetarWatchUi();
+        if (ui && ui.metarWatchConcurrentStations != null) {
+            var n = Math.floor(Number(ui.metarWatchConcurrentStations));
+            if (Number.isFinite(n)) {
+                return Math.min(20, Math.max(1, n));
+            }
+        }
+        return numPref('metarWatchConcurrentStations', 10, 1, 20);
+    }
+
+    function metarSharedPollEnabled() {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui.metarWatchSharedPoll === 'boolean') {
+            return ui.metarWatchSharedPoll;
+        }
         return boolPref('metarWatchSharedPoll', true);
+    }
+
+    var DEFAULT_FRESH_MINUTES = 5;
+
+    function metarWatchAlertFreshMinutes() {
+        var ui = readMetarWatchUi();
+        if (ui && ui.metarWatchAlertFreshMinutes != null) {
+            var n = Math.floor(Number(ui.metarWatchAlertFreshMinutes));
+            if (Number.isFinite(n)) {
+                return Math.min(120, Math.max(1, n));
+            }
+        }
+        return DEFAULT_FRESH_MINUTES;
+    }
+
+    function metarWatchFreshWindowMs() {
+        return metarWatchAlertFreshMinutes() * 60 * 1000;
+    }
+
+    function metarWatchHighlightWithRulesWhenNotifyOff() {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui.metarWatchHighlightWithRulesWhenNotifyOff === 'boolean') {
+            return ui.metarWatchHighlightWithRulesWhenNotifyOff;
+        }
+        return true;
+    }
+
+    function metarWatchNotifyOnColored() {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui.metarWatchNotifyOnColored === 'boolean') {
+            return ui.metarWatchNotifyOnColored;
+        }
+        return true;
+    }
+
+    function metarWatchNotifyOnSpecial() {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui.metarWatchNotifyOnSpecial === 'boolean') {
+            return ui.metarWatchNotifyOnSpecial;
+        }
+        return true;
+    }
+
+    function hasDefinedNotifyRules() {
+        var uiR = readNotifyRulesUi();
+        if (uiR) {
+            var g = Array.isArray(uiR.global) ? uiR.global : [];
+            if (g.length) {
+                return true;
+            }
+            var p = uiR.perIata && typeof uiR.perIata === 'object' ? uiR.perIata : {};
+            var k;
+            for (k in p) {
+                if (Object.prototype.hasOwnProperty.call(p, k) && p[k] && p[k].length) {
+                    return true;
+                }
+            }
+        }
+        if (typeof donkeycodeGetPref !== 'function') {
+            return false;
+        }
+        var dG = parseNotifyRulesArray(String(donkeycodeGetPref('metarWatchNotifyRulesGlobal') != null ? donkeycodeGetPref('metarWatchNotifyRulesGlobal') : ''));
+        if (dG && dG.length) {
+            return true;
+        }
+        var mP = parseNotifyRulesPerIataMap(donkeycodeGetPref('metarWatchNotifyRulesPerIata'));
+        for (k in mP) {
+            if (Object.prototype.hasOwnProperty.call(mP, k) && mP[k] && mP[k].length) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function isSpecialMetarTaf(metar, taf) {
+        var m = String(metar || '');
+        var t = String(taf || '');
+        if (m && /\bSPECI\b/i.test(m)) {
+            return true;
+        }
+        if (t && /\b(TEMPO|BECMG|PROB\d+|FM\d{6})\b/.test(t)) {
+            return true;
+        }
+        return false;
+    }
+
+    function shouldSendDesktopNotificationForContent(iata, rec) {
+        if (!rec) {
+            return false;
+        }
+        if (metarWatchNotifyOnSpecial() && isSpecialMetarTaf(rec.metar, rec.taf)) {
+            return true;
+        }
+        if (metarWatchNotifyOnColored()) {
+            var rules = mergeNotifyRulesForIata(iata);
+            if (rules && rules.length) {
+                return notifyRulesPassForStation(iata, rec);
+            }
+            return notifyRulesMode() === 'off';
+        }
+        return notifyRulesPassForStation(iata, rec);
+    }
+
+    function metarSwStylePrefKey(key) {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui[key] === 'boolean') {
+            return ui[key];
+        }
+        return boolPref(key, true);
+    }
+
+    function sharedPollEnabled() {
+        return metarSharedPollEnabled();
     }
 
     function readPollLeaderRecord() {
@@ -515,8 +683,32 @@
         return minV === Infinity ? null : minV;
     }
 
+    /**
+     * Parse max visibility for notify rules (user input in modal). Accepts decimals and fractions: 0.5, 1/2, 1 1/2.
+     */
+    function parseVisMaxForRule(str) {
+        var t = String(str == null ? '' : str)
+            .trim()
+            .replace(/\s+/g, ' ');
+        if (!t) {
+            return null;
+        }
+        if (Number.isFinite(Number(t)) && !/^\d+\s+\d/.test(t)) {
+            var n0 = Number(t);
+            if (n0 >= 0 && n0 < 100) {
+                return n0;
+            }
+        }
+        var p = parseOneVisToken(t + (/\bSM$/i.test(t) ? '' : 'SM'));
+        if (p !== null && Number.isFinite(p) && p >= 0 && p < 100) {
+            return p;
+        }
+        return null;
+    }
+
     var DEFAULT_COLOR_HIGH = '#c0392b';
     var DEFAULT_COLOR_ADVISORY = '#d68910';
+    var DEFAULT_COLOR_CUSTOM = '#9b59b6';
 
     function normalizeRuleHex(s) {
         if (s == null || s === undefined) {
@@ -570,7 +762,10 @@
             return 'advisory';
         }
         var l = String(rule.level || 'advisory').toLowerCase();
-        return l === 'high' ? 'high' : 'advisory';
+        if (l === 'high' || l === 'custom' || l === 'priority') {
+            return l;
+        }
+        return 'advisory';
     }
 
     function parseRuleColor(rule) {
@@ -578,6 +773,72 @@
             return '';
         }
         return normalizeRuleHex(rule.color) || '';
+    }
+
+    function ruleHighlightPriority(rule) {
+        var lv = parseRuleLevel(rule);
+        if (lv === 'high') {
+            return 3;
+        }
+        if (lv === 'priority' || lv === 'custom') {
+            return 2;
+        }
+        return 1;
+    }
+
+    function metarTafPartHasExtraConstraints(part) {
+        if (!part || typeof part !== 'object') {
+            return false;
+        }
+        if (part.requireTs) {
+            return true;
+        }
+        if (part.requireLlws) {
+            return true;
+        }
+        if (part.speciOnly) {
+            return true;
+        }
+        if (String(part.textContains == null ? '' : part.textContains).trim().length) {
+            return true;
+        }
+        return false;
+    }
+
+    function metarTafPartExtraPass(part, text) {
+        if (!part || typeof part !== 'object' || !String(text || '').length) {
+            return !metarTafPartHasExtraConstraints(part);
+        }
+        if (!metarTafPartHasExtraConstraints(part)) {
+            return true;
+        }
+        var u = String(text || '').toUpperCase();
+        if (part.speciOnly) {
+            if (u.indexOf('TAF') >= 0) {
+                if (!/\b(PROB|BECMG|FM\d|TEMPO)\b/.test(String(text)) && u.indexOf('TEMPO') < 0) {
+                    return false;
+                }
+            } else if (u.indexOf('SPECI') < 0) {
+                return false;
+            }
+        }
+        if (part.requireTs) {
+            if (!/\b(TS|TSRA|VCTS|TSTM|TSNO)\b/i.test(String(text)) && !/[-+]TS/.test(String(text))) {
+                return false;
+            }
+        }
+        if (part.requireLlws) {
+            if (u.indexOf('LLWS') < 0 && u.indexOf('LO LV') < 0 && u.indexOf('W/S') < 0) {
+                return false;
+            }
+        }
+        var tsub = String(part.textContains == null ? '' : part.textContains).trim();
+        if (tsub.length) {
+            if (String(text || '').toLowerCase().indexOf(tsub.toLowerCase()) < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     function effectiveHighlightColorForRule(rule) {
@@ -588,7 +849,57 @@
         var ui = readNotifyRulesUi();
         var h = (ui && ui.colorHigh) || DEFAULT_COLOR_HIGH;
         var a = (ui && ui.colorAdvisory) || DEFAULT_COLOR_ADVISORY;
-        return parseRuleLevel(rule) === 'high' ? h : a;
+        var c = (ui && ui.colorCustom) || DEFAULT_COLOR_CUSTOM;
+        var p = (ui && ui.colorPriority) || h;
+        var lv = parseRuleLevel(rule);
+        if (lv === 'high') {
+            return h;
+        }
+        if (lv === 'custom') {
+            return c;
+        }
+        if (lv === 'priority') {
+            return p;
+        }
+        return a;
+    }
+
+    function partHasCigOrVis(rm) {
+        if (!rm || typeof rm !== 'object') {
+            return false;
+        }
+        return (
+            (rm.ceilingFtMax != null && Number.isFinite(Number(rm.ceilingFtMax))) ||
+            (rm.visibilitySmMax != null && Number.isFinite(Number(rm.visibilitySmMax)))
+        );
+    }
+
+    function partMatchesMetarTaf(rm, text) {
+        if (!rm || typeof rm !== 'object' || !String(text || '').length) {
+            return false;
+        }
+        if (partHasCigOrVis(rm)) {
+            if (rm.ceilingFtMax != null && Number.isFinite(Number(rm.ceilingFtMax))) {
+                var c = ceilingFtFromMetar(text);
+                if (c === null || c > Number(rm.ceilingFtMax)) {
+                    return false;
+                }
+            }
+            if (rm.visibilitySmMax != null) {
+                var maxVsM = Number(rm.visibilitySmMax);
+                if (Number.isFinite(maxVsM)) {
+                    var vm = minVisibilitySmInText(text);
+                    if (vm === null || vm > maxVsM) {
+                        return false;
+                    }
+                }
+            }
+        } else {
+            if (!metarTafPartHasExtraConstraints(rm)) {
+                return true;
+            }
+        }
+        return metarTafPartExtraPass(rm, text);
     }
 
     function ruleMatchesOne(rule, metar, taf) {
@@ -598,46 +909,26 @@
         if (!rule.metar && !rule.taf) {
             return false;
         }
+        var mStr = String(metar || '');
+        var tStr = String(taf || '');
+        var hasM = mStr.length > 0;
+        var hasT = tStr.length > 0;
         var okM = true;
-        var okT = true;
         if (rule.metar && typeof rule.metar === 'object') {
-            var rm = rule.metar;
-            if (String(metar || '').length) {
-                if (rm.ceilingFtMax != null && Number.isFinite(Number(rm.ceilingFtMax))) {
-                    var c = ceilingFtFromMetar(metar);
-                    if (c === null || c > Number(rm.ceilingFtMax)) {
-                        okM = false;
-                    }
-                }
-                if (okM && rm.visibilitySmMax != null && Number.isFinite(Number(rm.visibilitySmMax))) {
-                    var vm = minVisibilitySmInText(metar);
-                    if (vm === null || vm > Number(rm.visibilitySmMax)) {
-                        okM = false;
-                    }
-                }
-            } else {
+            if (!hasM) {
                 okM = false;
+            } else {
+                okM = partMatchesMetarTaf(rule.metar, mStr);
             }
         } else {
             okM = true;
         }
+        var okT = true;
         if (rule.taf && typeof rule.taf === 'object') {
-            var rt = rule.taf;
-            if (String(taf || '').length) {
-                if (rt.ceilingFtMax != null && Number.isFinite(Number(rt.ceilingFtMax))) {
-                    var ct = ceilingFtFromMetar(taf);
-                    if (ct === null || ct > Number(rt.ceilingFtMax)) {
-                        okT = false;
-                    }
-                }
-                if (okT && rt.visibilitySmMax != null && Number.isFinite(Number(rt.visibilitySmMax))) {
-                    var vt = minVisibilitySmInText(taf);
-                    if (vt === null || vt > Number(rt.visibilitySmMax)) {
-                        okT = false;
-                    }
-                }
-            } else {
+            if (!hasT) {
                 okT = false;
+            } else {
+                okT = partMatchesMetarTaf(rule.taf, tStr);
             }
         } else {
             okT = true;
@@ -698,7 +989,7 @@
                             start: cra[ci].start,
                             end: cra[ci].end,
                             color: col,
-                            pri: parseRuleLevel(rule) === 'high' ? 2 : 1,
+                            pri: ruleHighlightPriority(rule),
                             label: notifyRuleLineForTooltip(ri, rule, which, 'ceiling', maxCeil)
                         });
                     }
@@ -714,7 +1005,7 @@
                             start: vra[vi].start,
                             end: vra[vi].end,
                             color: col,
-                            pri: parseRuleLevel(rule) === 'high' ? 2 : 1,
+                            pri: ruleHighlightPriority(rule),
                             label: notifyRuleLineForTooltip(ri, rule, which, 'vis', maxVis)
                         });
                     }
@@ -800,7 +1091,9 @@
         var n = (Number(ri) >= 0 ? Number(ri) + 1 : 0);
         var pre = n ? 'Notify rule ' + n + ' — ' : 'Notify rule — ';
         var section = which === 'metar' ? 'METAR' : 'TAF';
-        var L = parseRuleLevel(rule) === 'high' ? 'High' : 'Advisory';
+        var lv = parseRuleLevel(rule);
+        var L =
+            lv === 'high' ? 'High' : lv === 'custom' ? 'Custom' : lv === 'priority' ? 'Priority' : 'Advisory';
         var base = pre + section + ' · ' + L;
         if (kind === 'ceiling') {
             return base + ': ceiling ≤ ' + String(maxVal) + ' ft';
@@ -827,7 +1120,7 @@
         if (!pk) {
             return cls;
         }
-        return boolPref(pk, true) ? cls : null;
+        return metarSwStylePrefKey(pk) ? cls : null;
     }
 
     function parseVisibilityTokenForSwStyle(token) {
@@ -987,7 +1280,7 @@
     }
 
     function findSwStyleHighlightSpans(plain, which) {
-        if (!boolPref('metarWatchTextHighlightSwStyle', true)) {
+        if (!metarSwStylePrefKey('metarWatchTextHighlightSwStyle')) {
             return [];
         }
         var s = String(plain || '');
@@ -1082,11 +1375,18 @@
         return outM;
     }
 
+    function shouldUseNotifyRulesForHighlights(rules) {
+        if (notifyRulesMode() !== 'off' && rules && rules.length) {
+            return true;
+        }
+        return metarWatchHighlightWithRulesWhenNotifyOff() && rules && rules.length;
+    }
+
     function applyMetarTafMetarBlockHighlights(plainLinesJoined, iata) {
         var s = String(plainLinesJoined || '');
         var rules = mergeNotifyRulesForIata(iata);
-        var useRules = notifyRulesMode() !== 'off' && rules && rules.length;
-        if (!useRules && !boolPref('metarWatchTextHighlightSwStyle', true)) {
+        var useRules = shouldUseNotifyRulesForHighlights(rules);
+        if (!useRules && !metarSwStylePrefKey('metarWatchTextHighlightSwStyle')) {
             return escapeHtml(s).replace(/\n/g, '<br>');
         }
         return applyHighlightsToPlainString(
@@ -1100,8 +1400,8 @@
     function applyMetarTafTafBlockHighlights(plainTaf, iata) {
         var s = String(plainTaf || '');
         var rules = mergeNotifyRulesForIata(iata);
-        var useRules = notifyRulesMode() !== 'off' && rules && rules.length;
-        if (!useRules && !boolPref('metarWatchTextHighlightSwStyle', true)) {
+        var useRules = shouldUseNotifyRulesForHighlights(rules);
+        if (!useRules && !metarSwStylePrefKey('metarWatchTextHighlightSwStyle')) {
             return escapeHtml(s).replace(/\n/g, '<br>');
         }
         return applyHighlightsToPlainString(
@@ -1119,11 +1419,11 @@
         iata = iata || '';
         var which = block === 'taf' ? 'taf' : 'metar';
         var hSpans = [];
-        if (notifyRulesMode() !== 'off' && rules && rules.length) {
+        if (shouldUseNotifyRulesForHighlights(rules)) {
             hSpans = hSpans.concat(findHighlightSpansForText(s, which, rules));
         }
         var swSpans = [];
-        if (boolPref('metarWatchTextHighlightSwStyle', true)) {
+        if (metarSwStylePrefKey('metarWatchTextHighlightSwStyle')) {
             swSpans = findSwStyleHighlightSpans(s, which);
         }
         hSpans = mergeRuleSpansWithSwSpans(hSpans, swSpans);
@@ -1199,17 +1499,50 @@
             if (!o || typeof o !== 'object') {
                 return null;
             }
-            var mode = String(o.mode || 'off').toLowerCase();
-            if (mode !== 'off' && mode !== 'global' && mode !== 'per_iata') {
-                mode = 'off';
-            }
             var g = o.global;
             var globalArr = Array.isArray(g) ? g : [];
             var per = o.perIata;
             var perMap = per && typeof per === 'object' ? per : {};
+            var mode;
+            if ('mode' in o) {
+                mode = String(o.mode || 'off').toLowerCase();
+                if (mode !== 'off' && mode !== 'global' && mode !== 'per_iata') {
+                    mode = 'off';
+                }
+            } else {
+                var pk0 = perMap && typeof perMap === 'object' ? Object.keys(perMap) : [];
+                if (pk0.length) {
+                    mode = 'per_iata';
+                } else if (globalArr && globalArr.length) {
+                    mode = 'global';
+                } else {
+                    mode = 'off';
+                }
+            }
             var ch = normalizeRuleHex(o.colorHigh) || DEFAULT_COLOR_HIGH;
             var ca = normalizeRuleHex(o.colorAdvisory) || DEFAULT_COLOR_ADVISORY;
-            return { mode: mode, global: globalArr, perIata: perMap, colorHigh: ch, colorAdvisory: ca };
+            var cc = normalizeRuleHex(o.colorCustom) || DEFAULT_COLOR_CUSTOM;
+            var cp = normalizeRuleHex(o.colorPriority) || DEFAULT_COLOR_HIGH;
+            if (mode === 'off') {
+                if (perMap && typeof perMap === 'object') {
+                    var pk1 = Object.keys(perMap);
+                    if (pk1.length) {
+                        mode = 'per_iata';
+                    }
+                }
+            }
+            if (mode === 'off' && globalArr && globalArr.length) {
+                mode = 'global';
+            }
+            return {
+                mode: mode,
+                global: globalArr,
+                perIata: perMap,
+                colorHigh: ch,
+                colorAdvisory: ca,
+                colorCustom: cc,
+                colorPriority: cp
+            };
         } catch (e) {
             return null;
         }
@@ -1228,62 +1561,122 @@
     }
 
     function ruleToRowValues(rule) {
-        var o = { level: 'advisory', useCustomColor: false, customColor: '#888888', mC: '', mV: '', tC: '', tV: '' };
+        var o = {
+            level: 'advisory',
+            useCustomColor: false,
+            customColor: '#888888',
+            mC: '',
+            mV: '',
+            mTs: false,
+            mLws: false,
+            mTxt: '',
+            mSpeci: false,
+            tC: '',
+            tV: '',
+            tTs: false,
+            tLws: false,
+            tTxt: '',
+            tSpeci: false
+        };
         if (!rule || typeof rule !== 'object') {
             return o;
         }
-        o.level = parseRuleLevel(rule) === 'high' ? 'high' : 'advisory';
+        var pl = parseRuleLevel(rule);
+        o.level = pl === 'high' || pl === 'custom' || pl === 'priority' ? pl : 'advisory';
         var pc = parseRuleColor(rule);
         if (pc) {
             o.useCustomColor = true;
             o.customColor = pc;
         }
         if (rule.metar && typeof rule.metar === 'object') {
-            if (rule.metar.ceilingFtMax != null && Number.isFinite(Number(rule.metar.ceilingFtMax))) {
-                o.mC = String(rule.metar.ceilingFtMax);
+            var m = rule.metar;
+            if (m.ceilingFtMax != null && Number.isFinite(Number(m.ceilingFtMax))) {
+                o.mC = String(m.ceilingFtMax);
             }
-            if (rule.metar.visibilitySmMax != null && Number.isFinite(Number(rule.metar.visibilitySmMax))) {
-                o.mV = String(rule.metar.visibilitySmMax);
+            if (m.visibilitySmMax != null && Number.isFinite(Number(m.visibilitySmMax))) {
+                o.mV = String(m.visibilitySmMax);
             }
+            o.mTs = !!m.requireTs;
+            o.mLws = !!m.requireLlws;
+            o.mSpeci = !!m.speciOnly;
+            o.mTxt = m.textContains != null ? String(m.textContains) : '';
         }
         if (rule.taf && typeof rule.taf === 'object') {
-            if (rule.taf.ceilingFtMax != null && Number.isFinite(Number(rule.taf.ceilingFtMax))) {
-                o.tC = String(rule.taf.ceilingFtMax);
+            var t = rule.taf;
+            if (t.ceilingFtMax != null && Number.isFinite(Number(t.ceilingFtMax))) {
+                o.tC = String(t.ceilingFtMax);
             }
-            if (rule.taf.visibilitySmMax != null && Number.isFinite(Number(rule.taf.visibilitySmMax))) {
-                o.tV = String(rule.taf.visibilitySmMax);
+            if (t.visibilitySmMax != null && Number.isFinite(Number(t.visibilitySmMax))) {
+                o.tV = String(t.visibilitySmMax);
             }
+            o.tTs = !!t.requireTs;
+            o.tLws = !!t.requireLlws;
+            o.tSpeci = !!t.speciOnly;
+            o.tTxt = t.textContains != null ? String(t.textContains) : '';
         }
         return o;
     }
 
-    function rowValuesToRule(mC, mV, tC, tV, level, useCustomColor, customColor) {
+    function rowValuesToRule(inp) {
+        if (!inp || typeof inp !== 'object') {
+            return null;
+        }
         var rule = {};
-        var lv = String(level || 'advisory').toLowerCase() === 'high' ? 'high' : 'advisory';
-        rule.level = lv;
-        if (useCustomColor && normalizeRuleHex(customColor)) {
-            rule.color = normalizeRuleHex(customColor);
+        var lvs = String((inp.level != null && inp.level.value) || 'advisory').toLowerCase();
+        if (lvs === 'high' || lvs === 'custom' || lvs === 'priority') {
+            rule.level = lvs;
+        } else {
+            rule.level = 'advisory';
         }
-        var m = {};
-        var mc = String(mC == null ? '' : mC).trim();
-        var mv = String(mV == null ? '' : mV).trim();
-        var tc = String(tC == null ? '' : tC).trim();
-        var tv = String(tV == null ? '' : tV).trim();
-        if (mc.length && Number.isFinite(Number(mc))) {
-            m.ceilingFtMax = Number(mc);
+        if (inp.useCustomColor && inp.useCustomColor.checked && normalizeRuleHex(inp.customColor && inp.customColor.value)) {
+            rule.color = normalizeRuleHex(inp.customColor.value);
         }
-        if (mv.length && Number.isFinite(Number(mv))) {
-            m.visibilitySmMax = Number(mv);
+        function buildPart(ceil, vis, ts, lws, txt, spec) {
+            var p = {};
+            var mc = String(ceil == null ? '' : ceil).trim();
+            var mv = String(vis == null ? '' : vis).trim();
+            if (mc.length && Number.isFinite(Number(mc))) {
+                p.ceilingFtMax = Number(mc);
+            }
+            if (mv.length) {
+                var pvm = parseVisMaxForRule(mv);
+                if (pvm != null) {
+                    p.visibilitySmMax = pvm;
+                }
+            }
+            if (ts && ts.checked) {
+                p.requireTs = true;
+            }
+            if (lws && lws.checked) {
+                p.requireLlws = true;
+            }
+            if (spec && spec.checked) {
+                p.speciOnly = true;
+            }
+            var tx = String(txt == null ? '' : txt).trim();
+            if (tx.length) {
+                p.textContains = tx;
+            }
+            return p;
         }
+        var m = buildPart(
+            inp.mC && inp.mC.value,
+            inp.mV && inp.mV.value,
+            inp.mTs,
+            inp.mLws,
+            inp.mTxt,
+            inp.mSpeci
+        );
+        var t = buildPart(
+            inp.tC && inp.tC.value,
+            inp.tV && inp.tV.value,
+            inp.tTs,
+            inp.tLws,
+            inp.tTxt,
+            inp.tSpeci
+        );
         if (Object.keys(m).length) {
             rule.metar = m;
-        }
-        var t = {};
-        if (tc.length && Number.isFinite(Number(tc))) {
-            t.ceilingFtMax = Number(tc);
-        }
-        if (tv.length && Number.isFinite(Number(tv))) {
-            t.visibilitySmMax = Number(tv);
         }
         if (Object.keys(t).length) {
             rule.taf = t;
@@ -1296,12 +1689,35 @@
 
     function notifyRulesMode() {
         var ui = readNotifyRulesUi();
-        if (ui && ui.mode) {
-            return ui.mode === 'global' || ui.mode === 'per_iata' ? ui.mode : 'off';
+        if (ui) {
+            var gN = Array.isArray(ui.global) && ui.global.length;
+            var pm = ui.perIata && typeof ui.perIata === 'object' ? ui.perIata : {};
+            var pN = false;
+            var pk;
+            for (pk in pm) {
+                if (Object.prototype.hasOwnProperty.call(pm, pk) && pm[pk] && pm[pk].length) {
+                    pN = true;
+                    break;
+                }
+            }
+            var m0 = String(ui.mode || 'off').toLowerCase();
+            if (m0 === 'per_iata' || pN) {
+                return pN || gN ? 'per_iata' : (gN ? 'global' : 'off');
+            }
+            if (m0 === 'global') {
+                return gN ? 'global' : (pN ? 'per_iata' : 'off');
+            }
+            if (!gN && !pN) {
+                return 'off';
+            }
+            return pN ? 'per_iata' : 'global';
         }
-        var v = String(getPref('metarWatchNotifyRulesMode', 'off') || 'off').toLowerCase();
-        if (v === 'global' || v === 'per_iata') {
-            return v;
+        var v0 = String(getPref('metarWatchNotifyRulesMode', 'off') || 'off').toLowerCase();
+        if (v0 === 'per_iata' || v0 === 'global') {
+            if (!hasDefinedNotifyRules()) {
+                return 'off';
+            }
+            return v0;
         }
         return 'off';
     }
@@ -1310,6 +1726,12 @@
         var mode = notifyRulesMode();
         var ui = readNotifyRulesUi();
         if (ui) {
+            if (!ui.colorCustom) {
+                ui.colorCustom = DEFAULT_COLOR_CUSTOM;
+            }
+            if (!ui.colorPriority) {
+                ui.colorPriority = DEFAULT_COLOR_HIGH;
+            }
             var globalArr = Array.isArray(ui.global) ? ui.global : [];
             if (mode === 'global') {
                 return globalArr;
@@ -1354,22 +1776,31 @@
     }
 
     function notifyRulesPassForStation(iata, rec) {
-        if (notifyRulesMode() === 'off') {
-            return true;
-        }
-        var rules = mergeNotifyRulesForIata(iata);
-        if (!rules.length) {
+        var metar = rec && rec.metar != null ? String(rec.metar) : '';
+        var taf = rec && rec.taf != null ? String(rec.taf) : '';
+        function anyRuleMatches() {
+            var rules = mergeNotifyRulesForIata(iata);
+            if (!rules || !rules.length) {
+                return false;
+            }
+            var i;
+            for (i = 0; i < rules.length; i++) {
+                if (ruleMatchesOne(rules[i], metar, taf)) {
+                    return true;
+                }
+            }
             return false;
         }
-        var metar = rec && rec.metar ? String(rec.metar) : '';
-        var taf = rec && rec.taf ? String(rec.taf) : '';
-        var i;
-        for (i = 0; i < rules.length; i++) {
-            if (ruleMatchesOne(rules[i], metar, taf)) {
-                return true;
+        if (notifyRulesMode() === 'off') {
+            if (metarWatchNotifyOnColored() && hasDefinedNotifyRules()) {
+                return anyRuleMatches();
             }
+            return true;
         }
-        return false;
+        if (!anyRuleMatches()) {
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -2401,7 +2832,22 @@
     }
 
     function pollMs() {
-        return numPref('metarWatchPollMinutes', 5, 1, 120) * 60 * 1000;
+        return metarPollMinutesEffective() * 60 * 1000;
+    }
+
+    function restartPollTimer() {
+        if (pollTimer) {
+            try {
+                clearInterval(pollTimer);
+            } catch (e) {}
+            pollTimer = null;
+        }
+        try {
+            runPoll();
+        } catch (e2) {}
+        try {
+            pollTimer = setInterval(runPoll, pollMs());
+        } catch (e3) {}
     }
 
     /** Same mapping as SW Airport METAR/TAF Tooltip (subset used for lookups). */
@@ -2779,13 +3225,24 @@
     var codLoadBtn = null;
     var alertRulesBackdrop = null;
     var alertRulesModal = null;
-    var alertRulesModeSelect = null;
     var alertRulesGlobalBlock = null;
     var alertRulesGlobalHost = null;
     var alertRulesPerSectionWrap = null;
     var alertRulesPerHost = null;
     var alertRulesColorHighInp = null;
     var alertRulesColorAdvisoryInp = null;
+    var alertMetarSettingsNotify = null;
+    var alertMetarSettingsPoll = null;
+    var alertMetarSettingsConc = null;
+    var alertMetarSettingsShared = null;
+    var alertMetarSettingsFresh = null;
+    var alertMetarSettingsHiRules = null;
+    var alertMetarSettingsSw = {};
+    var alertMetarSettingsNotifyColored = null;
+    var alertMetarSettingsNotifySpecial = null;
+    var metarSettingsApplySwTokenMaster = null;
+    var alertRulesColorCustomInp = null;
+    var alertRulesColorPriorityInp = null;
     /** Last station we started the COD loop for (avoid restart on timer-only detail refresh). */
     var lastCodLoopIata = null;
     var cacheByIcao = {};
@@ -2898,14 +3355,14 @@
         return base;
     }
 
-    /** Yellow: change within 5 min; red: older than 5 min (still unseen). */
+    /** Yellow: change within configured minutes; red: older (still unseen). */
     function pendingChangeAgeClass(iata) {
         var t = pendingChangeTime[iata];
         if (typeof t !== 'number' || !Number.isFinite(t)) {
             return null;
         }
         var age = Date.now() - t;
-        if (age <= 5 * 60 * 1000) {
+        if (age <= metarWatchFreshWindowMs()) {
             return 'fresh';
         }
         return 'stale';
@@ -4179,7 +4636,7 @@
             return;
         }
         fetchOpts = fetchOpts || {};
-        var concurrency = numPref('metarWatchConcurrentStations', 10, 1, 20);
+        var concurrency = metarConcurrentStationsEffective();
         var results = new Array(list.length);
         var next = 0;
         var active = 0;
@@ -4263,7 +4720,7 @@
     }
 
     function maybeNotify(staleIcaoSet) {
-        if (!boolPref('metarWatchNotify', true)) {
+        if (!metarWatchNotifyEnabled()) {
             return;
         }
         if (!staleIcaoSet || !staleIcaoSet.length) {
@@ -4286,7 +4743,7 @@
             }
             var rec = cacheByIcao[icao];
             var iataForNotify = iataFromIcao(icao);
-            if (iataForNotify && !notifyRulesPassForStation(iataForNotify, rec)) {
+            if (iataForNotify && !shouldSendDesktopNotificationForContent(iataForNotify, rec)) {
                 notifyShownForCurrent[icao] = true;
                 continue;
             }
@@ -4340,7 +4797,6 @@
             }
         }
         if (stale.length) {
-            var mode = notifyRulesMode();
             var hasRuleMatch = false;
             var hasRuleMatchOld = false;
             var si2;
@@ -4349,9 +4805,6 @@
                 var ix = iataFromIcao(icx);
                 var rx = cacheByIcao[icx];
                 var pass = ix && rx && notifyRulesPassForStation(ix, rx);
-                if (mode === 'off') {
-                    pass = true;
-                }
                 if (pass) {
                     hasRuleMatch = true;
                     if (ix && pendingChangeAgeClass(ix) === 'stale') {
@@ -5003,7 +5456,6 @@
     var WX_BTN_ATTR = 'data-dc-metar-watch-btn';
     var TOOLBAR_STYLE_ID = 'dc-metar-ws-toolbar-ptr-style';
     var WSB_STATE_ID = 'dc-ws-state-reload-host';
-    var WSB_BRIEF_ID = 'dc-brief-ai-ws-host';
 
     function isPaxConnectionsPage() {
         try {
@@ -5074,10 +5526,9 @@
             return;
         }
         var wxn = helper.querySelector('[' + WX_BTN_ATTR + '="1"]');
-        var br = document.getElementById(WSB_BRIEF_ID);
         var st = document.getElementById(WSB_STATE_ID);
         var i;
-        var list = [wxn, br, st];
+        var list = [wxn, st];
         for (i = 0; i < list.length; i++) {
             var n = list[i];
             if (n && n.parentNode === helper) {
@@ -5131,7 +5582,7 @@
         if (
             helper &&
             !helper.querySelector(
-                'button, #' + WSB_STATE_ID + ', #' + WSB_BRIEF_ID
+                'button, #' + WSB_STATE_ID
             )
         ) {
             try {
@@ -5200,11 +5651,10 @@
             '[data-dc-worksheet-helper-buttons="1"],button[' +
             WX_BTN_ATTR +
             '="1"]{' +
-            'position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}' +
-            'span#dc-ws-state-reload-host,span#dc-brief-ai-ws-host,#' +
-            'dc-ws-state-reload-host,#' +
-            'dc-brief-ai-ws-host' +
-            '{position:relative!important;z-index:2147483000!important;pointer-events:auto!important;}';
+            'position:relative!important;z-index:2147482000!important;pointer-events:auto!important;}' +
+            'span#dc-ws-state-reload-host,#' +
+            'dc-ws-state-reload-host' +
+            '{position:relative!important;z-index:2147482000!important;pointer-events:auto!important;}';
         try {
             document.head.appendChild(st);
         } catch (e) {}
@@ -5285,6 +5735,73 @@
         }
     }
 
+    function bindWorksheetToolbarButtonActivate(el, run) {
+        if (!el || el.getAttribute('data-dc-toolbar-activate') === '1') {
+            return;
+        }
+        el.setAttribute('data-dc-toolbar-activate', '1');
+        var suppressClick = false;
+        var tClear = 0;
+        el.addEventListener(
+            'pointerup',
+            function (ev) {
+                if (!ev || ev.isTrusted === false) {
+                    return;
+                }
+                if (ev.button != null && ev.button !== 0) {
+                    return;
+                }
+                suppressClick = true;
+                if (tClear) {
+                    try {
+                        clearTimeout(tClear);
+                    } catch (e) {}
+                }
+                tClear = setTimeout(function () {
+                    suppressClick = false;
+                }, 800);
+                try {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    if (ev.stopImmediatePropagation) {
+                        ev.stopImmediatePropagation();
+                    }
+                } catch (e2) {}
+                try {
+                    run(ev);
+                } catch (e3) {}
+            },
+            true
+        );
+        el.addEventListener(
+            'click',
+            function (ev) {
+                if (!ev || ev.isTrusted === false) {
+                    return;
+                }
+                if (ev.button != null && ev.button !== 0) {
+                    return;
+                }
+                if (suppressClick) {
+                    suppressClick = false;
+                    try {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                    } catch (e) {}
+                    return;
+                }
+                try {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                } catch (e2) {}
+                try {
+                    run(ev);
+                } catch (e3) {}
+            },
+            true
+        );
+    }
+
     function bindWxButtonIfNeeded() {
         if (!btn) {
             return;
@@ -5293,10 +5810,8 @@
             return;
         }
         btn.setAttribute('data-dc-wx-click-bound', '1');
-        btn.addEventListener('click', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (Notification && Notification.permission === 'default' && boolPref('metarWatchNotify', true)) {
+        bindWorksheetToolbarButtonActivate(btn, function () {
+            if (Notification && Notification.permission === 'default' && metarWatchNotifyEnabled()) {
                 try {
                     Notification.requestPermission();
                 } catch (e) {}
@@ -5438,17 +5953,58 @@
         return i;
     }
 
+    function mkRuleExtraLine(label, vObj, which) {
+        var pfx = which === 't' ? 't' : 'm';
+        var wrap = document.createElement('div');
+        wrap.style.cssText =
+            'display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:10px;color:#bdc3c7;';
+        var sp = document.createElement('span');
+        sp.textContent = label;
+        sp.style.minWidth = '40px';
+        sp.style.color = which === 't' ? '#9b59b6' : '#3498db';
+        sp.style.fontWeight = '600';
+        wrap.appendChild(sp);
+        function addCb(txt, k, title) {
+            var lb = document.createElement('label');
+            lb.style.cssText = 'display:inline-flex;align-items:center;gap:3px;cursor:pointer;user-select:none;';
+            var c = document.createElement('input');
+            c.type = 'checkbox';
+            c.checked = !!vObj[k];
+            c.title = title;
+            c.style.width = '12px';
+            c.style.height = '12px';
+            lb.appendChild(c);
+            lb.appendChild(document.createTextNode(txt));
+            wrap.appendChild(lb);
+            return c;
+        }
+        var tsB = addCb('TS', pfx + 'Ts', 'Meteorological thunderstorm (TS+/-, VCTS, etc.)');
+        var llB = addCb('LLWS', pfx + 'Lws', 'LLWS, LO LV, W/S, etc.');
+        var specB = addCb('Spec', pfx + 'Speci', which === 't' ? 'TEMPO, BECMG, PROB, FM, etc. (TAF only)' : 'SPECI in METAR');
+        var ti = document.createElement('input');
+        ti.type = 'text';
+        ti.placeholder = 'text contains…';
+        ti.title = 'Case-insensitive substring; applies to the corresponding METAR or TAF line';
+        ti.value = vObj[pfx + 'Txt'] || '';
+        ti.style.cssText =
+            'min-width:120px;flex:1 1 120px;max-width:100%;box-sizing:border-box;padding:2px 6px;font-size:10px;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+        wrap.appendChild(ti);
+        return { wrap: wrap, ts: tsB, ll: llB, spec: specB, txt: ti };
+    }
+
     function buildRuleRowEl(rule) {
         var v = ruleToRowValues(rule || null);
         var row = document.createElement('div');
         row.setAttribute('data-dc-arule-row', '1');
-        row.style.display = 'grid';
-        row.style.gridTemplateColumns = 'minmax(88px,0.9fr) 22px 22px 1fr 1fr 1fr 1fr';
-        row.style.gap = '6px';
-        row.style.alignItems = 'end';
-        row.style.marginBottom = '8px';
+        row.style.cssText = 'margin-bottom:10px;border-bottom:1px solid #2c2c36;padding-bottom:6px;';
+        var line1 = document.createElement('div');
+        line1.style.display = 'grid';
+        line1.style.gridTemplateColumns = 'minmax(88px,0.9fr) 22px 22px 1fr 1fr 1fr 1fr';
+        line1.style.gap = '6px';
+        line1.style.alignItems = 'end';
         var level = document.createElement('select');
-        level.title = 'High vs Advisory (default colors unless custom swatch)';
+        level.title =
+            'Default underline color: Advisory / High / Custom (preset) / Priority (preset). Or check custom swatch to set this row’s color.';
         level.style.cssText =
             'width:100%;padding:4px 4px;font-size:10px;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
         var lo = document.createElement('option');
@@ -5457,9 +6013,21 @@
         var lh = document.createElement('option');
         lh.value = 'high';
         lh.textContent = 'High';
+        var lcu = document.createElement('option');
+        lcu.value = 'custom';
+        lcu.textContent = 'Custom (preset)';
+        var lpr = document.createElement('option');
+        lpr.value = 'priority';
+        lpr.textContent = 'Priority (preset)';
         level.appendChild(lo);
         level.appendChild(lh);
-        level.value = v.level === 'high' ? 'high' : 'advisory';
+        level.appendChild(lcu);
+        level.appendChild(lpr);
+        if (v.level === 'high' || v.level === 'custom' || v.level === 'priority') {
+            level.value = v.level;
+        } else {
+            level.value = 'advisory';
+        }
         var useColor = document.createElement('input');
         useColor.type = 'checkbox';
         useColor.title = 'Custom color for this rule';
@@ -5486,20 +6054,54 @@
         });
         var mC = elNumInput('METAR ceil max');
         mC.value = v.mC;
-        var mV = elNumInput('METAR vis max (sm)');
+        var mV = elNumInput('');
+        mV.type = 'text';
+        mV.removeAttribute('min');
+        mV.inputMode = 'decimal';
+        mV.placeholder = '1.5, 1/2, 1 1/2';
+        mV.title = 'Max vis in statute miles: decimal or fraction (e.g. 0.5, 1/2, 1 1/2)';
         mV.value = v.mV;
         var tC = elNumInput('TAF ceil max');
         tC.value = v.tC;
-        var tV = elNumInput('TAF vis max (sm)');
+        var tV = elNumInput('');
+        tV.type = 'text';
+        tV.removeAttribute('min');
+        tV.inputMode = 'decimal';
+        tV.placeholder = '1.5, 1/2';
+        tV.title = 'TAF vis max (SM), same as METAR vis';
         tV.value = v.tV;
-        row._inputs = { level: level, useCustomColor: useColor, customColor: colorInp, mC: mC, mV: mV, tC: tC, tV: tV };
-        row.appendChild(level);
-        row.appendChild(useColor);
-        row.appendChild(colorInp);
-        row.appendChild(mC);
-        row.appendChild(mV);
-        row.appendChild(tC);
-        row.appendChild(tV);
+        line1.appendChild(level);
+        line1.appendChild(useColor);
+        line1.appendChild(colorInp);
+        line1.appendChild(mC);
+        line1.appendChild(mV);
+        line1.appendChild(tC);
+        line1.appendChild(tV);
+        var mEx = mkRuleExtraLine('M', v, 'm');
+        var tEx = mkRuleExtraLine('T', v, 't');
+        var line2 = document.createElement('div');
+        line2.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-top:4px;';
+        line2.appendChild(mEx.wrap);
+        line2.appendChild(tEx.wrap);
+        row._inputs = {
+            level: level,
+            useCustomColor: useColor,
+            customColor: colorInp,
+            mC: mC,
+            mV: mV,
+            tC: tC,
+            tV: tV,
+            mTs: mEx.ts,
+            mLws: mEx.ll,
+            mSpeci: mEx.spec,
+            mTxt: mEx.txt,
+            tTs: tEx.ts,
+            tLws: tEx.ll,
+            tSpeci: tEx.spec,
+            tTxt: tEx.txt
+        };
+        row.appendChild(line1);
+        row.appendChild(line2);
         return row;
     }
 
@@ -5516,15 +6118,7 @@
             if (!inp) {
                 continue;
             }
-            var r = rowValuesToRule(
-                inp.mC.value,
-                inp.mV.value,
-                inp.tC.value,
-                inp.tV.value,
-                inp.level && inp.level.value,
-                inp.useCustomColor && inp.useCustomColor.checked,
-                inp.customColor && inp.customColor.value
-            );
+            var r = rowValuesToRule(inp);
             if (r) {
                 out.push(r);
             }
@@ -5533,28 +6127,107 @@
     }
 
     function syncAlertModeUi() {
-        if (!alertRulesModeSelect) {
-            return;
-        }
-        var m = String(alertRulesModeSelect.value || 'off');
-        if (alertRulesGlobalBlock) {
-            alertRulesGlobalBlock.style.display = m === 'off' ? 'none' : 'block';
-        }
         if (alertRulesPerSectionWrap) {
-            alertRulesPerSectionWrap.style.display = m === 'per_iata' ? 'block' : 'none';
+            var perHas =
+                (alertRulesPerHost && alertRulesPerHost.querySelector && alertRulesPerHost.querySelector('[data-dc-arule-airport]')) || null;
+            alertRulesPerSectionWrap.style.display = perHas ? 'block' : 'none';
         }
     }
 
-    function readAlertFormIntoStorage() {
-        if (!alertRulesModeSelect) {
+    function populateMetarSettingsForm() {
+        if (!alertMetarSettingsNotify) {
             return;
         }
-        var mode = String(alertRulesModeSelect.value || 'off');
-        var g = mode === 'off' ? [] : collectRuleRowsFromHost(alertRulesGlobalHost);
+        alertMetarSettingsNotify.checked = metarWatchNotifyEnabled();
+        if (alertMetarSettingsPoll) {
+            alertMetarSettingsPoll.value = String(metarPollMinutesEffective());
+        }
+        if (alertMetarSettingsConc) {
+            alertMetarSettingsConc.value = String(metarConcurrentStationsEffective());
+        }
+        if (alertMetarSettingsShared) {
+            alertMetarSettingsShared.checked = metarSharedPollEnabled();
+        }
+        if (alertMetarSettingsFresh) {
+            alertMetarSettingsFresh.value = String(metarWatchAlertFreshMinutes());
+        }
+        if (alertMetarSettingsHiRules) {
+            alertMetarSettingsHiRules.checked = metarWatchHighlightWithRulesWhenNotifyOff();
+        }
+        if (alertMetarSettingsNotifyColored) {
+            alertMetarSettingsNotifyColored.checked = metarWatchNotifyOnColored();
+        }
+        if (alertMetarSettingsNotifySpecial) {
+            alertMetarSettingsNotifySpecial.checked = metarWatchNotifyOnSpecial();
+        }
+        var ssw;
+        for (ssw in alertMetarSettingsSw) {
+            if (Object.prototype.hasOwnProperty.call(alertMetarSettingsSw, ssw) && alertMetarSettingsSw[ssw]) {
+                alertMetarSettingsSw[ssw].checked = metarSwStylePrefKey(ssw);
+            }
+        }
+        if (typeof metarSettingsApplySwTokenMaster === 'function') {
+            metarSettingsApplySwTokenMaster();
+        }
+    }
+
+    function readMetarSettingsIntoStorage() {
+        if (!alertMetarSettingsNotify) {
+            return;
+        }
+        var o = readMetarWatchUi() || {};
+        o.metarWatchNotify = !!alertMetarSettingsNotify.checked;
+        if (alertMetarSettingsPoll) {
+            var pm = Math.floor(Number(alertMetarSettingsPoll.value));
+            o.metarWatchPollMinutes = Number.isFinite(pm) ? Math.min(120, Math.max(1, pm)) : metarPollMinutesEffective();
+        }
+        if (alertMetarSettingsConc) {
+            var cc = Math.floor(Number(alertMetarSettingsConc.value));
+            o.metarWatchConcurrentStations = Number.isFinite(cc)
+                ? Math.min(20, Math.max(1, cc))
+                : metarConcurrentStationsEffective();
+        }
+        if (alertMetarSettingsShared) {
+            o.metarWatchSharedPoll = !!alertMetarSettingsShared.checked;
+        }
+        if (alertMetarSettingsFresh) {
+            var fwm = Math.floor(Number(alertMetarSettingsFresh.value));
+            o.metarWatchAlertFreshMinutes = Number.isFinite(fwm)
+                ? Math.min(120, Math.max(1, fwm))
+                : metarWatchAlertFreshMinutes();
+        }
+        if (alertMetarSettingsHiRules) {
+            o.metarWatchHighlightWithRulesWhenNotifyOff = !!alertMetarSettingsHiRules.checked;
+        }
+        if (alertMetarSettingsNotifyColored) {
+            o.metarWatchNotifyOnColored = !!alertMetarSettingsNotifyColored.checked;
+        }
+        if (alertMetarSettingsNotifySpecial) {
+            o.metarWatchNotifyOnSpecial = !!alertMetarSettingsNotifySpecial.checked;
+        }
+        var ssw2;
+        for (ssw2 in alertMetarSettingsSw) {
+            if (Object.prototype.hasOwnProperty.call(alertMetarSettingsSw, ssw2) && alertMetarSettingsSw[ssw2]) {
+                o[ssw2] = !!alertMetarSettingsSw[ssw2].checked;
+            }
+        }
+        writeMetarWatchUi(o);
+        try {
+            restartPollTimer();
+        } catch (e) {}
+    }
+
+    function readAlertFormIntoStorage() {
+        if (!alertRulesGlobalHost) {
+            return;
+        }
+        var g = collectRuleRowsFromHost(alertRulesGlobalHost);
         var ch = (alertRulesColorHighInp && normalizeRuleHex(alertRulesColorHighInp.value)) || DEFAULT_COLOR_HIGH;
         var ca = (alertRulesColorAdvisoryInp && normalizeRuleHex(alertRulesColorAdvisoryInp.value)) || DEFAULT_COLOR_ADVISORY;
+        var cc = (alertRulesColorCustomInp && normalizeRuleHex(alertRulesColorCustomInp.value)) || DEFAULT_COLOR_CUSTOM;
+        var cpr = (alertRulesColorPriorityInp && normalizeRuleHex(alertRulesColorPriorityInp.value)) || DEFAULT_COLOR_HIGH;
         var perIata = {};
-        if (mode === 'per_iata' && alertRulesPerHost) {
+        if (alertRulesPerHost) {
             var bl = alertRulesPerHost.querySelectorAll('[data-dc-arule-airport]');
             var b;
             for (b = 0; b < bl.length; b++) {
@@ -5585,7 +6258,32 @@
                 }
             }
         }
-        writeNotifyRulesUi({ mode: mode, global: g, perIata: perIata, colorHigh: ch, colorAdvisory: ca });
+        var hasPer = false;
+        var hpk;
+        for (hpk in perIata) {
+            if (Object.prototype.hasOwnProperty.call(perIata, hpk) && perIata[hpk] && perIata[hpk].length) {
+                hasPer = true;
+                break;
+            }
+        }
+        var mode;
+        if (!g.length && !hasPer) {
+            mode = 'off';
+        } else if (hasPer) {
+            mode = 'per_iata';
+        } else {
+            mode = 'global';
+        }
+        writeNotifyRulesUi({
+            mode: mode,
+            global: g,
+            perIata: perIata,
+            colorHigh: ch,
+            colorAdvisory: ca,
+            colorCustom: cc,
+            colorPriority: cpr
+        });
+        readMetarSettingsIntoStorage();
     }
 
     function addGlobalRuleRow() {
@@ -5673,6 +6371,9 @@
         wrap.appendChild(top);
         wrap.appendChild(rh);
         alertRulesPerHost.appendChild(wrap);
+        try {
+            syncAlertModeUi();
+        } catch (e0) {}
     }
 
     function addPerBlockEmpty() {
@@ -5680,14 +6381,13 @@
     }
 
     function populateAlertRulesForm() {
-        if (!alertRulesGlobalHost || !alertRulesPerHost || !alertRulesModeSelect) {
+        if (!alertRulesGlobalHost || !alertRulesPerHost) {
             return;
         }
         alertRulesGlobalHost.innerHTML = '';
         alertRulesPerHost.innerHTML = '';
         var stored = readNotifyRulesUi();
         if (stored) {
-            alertRulesModeSelect.value = stored.mode || 'off';
             if (alertRulesColorHighInp) {
                 alertRulesColorHighInp.value = stored.colorHigh || DEFAULT_COLOR_HIGH;
                 var s1 = alertRulesColorHighInp.nextElementSibling;
@@ -5700,6 +6400,20 @@
                 var s2 = alertRulesColorAdvisoryInp.nextElementSibling;
                 if (s2 && s2.style) {
                     s2.style.background = alertRulesColorAdvisoryInp.value;
+                }
+            }
+            if (alertRulesColorCustomInp) {
+                alertRulesColorCustomInp.value = stored.colorCustom || DEFAULT_COLOR_CUSTOM;
+                var s2c = alertRulesColorCustomInp.nextElementSibling;
+                if (s2c && s2c.style) {
+                    s2c.style.background = alertRulesColorCustomInp.value;
+                }
+            }
+            if (alertRulesColorPriorityInp) {
+                alertRulesColorPriorityInp.value = stored.colorPriority || DEFAULT_COLOR_HIGH;
+                var s2p = alertRulesColorPriorityInp.nextElementSibling;
+                if (s2p && s2p.style) {
+                    s2p.style.background = alertRulesColorPriorityInp.value;
                 }
             }
             var g = stored.global && Array.isArray(stored.global) ? stored.global : [];
@@ -5734,9 +6448,20 @@
                     s1b.style.background = alertRulesColorHighInp.value;
                 }
             }
-            var mExt =
-                typeof donkeycodeGetPref === 'function' ? String(donkeycodeGetPref('metarWatchNotifyRulesMode') || 'off') : 'off';
-            alertRulesModeSelect.value = mExt.toLowerCase();
+            if (alertRulesColorCustomInp) {
+                alertRulesColorCustomInp.value = DEFAULT_COLOR_CUSTOM;
+                var s3c = alertRulesColorCustomInp.nextElementSibling;
+                if (s3c && s3c.style) {
+                    s3c.style.background = alertRulesColorCustomInp.value;
+                }
+            }
+            if (alertRulesColorPriorityInp) {
+                alertRulesColorPriorityInp.value = DEFAULT_COLOR_HIGH;
+                var s3p = alertRulesColorPriorityInp.nextElementSibling;
+                if (s3p && s3p.style) {
+                    s3p.style.background = alertRulesColorPriorityInp.value;
+                }
+            }
             if (typeof donkeycodeGetPref === 'function') {
                 var gArr = parseNotifyRulesArray(String(donkeycodeGetPref('metarWatchNotifyRulesGlobal') != null ? donkeycodeGetPref('metarWatchNotifyRulesGlobal') : ''));
                 if (!gArr.length) {
@@ -5746,7 +6471,8 @@
                 for (gk = 0; gk < gArr.length; gk++) {
                     alertRulesGlobalHost.appendChild(buildRuleRowEl(gArr[gk]));
                 }
-                if (String(alertRulesModeSelect.value || '').toLowerCase() === 'per_iata') {
+                var mExt = String(donkeycodeGetPref('metarWatchNotifyRulesMode') || 'off').toLowerCase();
+                if (mExt === 'per_iata') {
                     var pmap = parseNotifyRulesPerIataMap(donkeycodeGetPref('metarWatchNotifyRulesPerIata'));
                     var pk;
                     for (pk in pmap) {
@@ -5782,33 +6508,246 @@
         var sub = document.createElement('div');
         sub.style.cssText = 'font-size:11px;font-weight:400;color:#95a5a6;margin-top:4px;line-height:1.4;';
         sub.textContent =
-            'Each row = one OR rule. High/Advisory set default highlight colors; optional custom swatch overrides. Saved in this browser. Detail pane underlines matching token(s) only (full vis/ceiling tokens, not lone fraction digits).';
+            'Saves in this browser. Add global rules, or per-airport blocks. OR across rows. Optional M/T lines: CIG/vis, TS, LLWS, “Spec” (SPECI or TAF change groups), or text. Level + vis columns support fractions. Fresh minutes = yellow window before “stale”. On overlap, notify-rule underlines win over color-coding.';
 
         var sc = document.createElement('div');
         sc.style.cssText = 'padding:12px 16px;overflow:auto;flex:1;min-height:0;';
-        var modeRow = document.createElement('div');
-        modeRow.style.marginBottom = '12px';
-        var modeLab = document.createElement('label');
-        modeLab.textContent = 'Mode';
-        modeLab.style.cssText = 'font-size:12px;display:block;margin-bottom:4px;color:#bdc3c7;';
-        alertRulesModeSelect = document.createElement('select');
-        alertRulesModeSelect.style.cssText = 'width:100%;max-width:360px;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
-        var mo = [
-            ['off', 'Off — alert on any METAR/TAF change'],
-            ['global', 'Global — only when a rule matches (all stations)'],
-            ['per_iata', 'Per IATA — global rules plus per-airport rules']
-        ];
-        var mi;
-        for (mi = 0; mi < mo.length; mi++) {
-            var o = document.createElement('option');
-            o.value = mo[mi][0];
-            o.textContent = mo[mi][1];
-            alertRulesModeSelect.appendChild(o);
+
+        var settingsWrap = document.createElement('div');
+        settingsWrap.style.cssText =
+            'margin-bottom:14px;padding:10px 12px;background:#1a1d28;border:1px solid #333;border-radius:8px;';
+        var setTitle = document.createElement('div');
+        setTitle.textContent = 'Alerting & background refresh';
+        setTitle.style.cssText = 'font-size:12px;font-weight:600;margin-bottom:8px;color:#5dade2;';
+        var setGrid = document.createElement('div');
+        setGrid.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px 12px;align-items:end;';
+        function mkLabel(txt, hint) {
+            var lb = document.createElement('label');
+            lb.textContent = txt;
+            lb.style.cssText = 'font-size:11px;color:#bdc3c7;display:block;margin-bottom:2px;';
+            if (hint) {
+                lb.title = hint;
+            }
+            return lb;
         }
-        alertRulesModeSelect.addEventListener('change', syncAlertModeUi);
-        modeRow.appendChild(modeLab);
-        modeRow.appendChild(alertRulesModeSelect);
-        sc.appendChild(modeRow);
+        function mkNumIn(ph, w) {
+            var n = document.createElement('input');
+            n.type = 'number';
+            n.min = '1';
+            n.step = '1';
+            n.placeholder = ph;
+            n.style.cssText =
+                'width:' +
+                (w || '100%') +
+                ';box-sizing:border-box;padding:4px 8px;font-size:12px;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+            return n;
+        }
+        var cell1 = document.createElement('div');
+        cell1.style.minWidth = '200px';
+        cell1.style.flex = '1 1 200px';
+        cell1.appendChild(mkLabel('Browser notifications', 'Notify when a tracked station’s METAR/TAF changes (subject to rules below).'));
+        var rowN = document.createElement('div');
+        rowN.style.display = 'flex';
+        rowN.style.alignItems = 'center';
+        rowN.style.gap = '6px';
+        alertMetarSettingsNotify = document.createElement('input');
+        alertMetarSettingsNotify.type = 'checkbox';
+        alertMetarSettingsNotify.title = 'Turn off to disable desktop notifications (WX badge can still use rules).';
+        var labN = document.createElement('span');
+        labN.textContent = 'Enabled';
+        labN.style.fontSize = '12px';
+        rowN.appendChild(alertMetarSettingsNotify);
+        rowN.appendChild(labN);
+        cell1.appendChild(rowN);
+
+        var cell2 = document.createElement('div');
+        cell2.style.minWidth = '140px';
+        cell2.style.flex = '0 0 120px';
+        cell2.appendChild(mkLabel('Poll every (minutes)', 'Background refresh interval for METAR/TAF. Applies after Save.'));
+        alertMetarSettingsPoll = mkNumIn('5', '80px');
+        alertMetarSettingsPoll.min = '1';
+        alertMetarSettingsPoll.max = '120';
+        cell2.appendChild(alertMetarSettingsPoll);
+
+        var cell3 = document.createElement('div');
+        cell3.style.minWidth = '120px';
+        cell3.style.flex = '0 0 100px';
+        cell3.appendChild(
+            mkLabel('Parallel fetches', 'Stations to load at once during each refresh (1–20).')
+        );
+        alertMetarSettingsConc = mkNumIn('10', '80px');
+        alertMetarSettingsConc.min = '1';
+        alertMetarSettingsConc.max = '20';
+        cell3.appendChild(alertMetarSettingsConc);
+
+        var cell4 = document.createElement('div');
+        cell4.style.minWidth = '200px';
+        cell4.style.flex = '1 1 200px';
+        cell4.appendChild(
+            mkLabel('Share poll across tabs', 'One tab can lead background polls to reduce duplicate traffic.')
+        );
+        var rowS = document.createElement('div');
+        rowS.style.display = 'flex';
+        rowS.style.alignItems = 'center';
+        rowS.style.gap = '6px';
+        alertMetarSettingsShared = document.createElement('input');
+        alertMetarSettingsShared.type = 'checkbox';
+        var labS = document.createElement('span');
+        labS.textContent = 'On';
+        labS.style.fontSize = '12px';
+        rowS.appendChild(alertMetarSettingsShared);
+        rowS.appendChild(labS);
+        cell4.appendChild(rowS);
+
+        setGrid.appendChild(cell1);
+        setGrid.appendChild(cell2);
+        setGrid.appendChild(cell3);
+        setGrid.appendChild(cell4);
+        settingsWrap.appendChild(setTitle);
+        settingsWrap.appendChild(setGrid);
+        var setHint = document.createElement('div');
+        setHint.textContent =
+            'Saved in this browser when you click Save (below). Changing poll time restarts the background refresh timer on this page.';
+        setHint.style.cssText = 'font-size:10px;color:#7f8c8d;margin-top:8px;line-height:1.35;';
+        settingsWrap.appendChild(setHint);
+
+        var moreTitle = document.createElement('div');
+        moreTitle.textContent = 'List / badge timing & text highlights';
+        moreTitle.style.cssText = 'font-size:12px;font-weight:600;margin:14px 0 8px;color:#9b59b6;';
+        settingsWrap.appendChild(moreTitle);
+
+        var moreGrid = document.createElement('div');
+        moreGrid.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px 16px;align-items:flex-end;';
+        var cellF = document.createElement('div');
+        cellF.style.minWidth = '120px';
+        var labF = document.createElement('label');
+        labF.textContent = '“Fresh” alert window (min)';
+        labF.style.cssText = 'font-size:11px;color:#bdc3c7;display:block;margin-bottom:2px;';
+        labF.title = 'List row stays yellow (fresh) for this long after a rules-matching change; after that, red (stale).';
+        cellF.appendChild(labF);
+        alertMetarSettingsFresh = mkNumIn('5', '64px');
+        alertMetarSettingsFresh.min = '1';
+        alertMetarSettingsFresh.max = '120';
+        cellF.appendChild(alertMetarSettingsFresh);
+        moreGrid.appendChild(cellF);
+        var cellNsp = document.createElement('div');
+        cellNsp.style.minWidth = '220px';
+        cellNsp.style.flex = '1 1 200px';
+        var rowNsp1 = document.createElement('div');
+        rowNsp1.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+        alertMetarSettingsNotifyColored = document.createElement('input');
+        alertMetarSettingsNotifyColored.type = 'checkbox';
+        alertMetarSettingsNotifyColored.title =
+            'When on, a desktop notification is sent if text matches your custom rules. When you have no rules, every METAR/TAF change still alerts.';
+        var labNsp1 = document.createElement('span');
+        labNsp1.textContent = 'Notify for the above color coding (rules; else any change if no rules)';
+        labNsp1.style.cssText = 'font-size:11px;color:#bdc3c7;';
+        rowNsp1.appendChild(alertMetarSettingsNotifyColored);
+        rowNsp1.appendChild(labNsp1);
+        cellNsp.appendChild(rowNsp1);
+        var rowNsp2 = document.createElement('div');
+        rowNsp2.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        alertMetarSettingsNotifySpecial = document.createElement('input');
+        alertMetarSettingsNotifySpecial.type = 'checkbox';
+        alertMetarSettingsNotifySpecial.title =
+            'Also notify on SPECI METARs, or TAFs with TEMPO/BECMG/PROB/FM groups. Independent of the rule list.';
+        var labNsp2 = document.createElement('span');
+        labNsp2.textContent = 'Notify for special TAF or METAR (e.g. SPECI, TEMPO/BECMG/PROB)';
+        labNsp2.style.cssText = 'font-size:11px;color:#bdc3c7;';
+        rowNsp2.appendChild(alertMetarSettingsNotifySpecial);
+        rowNsp2.appendChild(labNsp2);
+        cellNsp.appendChild(rowNsp2);
+        moreGrid.appendChild(cellNsp);
+        settingsWrap.appendChild(moreGrid);
+
+        var swLab = document.createElement('div');
+        swLab.textContent = 'Color coding for METAR/TAF (per-token IFR, MVFR, etc.)';
+        swLab.style.cssText = 'font-size:11px;color:#95a5a6;margin:8px 0 4px;';
+        settingsWrap.appendChild(swLab);
+        var swMap = [
+            ['metarWatchTextHighlightSwStyle', 'On (master)'],
+            ['metarHighlightIFR', 'IFR'],
+            ['metarHighlightMVFR', 'MVFR'],
+            ['metarHighlightCrosswind', 'Crosswind'],
+            ['metarHighlightLLWS', 'LLWS'],
+            ['metarHighlightIcing', 'Icing'],
+            ['metarHighlightTS', 'T-storms']
+        ];
+        var swR = document.createElement('div');
+        swR.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;';
+        var sxi;
+        for (sxi = 0; sxi < swMap.length; sxi++) {
+            var wk = swMap[sxi][0];
+            var wl = document.createElement('label');
+            wl.setAttribute('data-dc-mx-swl', wk);
+            wl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10px;cursor:pointer;user-select:none;';
+            var wcb = document.createElement('input');
+            wcb.type = 'checkbox';
+            wcb.setAttribute('data-dc-mx-sw', wk);
+            alertMetarSettingsSw[wk] = wcb;
+            if (wk !== 'metarWatchTextHighlightSwStyle') {
+                wl.style.color = '#95a5a6';
+            }
+            wl.appendChild(wcb);
+            wl.appendChild(document.createTextNode(swMap[sxi][1]));
+            swR.appendChild(wl);
+        }
+        var masterW = alertMetarSettingsSw['metarWatchTextHighlightSwStyle'];
+        function applySwTokenMasterState() {
+            var on = masterW && !!masterW.checked;
+            var sxi2;
+            for (sxi2 = 0; sxi2 < swMap.length; sxi2++) {
+                if (swMap[sxi2][0] === 'metarWatchTextHighlightSwStyle') {
+                    continue;
+                }
+                var cbx = alertMetarSettingsSw[swMap[sxi2][0]];
+                if (!cbx) {
+                    continue;
+                }
+                cbx.disabled = !on;
+                cbx.title = on ? '' : 'Turn on the master to edit';
+                if (!on) {
+                    cbx.checked = false;
+                }
+                var le = cbx.parentElement;
+                if (le) {
+                    le.style.opacity = on ? '1' : '0.4';
+                }
+            }
+        }
+        if (masterW) {
+            masterW.addEventListener('change', applySwTokenMasterState);
+        }
+        settingsWrap.appendChild(swR);
+
+        var afterSwLine = document.createElement('div');
+        afterSwLine.style.cssText = 'margin:10px 0 0;padding:8px 0 0;border-top:1px solid #2c2c36;';
+        var afterSwL = document.createElement('div');
+        afterSwL.style.cssText = 'font-size:10px;color:#95a5a6;margin-bottom:6px;';
+        afterSwL.textContent = 'Underlines: apply your notify rules in text (in addition to color coding above, when rules are defined).';
+        afterSwLine.appendChild(afterSwL);
+        var rowHi = document.createElement('div');
+        rowHi.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        alertMetarSettingsHiRules = document.createElement('input');
+        alertMetarSettingsHiRules.type = 'checkbox';
+        var labH2b = document.createElement('span');
+        labH2b.textContent = 'Apply rules to METAR/TAF underlines when you have no rule-based notifications (see toggles above)';
+        labH2b.style.cssText = 'font-size:11px;color:#bdc3c7;';
+        labH2b.title =
+            'If you are not using rule-only notifications, still show CIG/vis/rule underlines in the text when rules are defined, not only the color-coding line highlights.';
+        rowHi.appendChild(alertMetarSettingsHiRules);
+        rowHi.appendChild(labH2b);
+        afterSwLine.appendChild(rowHi);
+        settingsWrap.appendChild(afterSwLine);
+        metarSettingsApplySwTokenMaster = applySwTokenMasterState;
+        applySwTokenMasterState();
+
+        var moreNote = document.createElement('div');
+        moreNote.textContent =
+            'List colors use the fresh window. Detail: notify-rule underlines and color-coding can both apply (rule wins on overlap). Add per-airport blocks to combine global + IATA rules.';
+        moreNote.style.cssText = 'font-size:10px;color:#7f8c8d;margin-top:8px;line-height:1.35;';
+        settingsWrap.appendChild(moreNote);
+        sc.appendChild(settingsWrap);
 
         var catRow = document.createElement('div');
         catRow.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin-bottom:12px;padding:8px 10px;background:#1e1e24;border-radius:6px;border:1px solid #333;';
@@ -5849,24 +6788,66 @@
         alertRulesColorAdvisoryInp.addEventListener('change', syncAd);
         adWrap.appendChild(alertRulesColorAdvisoryInp);
         adWrap.appendChild(adSw);
+        var cuWrap = document.createElement('label');
+        cuWrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#ecf0f1;';
+        cuWrap.appendChild(document.createTextNode('Custom (level)'));
+        alertRulesColorCustomInp = document.createElement('input');
+        alertRulesColorCustomInp.type = 'color';
+        alertRulesColorCustomInp.value = DEFAULT_COLOR_CUSTOM;
+        alertRulesColorCustomInp.title = '“Custom (preset)” rule level (no per-rule color)';
+        alertRulesColorCustomInp.style.cssText = 'width:28px;height:28px;padding:0;border:none;cursor:pointer;';
+        var cuSw = document.createElement('span');
+        cuSw.style.cssText = 'display:inline-block;width:28px;height:28px;border-radius:4px;border:1px solid #555;vertical-align:middle;';
+        function syncCu() {
+            cuSw.style.background = alertRulesColorCustomInp.value;
+        }
+        alertRulesColorCustomInp.addEventListener('input', syncCu);
+        alertRulesColorCustomInp.addEventListener('change', syncCu);
+        cuWrap.appendChild(alertRulesColorCustomInp);
+        cuWrap.appendChild(cuSw);
+        var prWrap = document.createElement('label');
+        prWrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#ecf0f1;';
+        prWrap.appendChild(document.createTextNode('Priority (level)'));
+        alertRulesColorPriorityInp = document.createElement('input');
+        alertRulesColorPriorityInp.type = 'color';
+        alertRulesColorPriorityInp.value = DEFAULT_COLOR_HIGH;
+        alertRulesColorPriorityInp.title = '“Priority (preset)” rule level; usually same as High';
+        alertRulesColorPriorityInp.style.cssText = 'width:28px;height:28px;padding:0;border:none;cursor:pointer;';
+        var prSw = document.createElement('span');
+        prSw.style.cssText = 'display:inline-block;width:28px;height:28px;border-radius:4px;border:1px solid #555;vertical-align:middle;';
+        function syncPr() {
+            prSw.style.background = alertRulesColorPriorityInp.value;
+        }
+        alertRulesColorPriorityInp.addEventListener('input', syncPr);
+        alertRulesColorPriorityInp.addEventListener('change', syncPr);
+        prWrap.appendChild(alertRulesColorPriorityInp);
+        prWrap.appendChild(prSw);
         catRow.appendChild(catLab);
         catRow.appendChild(hiWrap);
         catRow.appendChild(adWrap);
+        catRow.appendChild(cuWrap);
+        catRow.appendChild(prWrap);
         syncHi();
         syncAd();
+        syncCu();
+        syncPr();
         sc.appendChild(catRow);
 
         alertRulesGlobalBlock = document.createElement('div');
+        var gHead = document.createElement('div');
+        gHead.style.cssText = 'display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;';
         var gLab = document.createElement('div');
-        gLab.textContent = 'Global rules (OR across rows)';
-        gLab.style.cssText = 'font-size:12px;font-weight:600;margin-bottom:6px;color:#3498db;';
+        gLab.textContent = 'Global rules (any row can match; OR across rows)';
+        gLab.style.cssText = 'font-size:12px;font-weight:600;color:#3498db;flex:1;min-width:0;';
         gLab.setAttribute('data-dc-glab', '1');
-        alertRulesGlobalHost = document.createElement('div');
         var addG = document.createElement('button');
         addG.type = 'button';
-        addG.textContent = 'Add global rule line';
-        addG.style.cssText = 'font-size:11px;padding:4px 10px;margin-bottom:8px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+        addG.textContent = 'Add rule';
+        addG.style.cssText = 'font-size:11px;padding:4px 10px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
         addG.addEventListener('click', addGlobalRuleRow);
+        gHead.appendChild(gLab);
+        gHead.appendChild(addG);
+        alertRulesGlobalHost = document.createElement('div');
         var gColH = document.createElement('div');
         gColH.style.cssText =
             'display:grid;grid-template-columns:minmax(88px,0.9fr) 16px 22px 1fr 1fr 1fr 1fr;gap:6px;font-size:9px;color:#7f8c8d;margin-bottom:2px;align-items:end;';
@@ -5878,13 +6859,13 @@
         var h0c = document.createElement('span');
         h0c.textContent = ' ';
         var h1 = document.createElement('span');
-        h1.textContent = 'M ceil max';
+        h1.textContent = 'M CIG ≤ ft';
         var h2 = document.createElement('span');
-        h2.textContent = 'M vis max';
+        h2.textContent = 'M vis ≤ sm';
         var h3 = document.createElement('span');
-        h3.textContent = 'T ceil max';
+        h3.textContent = 'T CIG ≤ ft';
         var h4 = document.createElement('span');
-        h4.textContent = 'T vis max';
+        h4.textContent = 'T vis ≤ sm';
         gColH.appendChild(h0a);
         gColH.appendChild(h0b);
         gColH.appendChild(h0c);
@@ -5892,28 +6873,38 @@
         gColH.appendChild(h2);
         gColH.appendChild(h3);
         gColH.appendChild(h4);
-        alertRulesGlobalBlock.appendChild(gLab);
+        var gHint1 = document.createElement('div');
+        gHint1.textContent = 'M/T extra (per line): use row below the grid — TS, LLWS, Spec, text';
+        gHint1.style.cssText = 'font-size:9px;color:#5d6d7e;margin:2px 0 0;grid-column:1 / -1;';
+        var gHint2 = document.createElement('div');
+        gHint2.textContent = 'Spec: MET = SPECI only. TAF = TEMPO/BECMG/PROB/FM groups (not the whole TAF).';
+        gHint2.style.cssText = 'font-size:9px;color:#5d6d7e;margin:0 0 4px;grid-column:1 / -1;';
+        alertRulesGlobalBlock.appendChild(gHead);
         alertRulesGlobalBlock.appendChild(gColH);
+        alertRulesGlobalBlock.appendChild(gHint1);
+        alertRulesGlobalBlock.appendChild(gHint2);
         alertRulesGlobalBlock.appendChild(alertRulesGlobalHost);
-        alertRulesGlobalBlock.appendChild(addG);
         sc.appendChild(alertRulesGlobalBlock);
 
         var pWrap = document.createElement('div');
         pWrap.style.cssText = 'display:none;';
         alertRulesPerSectionWrap = pWrap;
         pWrap.setAttribute('data-dc-per-wrap', '1');
+        var pHead = document.createElement('div');
+        pHead.style.cssText = 'display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:12px 0 6px;';
         var pTitle = document.createElement('div');
         pTitle.textContent = 'Per-airport extra rules (OR with global for that IATA)';
-        pTitle.style.cssText = 'font-size:12px;font-weight:600;margin:12px 0 6px;color:#9b59b6;';
+        pTitle.style.cssText = 'font-size:12px;font-weight:600;color:#9b59b6;flex:1;min-width:0;';
         var addP = document.createElement('button');
         addP.type = 'button';
-        addP.textContent = 'Add airport block';
-        addP.style.cssText = 'font-size:11px;padding:4px 10px;margin-bottom:8px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
+        addP.textContent = 'Add rule';
+        addP.style.cssText = 'font-size:11px;padding:4px 10px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#2a2a32;color:#ecf0f1;';
         addP.addEventListener('click', addPerBlockEmpty);
         alertRulesPerHost = document.createElement('div');
-        pWrap.appendChild(pTitle);
+        pHead.appendChild(pTitle);
+        pHead.appendChild(addP);
+        pWrap.appendChild(pHead);
         pWrap.appendChild(alertRulesPerHost);
-        pWrap.appendChild(addP);
         sc.appendChild(pWrap);
 
         var foot = document.createElement('div');
@@ -5939,8 +6930,18 @@
         });
         cancelB.addEventListener('click', closeAlertRulesDialog);
         useExtB.addEventListener('click', function () {
-            if (window.confirm('Clear in-browser alert rules and use DonkeyCODE JSON field preferences?')) {
+            if (
+                window.confirm(
+                    'Clear in-browser rules and notify/refresh settings (this browser) and use DonkeyCODE JSON + extension defaults?'
+                )
+            ) {
                 clearNotifyRulesUi();
+                try {
+                    localStorage.removeItem(LS_METAR_UI_SETTINGS);
+                } catch (e) {}
+                try {
+                    restartPollTimer();
+                } catch (e2) {}
                 updateAlertState();
                 closeAlertRulesDialog();
             }
@@ -5962,11 +6963,9 @@
         if (!alertRulesModal) {
             buildAlertRulesDialog();
         }
+        populateMetarSettingsForm();
         populateAlertRulesForm();
         syncAlertModeUi();
-        if (alertRulesModeSelect && alertRulesModeSelect.value === 'per_iata' && alertRulesPerHost && !alertRulesPerHost.children.length) {
-            addPerBlockEmpty();
-        }
         if (alertRulesBackdrop) {
             alertRulesBackdrop.style.display = 'block';
         }
@@ -6407,8 +7406,7 @@
         initCrossTabPollSync();
         initMetarTafSharedSync();
         initViewedSync();
-        runPoll();
-        pollTimer = setInterval(runPoll, pollMs());
+        restartPollTimer();
         domObserver = new MutationObserver(function () {
             scheduleMountButton();
         });
@@ -6476,7 +7474,9 @@
         } catch (e) {}
         alertRulesBackdrop = null;
         alertRulesModal = null;
-        alertRulesModeSelect = null;
+        metarSettingsApplySwTokenMaster = null;
+        alertMetarSettingsNotifyColored = null;
+        alertMetarSettingsNotifySpecial = null;
         alertRulesGlobalBlock = null;
         alertRulesGlobalHost = null;
         alertRulesPerSectionWrap = null;
@@ -6499,7 +7499,7 @@
             if (
                 hel &&
                 !hel.querySelector(
-                    'button, #' + WSB_STATE_ID + ', #' + WSB_BRIEF_ID
+                    'button, #' + WSB_STATE_ID
                 )
             ) {
                 hel.remove();
