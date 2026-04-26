@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.3
-// @description  Load WS: Wall of Fame–style cloud sync debug log (copy/clear) + step logging.
+// @version      0.2.4
+// @description  WOF-style cloud: Actions vs direct API; donkeycode_github_* repo fallbacks; debug log.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
+// @connect      *
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
-// @donkeycode-pref {"worksheetStateTeamKey":{"type":"string","group":"Worksheet state cloud","label":"Team key","description":"Same value as repo secret WORKSHEET_STATE_TEAM_KEY or WOF_TEAM_KEY (whichever the workflow uses). If blank, uses wallOfFameTeamKey. Not your GitHub PAT.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state cloud","label":"JSON repo owner","description":"Repo for worksheet-states.json. If blank, uses wallOfFameDataOwner/Repo/Branch (same as Wall of Fame) then MikeBane57/Wolf2.0.","default":"","placeholder":"MikeBane57"},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state cloud","label":"JSON repo name","description":"If blank, uses wallOfFameDataRepo (Wolf2.0).","default":"","placeholder":"Wolf2.0"},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state cloud","label":"JSON branch","description":"If blank, uses wallOfFameDataBranch.","default":"","placeholder":"main"},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state cloud","label":"JSON path in repo","description":"File path inside the repo for worksheet-states.json — NOT the Wall of Fame file. Leave blank for WORKSHEET STATES/worksheet-states.json.","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture to console: target + elementFromPoint. Use when DonkeyCODE/React swallows button clicks.","default":false}}
+// @donkeycode-pref {"worksheetStateUseGithubActions":{"type":"boolean","group":"Worksheet state — GitHub","label":"Use GitHub Actions (repository_dispatch)","description":"On: write via POST …/dispatches (worksheet-state-put) + team key like Wall of Fame. Off: direct Contents API PUT with donkeycode_github_pat (no repo secret for dispatch).","default":true},"worksheetStateProxyUrl":{"type":"string","group":"Worksheet state — GitHub","label":"Team proxy base URL (optional)","description":"Reserved: Wall of Fame uses wallOfFameProxyUrl for a server-side host. Worksheet state does not call a proxy yet — use Actions or direct API.","default":"","placeholder":""},"worksheetStateTeamKey":{"type":"string","group":"Worksheet state — GitHub","label":"Team key (Actions mode)","description":"Same value as repo secret WORKSHEET_STATE_TEAM_KEY or WOF_TEAM_KEY (Actions workflow). If blank, uses wallOfFameTeamKey. Not your GitHub PAT.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"Repo for worksheet-states.json. If blank: wallOfFameDataOwner → donkeycode_github_owner → MikeBane57.","default":"","placeholder":"MikeBane57"},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: wallOfFameDataRepo → donkeycode_github_repo → Wolf2.0.","default":"","placeholder":"Wolf2.0"},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: wallOfFameDataBranch → donkeycode_github_branch → main.","default":"","placeholder":"main"},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON path in repo","description":"Path to worksheet-states.json — NOT the Wall of Fame file. Empty → WORKSHEET STATES/worksheet-states.json","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture: target + elementFromPoint.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // ==/UserScript==
@@ -89,17 +90,64 @@
         return trimText(getPref('donkeycode_github_pat', ''));
     }
 
-    /** Match Wall of Fame: use worksheet state prefs, else same repo as WoF, else Wolf2.0 defaults. */
+    function boolWorksheetActionsDefaultTrue() {
+        var v = getPref('worksheetStateUseGithubActions', true);
+        if (v === true || v === 'true' || v === 1) {
+            return true;
+        }
+        if (v === false || v === 'false' || v === 0) {
+            return false;
+        }
+        return true;
+    }
+
+    function useWorksheetGithubActions() {
+        return boolWorksheetActionsDefaultTrue();
+    }
+
+    function worksheetActionsModeReady() {
+        if (!useWorksheetGithubActions()) {
+            return false;
+        }
+        if (!trimText(getPref('worksheetStateTeamKey', '')) && !trimText(getPref('wallOfFameTeamKey', ''))) {
+            return false;
+        }
+        if (!trimText(getPref('donkeycode_github_pat', ''))) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Repo for worksheet JSON: worksheet prefs → WoF data prefs → DonkeyCODE session sync
+     * (donkeycode_github_owner/repo/branch) → MikeBane57 / Wolf2.0 / main.
+     * Same idea as wallOfFameData* overriding session when sync points at another repo.
+     */
     function resolvedCloudOwner() {
-        return trimText(getPref('worksheetStateDataOwner', '')) || trimText(getPref('wallOfFameDataOwner', '')) || GITHUB_OWNER;
+        return (
+            trimText(getPref('worksheetStateDataOwner', '')) ||
+            trimText(getPref('wallOfFameDataOwner', '')) ||
+            trimText(getPref('donkeycode_github_owner', '')) ||
+            GITHUB_OWNER
+        );
     }
 
     function resolvedCloudRepo() {
-        return trimText(getPref('worksheetStateDataRepo', '')) || trimText(getPref('wallOfFameDataRepo', '')) || GITHUB_REPO;
+        return (
+            trimText(getPref('worksheetStateDataRepo', '')) ||
+            trimText(getPref('wallOfFameDataRepo', '')) ||
+            trimText(getPref('donkeycode_github_repo', '')) ||
+            GITHUB_REPO
+        );
     }
 
     function resolvedCloudBranch() {
-        return trimText(getPref('worksheetStateDataBranch', '')) || trimText(getPref('wallOfFameDataBranch', '')) || GITHUB_BRANCH;
+        return (
+            trimText(getPref('worksheetStateDataBranch', '')) ||
+            trimText(getPref('wallOfFameDataBranch', '')) ||
+            trimText(getPref('donkeycode_github_branch', '')) ||
+            GITHUB_BRANCH
+        );
     }
 
     function resolvedCloudPath() {
@@ -201,6 +249,10 @@
         } catch (e) {
             return bin;
         }
+    }
+
+    function utf8ToBase64(str) {
+        return btoa(unescape(encodeURIComponent(String(str == null ? '' : str))));
     }
 
 
@@ -390,7 +442,7 @@
         gmXhr('GET', rawUrl, { Accept: 'application/json' }, null, function (status, text) {
             if (status === 404) {
                 appendCloudSyncLog('raw GET: HTTP 404 (no file yet) — using empty document.');
-                cb(cloudDocFor([]), null);
+                cb(cloudDocFor([]), null, null);
                 return;
             }
             if (status < 200 || status >= 300) {
@@ -401,7 +453,8 @@
                     appendCloudSyncLog('raw GET failed: ' + err0);
                     cb(
                         null,
-                        err0
+                        err0,
+                        null
                     );
                     return;
                 }
@@ -412,12 +465,13 @@
                 appendCloudSyncLog('raw GET failed: ' + err1);
                 cb(
                     null,
-                    err1
+                    err1,
+                    null
                 );
                 return;
             }
             appendCloudSyncLog('raw GET: OK, parsing JSON…');
-            cb(parseCloudDocument(text || '{"states":[]}'), null);
+            cb(parseCloudDocument(text || '{"states":[]}'), null, null);
         });
     }
 
@@ -430,7 +484,7 @@
                 resolvedCloudRepo() +
                 ' file, or to confirm path exists.';
             appendCloudSyncLog('GET /contents/ skipped: no PAT. ' + e);
-            cb(null, e);
+            cb(null, e, null);
             return;
         }
         var cUrl = githubContentsApiUrl() + '?ref=' + encodeURIComponent(resolvedCloudBranch());
@@ -438,33 +492,35 @@
         gmXhr('GET', cUrl, githubApiHeaders(), null, function (status, text) {
             if (status === 404) {
                 appendCloudSyncLog('GET /contents/: HTTP 404 (no file yet) — using empty document.');
-                cb(cloudDocFor([]), null);
+                cb(cloudDocFor([]), null, null);
                 return;
             }
             if (status < 200 || status >= 300) {
                 var err2 =
                     'GET /contents/' + resolvedCloudPath() + ' HTTP ' + status + ' — ' + githubApiErrorSummary(status, text);
                 appendCloudSyncLog('GET /contents/ failed: ' + err2);
-                cb(
-                    null,
-                    err2
-                );
+                cb(null, err2, null);
                 return;
             }
             var meta = safeJsonParse(text, null);
             if (!meta) {
                 appendCloudSyncLog('GET /contents/: could not parse metadata JSON.');
-                cb(null, 'Contents API: could not parse file metadata JSON.');
+                cb(null, 'Contents API: could not parse file metadata JSON.', null);
                 return;
             }
-            appendCloudSyncLog('GET /contents/: OK, decoded blob, parsing document…');
-            cb(parseCloudDocument(decodeGithubFileContent(meta.content || '')), null);
+            var fsha = meta && meta.sha ? String(meta.sha) : null;
+            appendCloudSyncLog('GET /contents/: OK, file sha: ' + (fsha ? fsha.slice(0, 7) + '…' : '(none)'));
+            appendCloudSyncLog('GET /contents/: decoded blob, parsing document…');
+            cb(parseCloudDocument(decodeGithubFileContent(meta.content || '')), null, fsha);
         });
     }
 
     function fetchCloudStates(cb) {
+        var mode = useWorksheetGithubActions() ? 'actions' : 'direct-API';
         appendCloudSyncLog(
-            'fetchCloudStates: try raw then Contents API. Repo ' +
+            'Cloud mode: ' +
+                mode +
+                ' — repo ' +
                 resolvedCloudOwner() +
                 '/' +
                 resolvedCloudRepo() +
@@ -472,36 +528,135 @@
                 resolvedCloudBranch() +
                 ' path ' +
                 resolvedCloudPath() +
-                '.'
+                '. (worksheet state prefs → wallOfFame data prefs → donkeycode_github_*)'
         );
+        if (!useWorksheetGithubActions() && !resolvedGithubPat()) {
+            appendCloudSyncLog('Direct mode requires donkeycode_github_pat for GET/PUT Contents API.');
+        }
         rawGithubGetCloud(function (doc, rawErr) {
             if (doc) {
                 var n0 = (doc.states && doc.states.length) || 0;
-                appendCloudSyncLog('Load OK (raw): ' + n0 + ' state(s) after parse/prune.');
-                cb(doc, null);
+                appendCloudSyncLog('Load OK (raw): ' + n0 + ' state(s) after parse/prune. (no blob sha — direct PUT will GET if needed.)');
+                cb(doc, null, null);
                 return;
             }
             appendCloudSyncLog('Falling back to GitHub Contents API (private repo or raw failed)…');
-            githubGetCloud(function (doc2, apiErr) {
+            githubGetCloud(function (doc2, apiErr, sha) {
                 if (doc2) {
                     var n2 = (doc2.states && doc2.states.length) || 0;
                     appendCloudSyncLog('Load OK (Contents API): ' + n2 + ' state(s) after parse/prune.');
-                    cb(doc2, null);
+                    cb(doc2, null, sha);
                     return;
                 }
                 var err =
                     apiErr ||
                     rawErr ||
-                    'Could not load cloud JSON (check worksheetState* / wallOfFameData* repo, branch, and worksheetStateRepoPath).';
+                    'Could not load cloud JSON (check prefs, donkeycode_github_*, and worksheetStateRepoPath).';
                 appendCloudSyncLog('Load failed: ' + err);
-                cb(null, err);
+                cb(null, err, null);
             });
         });
     }
 
+    function getContentsMetadataForPut(cb) {
+        if (!resolvedGithubPat()) {
+            cb(null, 'No PAT for GET /contents/');
+            return;
+        }
+        var cUrl = githubContentsApiUrl() + '?ref=' + encodeURIComponent(resolvedCloudBranch());
+        appendCloudSyncLog('PUT prep: GET metadata + SHA ' + cUrl);
+        gmXhr('GET', cUrl, githubApiHeaders(), null, function (status, text) {
+            if (status === 404) {
+                appendCloudSyncLog('PUT prep: file absent (HTTP 404) — will create on PUT without sha.');
+                cb({ sha: null }, null);
+                return;
+            }
+            if (status < 200 || status >= 300) {
+                var e = 'GET (for sha) HTTP ' + status + ' — ' + githubApiErrorSummary(status, text);
+                appendCloudSyncLog('PUT prep failed: ' + e);
+                cb(null, e);
+                return;
+            }
+            var meta = safeJsonParse(text, null);
+            if (!meta) {
+                cb(null, 'Could not parse file metadata for PUT');
+                return;
+            }
+            cb({ sha: meta.sha ? String(meta.sha) : null }, null);
+        });
+    }
+
+    function putCloudDocumentDirect(finalDoc, knownSha, cb) {
+        if (!resolvedGithubPat()) {
+            cb(false, 'Direct mode: set donkeycode_github_pat (Contents: read/write on ' + resolvedCloudOwner() + '/' + resolvedCloudRepo() + ').');
+            return;
+        }
+        var branch = resolvedCloudBranch();
+        var path = resolvedCloudPath();
+        var jsonStr = JSON.stringify(finalDoc, null, 2) + '\n';
+        function doPut(sha, isRetry) {
+            var body = {
+                message: isRetry ? 'Worksheet states: sync (retry after conflict)' : 'Worksheet states: sync (DonkeyCODE direct API)',
+                content: utf8ToBase64(jsonStr),
+                branch: branch
+            };
+            if (sha) {
+                body.sha = sha;
+            }
+            var url = githubContentsApiUrl();
+            appendCloudSyncLog(
+                'PUT Contents ' + path + (sha ? ' (sha ' + String(sha).slice(0, 7) + '…)' : ' (new file)') + ' on ' + branch
+            );
+            var headers = githubApiHeaders();
+            headers['Content-Type'] = 'application/json';
+            gmXhr('PUT', url, headers, body, function (status, text) {
+                if (status === 200 || status === 201) {
+                    appendCloudSyncLog('PUT succeeded: HTTP ' + status);
+                    cb(true, null);
+                    return;
+                }
+                if (status === 409 && !isRetry) {
+                    appendCloudSyncLog('PUT HTTP 409 conflict — refetching SHA, retrying once…');
+                    getContentsMetadataForPut(function (m, err) {
+                        if (err || !m) {
+                            cb(false, err || '409 and could not refetch SHA');
+                            return;
+                        }
+                        doPut(m.sha, true);
+                    });
+                    return;
+                }
+                var detail = githubApiErrorSummary(status, text);
+                var msg = 'PUT failed: HTTP ' + status + (detail ? ' — ' + detail : '');
+                appendCloudSyncLog(msg);
+                cb(false, msg);
+            });
+        }
+        if (knownSha) {
+            doPut(knownSha, false);
+        } else {
+            getContentsMetadataForPut(function (m, err) {
+                if (err) {
+                    cb(false, err);
+                    return;
+                }
+                doPut(m && m.sha ? m.sha : null, false);
+            });
+        }
+    }
+
+    function postCloudAfterMerge(mergedDoc, fileSha, cb) {
+        if (useWorksheetGithubActions()) {
+            dispatchCloudDoc(mergedDoc, cb);
+            return;
+        }
+        var finalDoc = cloudDocFor((mergedDoc && mergedDoc.states) || []);
+        putCloudDocumentDirect(finalDoc, fileSha, cb);
+    }
+
     function dispatchCloudDoc(doc, cb) {
-        if (!resolvedTeamKey()) {
-            var a = 'Set worksheetStateTeamKey or wallOfFameTeamKey in DonkeyCODE prefs.';
+        if (!trimText(getPref('worksheetStateTeamKey', '')) && !trimText(getPref('wallOfFameTeamKey', ''))) {
+            var a = 'Set worksheetStateTeamKey or wallOfFameTeamKey in DonkeyCODE (must match WOF_TEAM_KEY or WORKSHEET_STATE_TEAM_KEY in repo).';
             appendCloudSyncLog('Save aborted: ' + a);
             cb(false, a);
             return;
@@ -512,13 +667,18 @@
             cb(false, b);
             return;
         }
+        var teamKey = resolvedTeamKey();
+        if (!teamKey) {
+            cb(false, 'Team key missing');
+            return;
+        }
         var headers = githubApiHeaders();
         headers['Content-Type'] = 'application/json';
         var stArr = (doc && doc.states) || [];
         var body = {
             event_type: CLOUD_EVENT_TYPE,
             client_payload: {
-                team_key: resolvedTeamKey(),
+                team_key: teamKey,
                 document: cloudDocFor(stArr),
                 path: resolvedCloudPath()
             }
@@ -586,7 +746,7 @@
         appendCloudSyncLog(
             'saveStateToCloud: name="' + name + '", folder=' + folder + ', items=' + (state.items && state.items.length ? state.items.length : 0)
         );
-        fetchCloudStates(function (doc, loadErr) {
+        fetchCloudStates(function (doc, loadErr, fileSha) {
             if (!doc) {
                 toast('Could not load cloud: ' + (loadErr || 'unknown error'), true);
                 if (cb) {
@@ -598,8 +758,8 @@
                 return st && st.id !== state.id && !isExpiredState(st);
             });
             states.unshift(normalizeCloudState(state));
-            appendCloudSyncLog('Merged new state; dispatching with total states=' + states.length + '…');
-            dispatchCloudDoc(cloudDocFor(states), function (ok, err) {
+            appendCloudSyncLog('Merged new state; publishing, total states=' + states.length + (fileSha ? ' (use GET sha: ' + String(fileSha).slice(0, 7) + '…)' : ' (raw load: refetch sha if PUT)') + '…');
+            postCloudAfterMerge(cloudDocFor(states), fileSha, function (ok, err) {
                 if (!ok) {
                     toast(err || 'Cloud save failed.', true);
                     if (cb) {
@@ -607,7 +767,11 @@
                     }
                     return;
                 }
-                toast('Cloud save requested for "' + name + '". It may take a moment to appear.', false);
+                if (useWorksheetGithubActions()) {
+                    toast('Cloud save requested for "' + name + '". It may take a moment (Actions) to appear.', false);
+                } else {
+                    toast('Saved to cloud: "' + name + '" in ' + resolvedCloudOwner() + '/' + resolvedCloudBranch() + ' ' + resolvedCloudPath(), false);
+                }
                 refreshCloudRows();
                 if (cb) {
                     cb(true);
@@ -1891,7 +2055,7 @@
         var cloudNote = document.createElement('div');
         cloudNote.className = 'dc-wss-note';
         cloudNote.textContent =
-            'Cloud saves are shared (GitHub). Each row shows saved by <session folder>. If save fails, check Worksheet state cloud prefs: JSON path must be WORKSHEET STATES/… (not the Wall of Fame path), and the repo needs the worksheet-state-put workflow; team key must match WOF_TEAM_KEY or WORKSHEET_STATE_TEAM_KEY.';
+            'Cloud: same patterns as Wall of Fame — set donkeycode_github_owner/repo/branch in DonkeyCODE (or override worksheet + wallOfFame data prefs). worksheetStateUseGithubActions on = repository_dispatch + team key; off = direct Contents API PUT (PAT only, no team key). @connect * for optional proxy hosts.';
         var cloudActions = document.createElement('div');
         cloudActions.className = 'dc-wss-actions';
         var refreshCloud = document.createElement('button');
