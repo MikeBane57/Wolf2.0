@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.49
-// @description  Save alert modal to DonkeyCODE prefs; sync; Fresh help + UI cleanup.
+// @version      2.0.50
+// @description  Airport alert area + notify order; WX button fresh/stale example.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -5879,6 +5879,9 @@
         var keep = btn && btn.isConnected ? btn : nodes[0];
         var i;
         for (i = 0; i < nodes.length; i++) {
+            if (nodes[i].getAttribute && nodes[i].getAttribute('data-dc-mx-wx-demo') === '1') {
+                continue;
+            }
             if (nodes[i] !== keep) {
                 try {
                     nodes[i].remove();
@@ -6286,9 +6289,7 @@
 
     function syncAlertModeUi() {
         if (alertRulesPerSectionWrap) {
-            var perHas =
-                (alertRulesPerHost && alertRulesPerHost.querySelector && alertRulesPerHost.querySelector('[data-dc-arule-airport]')) || null;
-            alertRulesPerSectionWrap.style.display = perHas ? 'block' : 'none';
+            alertRulesPerSectionWrap.style.display = 'block';
         }
     }
 
@@ -6646,6 +6647,9 @@
                 alertRulesGlobalHost.appendChild(buildRuleRowEl(null));
             }
         }
+        if (alertRulesPerHost && !alertRulesPerHost.querySelector('[data-dc-arule-airport]')) {
+            addPerBlockEmpty();
+        }
         syncAlertModeUi();
     }
 
@@ -6781,34 +6785,6 @@
         alertMetarSettingsFresh.max = '120';
         cellF.appendChild(alertMetarSettingsFresh);
         moreGrid.appendChild(cellF);
-        var cellNsp = document.createElement('div');
-        cellNsp.style.minWidth = '220px';
-        cellNsp.style.flex = '1 1 200px';
-        var rowNsp1 = document.createElement('div');
-        rowNsp1.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
-        alertMetarSettingsNotifyColored = document.createElement('input');
-        alertMetarSettingsNotifyColored.type = 'checkbox';
-        alertMetarSettingsNotifyColored.title =
-            'When on, a desktop notification is sent if text matches your custom rules. When you have no rules, every METAR/TAF change still alerts.';
-        var labNsp1 = document.createElement('span');
-        labNsp1.textContent = 'Notify for the above color coding (rules; else any change if no rules)';
-        labNsp1.style.cssText = 'font-size:11px;color:#bdc3c7;';
-        rowNsp1.appendChild(alertMetarSettingsNotifyColored);
-        rowNsp1.appendChild(labNsp1);
-        cellNsp.appendChild(rowNsp1);
-        var rowNsp2 = document.createElement('div');
-        rowNsp2.style.cssText = 'display:flex;align-items:center;gap:6px;';
-        alertMetarSettingsNotifySpecial = document.createElement('input');
-        alertMetarSettingsNotifySpecial.type = 'checkbox';
-        alertMetarSettingsNotifySpecial.title =
-            'Also notify on SPECI METARs, or TAFs with TEMPO/BECMG/PROB/FM groups. Independent of the rule list.';
-        var labNsp2 = document.createElement('span');
-        labNsp2.textContent = 'Notify for special TAF or METAR (e.g. SPECI, TEMPO/BECMG/PROB)';
-        labNsp2.style.cssText = 'font-size:11px;color:#bdc3c7;';
-        rowNsp2.appendChild(alertMetarSettingsNotifySpecial);
-        rowNsp2.appendChild(labNsp2);
-        cellNsp.appendChild(rowNsp2);
-        moreGrid.appendChild(cellNsp);
         settingsWrap.appendChild(moreGrid);
 
         var freshHelp = document.createElement('div');
@@ -6816,30 +6792,68 @@
             'margin:8px 0 0;padding:8px 10px;background:#1e1e24;border:1px solid #333;border-radius:6px;font-size:10px;color:#bdc3c7;line-height:1.45;';
         var freshP1 = document.createElement('div');
         freshP1.textContent =
-            '“Fresh” minutes: for an unseen, rules-matching change, the station list and the GMT/weather button stay in a yellow “fresh” look for that many minutes, then turn red “stale” if you have still not opened the detail.';
+            '“Fresh” minutes: for an unseen, rules-matching change, the station list and the worksheet WX button use yellow text on the dark background while still “fresh”; if you have not opened the detail after the window, the button flips to a red background with white text (stale) until you open it.';
         var freshP2 = document.createElement('div');
         freshP2.style.marginTop = '6px';
-        freshP2.textContent = 'Example — toolbar button (same data attribute as the real control):';
+        freshP2.textContent = 'Example — same layout as the real worksheet WX control (14px, badge “!” when alerting):';
         var freshRow1 = document.createElement('div');
         freshRow1.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap;';
-        var s1 = document.createElement('span');
-        s1.setAttribute(WX_BTN_ATTR, '1');
-        s1.textContent = 'GMT';
-        s1.title = 'Fresh: within the window';
-        s1.style.cssText =
-            'display:inline-flex;align-items:center;justify-content:center;min-width:40px;padding:2px 8px;font-size:12px;font-weight:600;border-radius:4px;background:#2c3e50;color:#f1c40f;border:1px solid #444;';
-        var s2 = document.createElement('span');
-        s2.setAttribute(WX_BTN_ATTR, '1');
-        s2.textContent = 'GMT';
-        s2.title = 'Stale: past the window';
-        s2.style.cssText =
-            'display:inline-flex;align-items:center;justify-content:center;min-width:40px;padding:2px 8px;font-size:12px;font-weight:600;border-radius:4px;background:#c0392b;color:#fff;border:1px solid #633;';
+        function wxDemoButton(fresh) {
+            var w = document.createElement('button');
+            w.type = 'button';
+            w.textContent = 'WX';
+            w.title = fresh ? 'Within fresh window (yellow on dark)' : 'Past fresh window, still unseen (stale: red background)';
+            w.setAttribute(WX_BTN_ATTR, '1');
+            w.setAttribute('data-dc-mx-wx-demo', '1');
+            w.style.marginLeft = '0';
+            w.style.padding = '0 10px';
+            w.style.fontSize = '14px';
+            w.style.fontWeight = '600';
+            w.style.border = 'none';
+            w.style.borderRadius = '4px';
+            w.style.cursor = 'default';
+            w.style.position = 'relative';
+            w.style.boxSizing = 'border-box';
+            w.style.maxHeight = '50px';
+            w.style.minHeight = '32px';
+            w.style.display = 'inline-flex';
+            w.style.alignItems = 'center';
+            w.style.justifyContent = 'center';
+            w.style.lineHeight = '1';
+            if (fresh) {
+                w.style.background = '#2c3e50';
+                w.style.color = '#f1c40f';
+            } else {
+                w.style.background = '#c0392b';
+                w.style.color = '#fff';
+                w.setAttribute('data-dc-metar-alert', '1');
+            }
+            var bd = document.createElement('span');
+            bd.textContent = '!';
+            bd.style.display = 'inline-block';
+            bd.style.position = 'absolute';
+            bd.style.top = '-6px';
+            bd.style.right = '-6px';
+            bd.style.background = '#f1c40f';
+            bd.style.color = '#000';
+            bd.style.fontSize = '10px';
+            bd.style.fontWeight = '800';
+            bd.style.borderRadius = '8px';
+            bd.style.minWidth = '16px';
+            bd.style.height = '16px';
+            bd.style.lineHeight = '16px';
+            bd.style.textAlign = 'center';
+            w.appendChild(bd);
+            return w;
+        }
+        var s1 = wxDemoButton(true);
+        var s2 = wxDemoButton(false);
         var freshLbl = document.createElement('span');
         freshLbl.style.cssText = 'color:#95a5a6;font-size:9px;';
-        freshLbl.textContent = 'fresh';
+        freshLbl.textContent = 'fresh (yellow on dark)';
         var staleLbl = document.createElement('span');
         staleLbl.style.cssText = 'color:#95a5a6;font-size:9px;';
-        staleLbl.textContent = 'stale';
+        staleLbl.textContent = 'stale (red fill)';
         freshRow1.appendChild(s1);
         freshRow1.appendChild(freshLbl);
         freshRow1.appendChild(s2);
@@ -6920,14 +6934,41 @@
         alertMetarSettingsHiRules = document.createElement('input');
         alertMetarSettingsHiRules.type = 'checkbox';
         var labH2b = document.createElement('span');
-        labH2b.textContent = 'Apply rules to METAR/TAF underlines when you have no rule-based notifications (see toggles above)';
+        labH2b.textContent = 'Apply rules to METAR/TAF underlines when you have no rule-based notifications (see below)';
         labH2b.style.cssText = 'font-size:11px;color:#bdc3c7;';
         labH2b.title =
             'If you are not using rule-only notifications, still show CIG/vis/rule underlines in the text when rules are defined, not only the color-coding line highlights.';
         rowHi.appendChild(alertMetarSettingsHiRules);
         rowHi.appendChild(labH2b);
         afterSwLine.appendChild(rowHi);
+        var rowNCol = document.createElement('div');
+        rowNCol.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:8px;';
+        alertMetarSettingsNotifyColored = document.createElement('input');
+        alertMetarSettingsNotifyColored.type = 'checkbox';
+        alertMetarSettingsNotifyColored.title =
+            'When on, a desktop notification is sent if text matches your custom rules. When you have no rules, every METAR/TAF change still alerts.';
+        var labNsp1 = document.createElement('span');
+        labNsp1.textContent = 'Notify for the above color coding (rules; else any change if no rules)';
+        labNsp1.style.cssText = 'font-size:11px;color:#bdc3c7;';
+        rowNCol.appendChild(alertMetarSettingsNotifyColored);
+        rowNCol.appendChild(labNsp1);
+        afterSwLine.appendChild(rowNCol);
         settingsWrap.appendChild(afterSwLine);
+        var notifySpecLine = document.createElement('div');
+        notifySpecLine.style.cssText = 'margin:6px 0 0;padding:0 0 0;border-top:none;';
+        var rowNsp2 = document.createElement('div');
+        rowNsp2.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        alertMetarSettingsNotifySpecial = document.createElement('input');
+        alertMetarSettingsNotifySpecial.type = 'checkbox';
+        alertMetarSettingsNotifySpecial.title =
+            'Also notify on SPECI METARs, or TAFs with TEMPO/BECMG/PROB/FM groups. Independent of the rule list.';
+        var labNsp2 = document.createElement('span');
+        labNsp2.textContent = 'Notify for special TAF or METAR (e.g. SPECI, TEMPO/BECMG/PROB)';
+        labNsp2.style.cssText = 'font-size:11px;color:#bdc3c7;';
+        rowNsp2.appendChild(alertMetarSettingsNotifySpecial);
+        rowNsp2.appendChild(labNsp2);
+        notifySpecLine.appendChild(rowNsp2);
+        settingsWrap.appendChild(notifySpecLine);
         metarSettingsApplySwTokenMaster = applySwTokenMasterState;
         applySwTokenMasterState();
 
