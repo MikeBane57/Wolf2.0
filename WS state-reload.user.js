@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.12
-// @description  Session folder: read multiple DonkeyCODE keys + JSON; show source. PAT note for cloud save.
+// @version      0.2.13
+// @description  Session folder: live read (no cache) + runtime hooks; do not put donkeycode_current_session_folder in @donkeycode-pref.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -42,6 +42,9 @@
     /** Live reference to the scrollable <pre> in the open Load/Cloud modal (for WoF-style debug log). */
     var wsCloudLogPre = null;
     var WS_CLOUD_LOG_ID = 'dc-ws-cloud-sync-log';
+    /** Load WS modal: note elements updated on each cloud refresh so folder changes without re-open. */
+    var loadFolderBannerLine = null;
+    var loadFolderBannerSrc = null;
 
     function isWorksheetPage() {
         try {
@@ -146,11 +149,49 @@
         return s;
     }
 
+    function globalDonkeycodeSessionFolder() {
+        var g;
+        try {
+            g = typeof globalThis !== 'undefined' ? globalThis : window;
+        } catch (e) {
+            g = window;
+        }
+        if (!g) {
+            return '';
+        }
+        if (typeof g.donkeycodeGetCurrentSessionFolder === 'function') {
+            try {
+                var v = g.donkeycodeGetCurrentSessionFolder();
+                var s = extractFolderStringFromDonkeycodeValue(v);
+                s = trimText(String(s == null ? '' : s));
+                if (s) {
+                    lastSessionFolderPrefKey = 'donkeycodeGetCurrentSessionFolder()';
+                    return s;
+                }
+            } catch (e2) {}
+        }
+        if (g.donkeycodeCurrentSessionFolder != null && g.donkeycodeCurrentSessionFolder !== '') {
+            var s2 = extractFolderStringFromDonkeycodeValue(g.donkeycodeCurrentSessionFolder);
+            s2 = trimText(String(s2 == null ? '' : s2));
+            if (s2) {
+                lastSessionFolderPrefKey = 'window.donkeycodeCurrentSessionFolder';
+                return s2;
+            }
+        }
+        return '';
+    }
+
     /**
-     * Tries the keys DonkeyCODE may use (documented + common variants) before legacy fallbacks.
+     * Live session folder: DonkeyCODE runtime first (getCurrentSessionFolder / global), then merged prefs.
+     * Order matters: @donkeycode-pref fixed values override runtime injection — do not put current session in schema.
+     * Re-read every time; no top-level cache.
      */
     function donkeycodeCurrentSessionFolderRaw() {
         lastSessionFolderPrefKey = '';
+        var fromGlobal = globalDonkeycodeSessionFolder();
+        if (fromGlobal) {
+            return fromGlobal;
+        }
         var tryKeys = [
             'donkeycode_current_session_folder',
             'donkeycode_active_session_folder',
@@ -356,7 +397,20 @@
         if (lastSessionFolderPrefKey) {
             return 'Source: DonkeyCODE · ' + lastSessionFolderPrefKey;
         }
-        return 'Source: (no session key read — using Default) · expect pref donkeycode_current_session_folder or related.';
+        return (
+            'Source: (no session key read — using Default). If folder looks stuck: do not add donkeycode_current_session_folder to ' +
+            '@donkeycode-pref (script defaults override live injection).'
+        );
+    }
+
+    function updateLoadFolderBanner() {
+        if (!loadFolderBannerLine || !loadFolderBannerSrc) {
+            return;
+        }
+        var fk = sessionFolderKeyCanonical();
+        loadFolderBannerLine.textContent =
+            'Active session folder: ' + sessionFolderDisplayLabel(fk) + (fk !== '__default__' ? ' (' + fk + ')' : '');
+        loadFolderBannerSrc.textContent = sessionFolderPrefSourceLine();
     }
 
     /** User-visible label: "Default" for __default__, else the key (e.g. ops/team1). */
@@ -1018,11 +1072,13 @@
             return;
         }
         cloudRowsHost.textContent = 'Loading cloud states...';
+        updateLoadFolderBanner();
         fetchCloudStates(function (doc, loadErr) {
             if (!cloudRowsHost) {
                 return;
             }
             cloudRowsHost.textContent = '';
+            updateLoadFolderBanner();
             if (!doc) {
                 cloudRowsHost.textContent =
                     'Could not load cloud: ' + (loadErr || 'Check PAT (repo + workflow scope), team key = WOF/WORKSHEET secret, and repo/branch/path.');
@@ -2031,6 +2087,8 @@
         cloudRowsHost = null;
         localRowsHost = null;
         wsCloudLogPre = null;
+        loadFolderBannerLine = null;
+        loadFolderBannerSrc = null;
     }
 
     function openRecallDialog() {
@@ -2269,6 +2327,8 @@
         loadFolderSrc.style.fontSize = '10px';
         loadFolderSrc.style.color = '#95a5a6';
         loadFolderSrc.textContent = sessionFolderPrefSourceLine();
+        loadFolderBannerLine = loadFolderLine;
+        loadFolderBannerSrc = loadFolderSrc;
         body.appendChild(loadFolderLine);
         body.appendChild(loadFolderSrc);
 
