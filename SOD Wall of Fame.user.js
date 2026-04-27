@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.7.9
-// @description  WoF: GM_xhr GET without data field + full request log (fixes silent fetch). Direct API default.
+// @version      2.8.0
+// @description  WoF: WOFDATA/wall-of-fame.json on DonkeyCODE repo; donkeycode_github_* fallbacks; direct Contents only (no Actions by default).
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
 // @connect      *
-// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameDataOwner":{"type":"string","group":"Wall of Fame — data file","label":"JSON repo owner","description":"GitHub user/org that owns wall-of-fame.json. Default MikeBane57. Set this if session sync points at a different repo (e.g. DonkeyCODE) — WoF file still lives in Wolf2.0 unless you override all three.","default":"","placeholder":"MikeBane57"},"wallOfFameDataRepo":{"type":"string","group":"Wall of Fame — data file","label":"JSON repo name","description":"Repo containing wall-of-fame.json. Default Wolf2.0.","default":"","placeholder":"Wolf2.0"},"wallOfFameDataBranch":{"type":"string","group":"Wall of Fame — data file","label":"JSON branch","description":"Branch for raw + Contents API. Default main.","default":"","placeholder":"main"},"wallOfFamePreferDirectContentsApi":{"type":"boolean","group":"Wall of Fame — data file","label":"Prefer direct Contents API (GET/PUT)","description":"On (default): with donkeycode_github_pat, use GitHub Contents API for all fetch and publish (not raw.githubusercontent.com or repository_dispatch). Turn off to use \u201cUse Actions + repo secret\u201d + team key (raw + dispatch) when those are on.","default":true},"wallOfFameUseGithubActions":{"type":"boolean","group":"Wall of Fame — GitHub Actions","label":"Use Actions + repo secret","description":"If on: fetch from raw.githubusercontent.com; publish via repository_dispatch. Set repo secret WOF_TEAM_KEY to match wallOfFameTeamKey. Publish still needs donkeycode_github_pat to trigger the workflow.","default":false},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"Team key (matches WOF_TEAM_KEY)","description":"Same value as repository secret WOF_TEAM_KEY (Settings → Secrets). Not the GitHub PAT.","default":"","placeholder":""},"wallOfFameRepoPath":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"JSON path in repo (optional)","description":"Path to wall-of-fame.json in Wolf2.0, e.g. WALL of FAME/wall-of-fame.json. Leave empty for default. Do not use session sync folder unless your file lives there.","default":"","placeholder":"WALL of FAME/wall-of-fame.json"},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy. If set with team key, overrides Actions mode for sync.","default":"","placeholder":"https://wof.example.com"}}
+// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameDataOwner":{"type":"string","group":"Wall of Fame — data file (DonkeyCODE pattern)","label":"JSON repo owner","description":"If blank: donkeycode_github_owner \u2192 MikeBane57. Same as worksheet state cloud — point at the repo that should hold wall-of-fame.json (e.g. DonkeyCODE).","default":"","placeholder":""},"wallOfFameDataRepo":{"type":"string","group":"Wall of Fame — data file (DonkeyCODE pattern)","label":"JSON repo name","description":"If blank: donkeycode_github_repo \u2192 DonkeyCODE.","default":"","placeholder":""},"wallOfFameDataBranch":{"type":"string","group":"Wall of Fame — data file (DonkeyCODE pattern)","label":"JSON branch","description":"If blank: donkeycode_github_branch \u2192 main.","default":"","placeholder":""},"wallOfFameRepoPath":{"type":"string","group":"Wall of Fame — data file (DonkeyCODE pattern)","label":"JSON file path in repo","description":"If blank: WOFDATA/wall-of-fame.json (parallels WORKSHEET STATES/ on the same DonkeyCODE repo).","default":"","placeholder":"WOFDATA/wall-of-fame.json"},"wallOfFamePreferDirectContentsApi":{"type":"boolean","group":"Wall of Fame — data file (DonkeyCODE pattern)","label":"Direct API only (GET/PUT)","description":"On (default): use GitHub Contents API for fetch and publish. PAT only; no repository_dispatch. Turn off to allow optional Actions+team key (advanced).","default":true},"wallOfFameUseGithubActions":{"type":"boolean","group":"Wall of Fame — advanced (optional)","label":"Use GitHub Actions + team key","description":"Off by default. Only if you use repository_dispatch + WOF_TEAM_KEY. Not needed for DonkeyCODE-path + direct API.","default":false},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — advanced (optional)","label":"Team key (WOF_TEAM_KEY)","description":"Only for Actions mode.","default":"","placeholder":""},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — advanced (optional)","label":"Team proxy base URL","description":"Optional. If set with key, takes over sync.","default":"","placeholder":""}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // ==/UserScript==
@@ -23,12 +23,12 @@
     var STYLE_ID = 'dc-wof-style';
     var HIDE_FIMS_FOR_ADVIS_ATTR = 'data-dc-fims-id-hide-for-advisories';
 
-    /** Defaults when DonkeyCODE session-sync prefs are absent (getPref('donkeycode_github_*')). */
+    /** Fallbacks when wallOfFameData* prefs are blank — same cascade idea as WS state-reload. */
     var GITHUB_OWNER = 'MikeBane57';
-    var GITHUB_REPO = 'Wolf2.0';
+    var GITHUB_REPO = 'DonkeyCODE';
     var GITHUB_BRANCH = 'main';
-    /** Repo path when sessions root is empty; else file is {sessionsRoot}/wall-of-fame.json */
-    var WALL_OF_FAME_FILE_PATH = 'WALL of FAME/wall-of-fame.json';
+    /** Default path on DonkeyCODE repo (WOFDATA folder), like WORKSHEET STATES/ for worksheet state. */
+    var WALL_OF_FAME_FILE_PATH = 'WOFDATA/wall-of-fame.json';
 
     /**
      * PAT from DonkeyCODE session sync (extension settings). Used for GitHub API only.
@@ -39,23 +39,31 @@
     }
 
     /**
-     * Repo that holds wall-of-fame.json (raw + Contents API + repository_dispatch).
-     * Defaults to Wolf2.0 — NOT session-sync owner/repo, so sync can target DonkeyCODE
-     * while accolades stay in Wolf2.0. Override via wallOfFameDataOwner/Repo/Branch.
+     * Repo for wall-of-fame.json: wallOfFameData* first, then donkeycode_github_* (session sync),
+     * then MikeBane57 / DonkeyCODE / main (same pattern as worksheet state cloud).
      */
     function resolvedWallOfFameDataOwner() {
-        var o = String(getPref('wallOfFameDataOwner', '') || '').trim();
-        return o || GITHUB_OWNER;
+        return (
+            String(getPref('wallOfFameDataOwner', '') || '').trim() ||
+            String(getPref('donkeycode_github_owner', '') || '').trim() ||
+            GITHUB_OWNER
+        );
     }
 
     function resolvedWallOfFameDataRepo() {
-        var r = String(getPref('wallOfFameDataRepo', '') || '').trim();
-        return r || GITHUB_REPO;
+        return (
+            String(getPref('wallOfFameDataRepo', '') || '').trim() ||
+            String(getPref('donkeycode_github_repo', '') || '').trim() ||
+            GITHUB_REPO
+        );
     }
 
     function resolvedWallOfFameDataBranch() {
-        var b = String(getPref('wallOfFameDataBranch', '') || '').trim();
-        return b || GITHUB_BRANCH;
+        return (
+            String(getPref('wallOfFameDataBranch', '') || '').trim() ||
+            String(getPref('donkeycode_github_branch', '') || '').trim() ||
+            GITHUB_BRANCH
+        );
     }
 
     /**
