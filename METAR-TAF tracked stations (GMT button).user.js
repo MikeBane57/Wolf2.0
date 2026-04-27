@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.53
-// @description  Quick add toggle in airport field; Clear all stations; compact presets.
+// @version      2.0.54
+// @description  Quick add in airport field; Clear all without confirm; compact presets.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -7734,9 +7734,6 @@
             e.stopPropagation();
             if (!stationList.length) {
                 setStatusBar('No stations to clear.');
-                return;
-            }
-            if (!window.confirm('Remove all ' + stationList.length + ' station(s) from the tracked list?')) {
                 return;
             }
             stationList = [];
