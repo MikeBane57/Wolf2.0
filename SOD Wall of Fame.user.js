@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.7.7
-// @description  WoF: sync log always visible; fetch logs URL/status/fallback. Git push/pull debuggable.
+// @version      2.7.8
+// @description  WoF: default direct Contents API GET/PUT with PAT; refresh from Git on tab. Optional Actions/raw.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
 // @connect      *
-// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameDataOwner":{"type":"string","group":"Wall of Fame — data file","label":"JSON repo owner","description":"GitHub user/org that owns wall-of-fame.json. Default MikeBane57. Set this if session sync points at a different repo (e.g. DonkeyCODE) — WoF file still lives in Wolf2.0 unless you override all three.","default":"","placeholder":"MikeBane57"},"wallOfFameDataRepo":{"type":"string","group":"Wall of Fame — data file","label":"JSON repo name","description":"Repo containing wall-of-fame.json. Default Wolf2.0.","default":"","placeholder":"Wolf2.0"},"wallOfFameDataBranch":{"type":"string","group":"Wall of Fame — data file","label":"JSON branch","description":"Branch for raw + Contents API. Default main.","default":"","placeholder":"main"},"wallOfFameUseGithubActions":{"type":"boolean","group":"Wall of Fame — GitHub Actions","label":"Use Actions + repo secret","description":"If on: fetch from raw.githubusercontent.com; publish via repository_dispatch. Set repo secret WOF_TEAM_KEY to match wallOfFameTeamKey. Publish still needs donkeycode_github_pat to trigger the workflow.","default":false},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"Team key (matches WOF_TEAM_KEY)","description":"Same value as repository secret WOF_TEAM_KEY (Settings → Secrets). Not the GitHub PAT.","default":"","placeholder":""},"wallOfFameRepoPath":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"JSON path in repo (optional)","description":"Path to wall-of-fame.json in Wolf2.0, e.g. WALL of FAME/wall-of-fame.json. Leave empty for default. Do not use session sync folder unless your file lives there.","default":"","placeholder":"WALL of FAME/wall-of-fame.json"},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy. If set with team key, overrides Actions mode for sync.","default":"","placeholder":"https://wof.example.com"}}
+// @donkeycode-pref {"wallOfFameShowTab":{"type":"boolean","group":"Wall of Fame","label":"Show Wall of Fame tab","description":"Tab next to FIMS / Advisories on the FIMS widget.","default":true},"wallOfFameDataOwner":{"type":"string","group":"Wall of Fame — data file","label":"JSON repo owner","description":"GitHub user/org that owns wall-of-fame.json. Default MikeBane57. Set this if session sync points at a different repo (e.g. DonkeyCODE) — WoF file still lives in Wolf2.0 unless you override all three.","default":"","placeholder":"MikeBane57"},"wallOfFameDataRepo":{"type":"string","group":"Wall of Fame — data file","label":"JSON repo name","description":"Repo containing wall-of-fame.json. Default Wolf2.0.","default":"","placeholder":"Wolf2.0"},"wallOfFameDataBranch":{"type":"string","group":"Wall of Fame — data file","label":"JSON branch","description":"Branch for raw + Contents API. Default main.","default":"","placeholder":"main"},"wallOfFamePreferDirectContentsApi":{"type":"boolean","group":"Wall of Fame — data file","label":"Prefer direct Contents API (GET/PUT)","description":"On (default): with donkeycode_github_pat, use GitHub Contents API for all fetch and publish (not raw.githubusercontent.com or repository_dispatch). Turn off to use \u201cUse Actions + repo secret\u201d + team key (raw + dispatch) when those are on.","default":true},"wallOfFameUseGithubActions":{"type":"boolean","group":"Wall of Fame — GitHub Actions","label":"Use Actions + repo secret","description":"If on: fetch from raw.githubusercontent.com; publish via repository_dispatch. Set repo secret WOF_TEAM_KEY to match wallOfFameTeamKey. Publish still needs donkeycode_github_pat to trigger the workflow.","default":false},"wallOfFameTeamKey":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"Team key (matches WOF_TEAM_KEY)","description":"Same value as repository secret WOF_TEAM_KEY (Settings → Secrets). Not the GitHub PAT.","default":"","placeholder":""},"wallOfFameRepoPath":{"type":"string","group":"Wall of Fame — GitHub Actions","label":"JSON path in repo (optional)","description":"Path to wall-of-fame.json in Wolf2.0, e.g. WALL of FAME/wall-of-fame.json. Leave empty for default. Do not use session sync folder unless your file lives there.","default":"","placeholder":"WALL of FAME/wall-of-fame.json"},"wallOfFameProxyUrl":{"type":"url","group":"Wall of Fame — team proxy","label":"Proxy base URL (optional)","description":"HTTPS URL of wall-of-fame-proxy. If set with team key, overrides Actions mode for sync.","default":"","placeholder":"https://wof.example.com"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/SOD%20Wall%20of%20Fame.user.js
 // ==/UserScript==
@@ -154,6 +154,18 @@
     function useGithubActions() {
         var v = getPref('wallOfFameUseGithubActions', false);
         return v === true || v === 'true';
+    }
+
+    /**
+     * When true (default) and a PAT is set, fetch/publish use GitHub Contents API (GET/PUT) only.
+     * Turn off to use Actions+raw/team key flow when wallOfFameUseGithubActions + wallOfFameTeamKey.
+     */
+    function wallOfFamePreferDirectContentsApi() {
+        var v = getPref('wallOfFamePreferDirectContentsApi', true);
+        if (v === false || v === 'false' || v === 0) {
+            return false;
+        }
+        return true;
     }
 
     /** Repo secret WOF_TEAM_KEY must match; workflow validates server-side. */
@@ -747,6 +759,16 @@
         var repo = resolvedWallOfFameDataRepo();
         var branch = resolvedWallOfFameDataBranch();
         var path = resolvedGithubFilePath();
+        var fetchMode =
+            proxyConfigured()
+                ? 'proxy'
+                : githubConfigured() && wallOfFamePreferDirectContentsApi()
+                  ? 'direct-Contents-only (pref)'
+                  : actionsModeConfigured()
+                    ? 'Actions: raw then API if needed'
+                    : githubConfigured()
+                      ? 'direct API'
+                      : 'no PAT';
         log(
             'Fetch start — repo ' +
                 owner +
@@ -756,8 +778,24 @@
                 branch +
                 ', path: ' +
                 path +
-                (proxyConfigured() ? ' (proxy mode)' : actionsModeConfigured() ? ' (Actions: raw then API if needed)' : ' (direct API)')
+                ' — ' +
+                fetchMode
         );
+        if (githubConfigured() && wallOfFamePreferDirectContentsApi() && !proxyConfigured()) {
+            log('Using Contents API GET only (PAT + wallOfFamePreferDirectContentsApi).');
+            githubGetFile(
+                function (entries) {
+                    if (entries === null) {
+                        log('Contents API GET failed — check PAT, path, branch, wallOfFameDataOwner/Repo.');
+                    } else {
+                        log('Contents API: ' + entries.length + ' entries.');
+                    }
+                    cb(entries);
+                },
+                log
+            );
+            return;
+        }
         if (proxyConfigured()) {
             log('GET via proxy ' + String(proxyBaseUrl() || '').replace(/\/+$/, '') + '/wall-of-fame');
             proxyGetFile(function(ent) {
@@ -823,9 +861,11 @@
         var path = resolvedGithubFilePath();
         var mode = proxyConfigured()
             ? 'proxy'
-            : actionsModeConfigured()
-              ? 'actions'
-              : 'contents';
+            : githubConfigured() && wallOfFamePreferDirectContentsApi()
+              ? 'contents'
+              : actionsModeConfigured()
+                ? 'actions'
+                : 'contents';
 
         wofAppendPublishLog(panel, 'Publish start — mode: ' + mode + ', repo: ' + owner + '/' + repo + '@' + branch + ', path: ' + path);
         if (mode === 'actions') {
@@ -834,7 +874,15 @@
                 'Actions: POST /repos/' + owner + '/' + repo + '/dispatches (needs repo scope + workflow scope on PAT if GitHub requires it)'
             );
         } else if (mode === 'contents') {
-            wofAppendPublishLog(panel, 'Direct: PUT Contents API (PAT needs Contents write on ' + owner + '/' + repo + ')');
+            wofAppendPublishLog(
+                panel,
+                (githubConfigured() && wallOfFamePreferDirectContentsApi() ? 'Direct Contents API (pref): ' : 'Direct: ') +
+                    'PUT api.github.com/contents/… (PAT needs Contents write on ' +
+                    owner +
+                    '/' +
+                    repo +
+                    ')'
+            );
         }
 
         function wofPublishDbg(m) {
@@ -944,6 +992,15 @@
                     cb(false, err || 'Proxy publish failed');
                 });
             });
+            return;
+        }
+
+        if (githubConfigured() && wallOfFamePreferDirectContentsApi()) {
+            wofAppendPublishLog(
+                panel,
+                'Using direct Contents API PUT (wallOfFamePreferDirectContentsApi) — not repository_dispatch.'
+            );
+            doGithubPut();
             return;
         }
 
@@ -1625,9 +1682,9 @@
         hint.className = 'dc-wof-hint';
         hint.textContent = proxyConfigured()
             ? 'Sync via team proxy (GitHub App on server). Local copy in localStorage. Add proxy host to @connect if needed.'
-            : actionsModeConfigured()
-              ? 'Actions mode: repo secret WOF_TEAM_KEY must match wallOfFameTeamKey. Publish needs PAT (repository_dispatch). Fetch uses raw.githubusercontent.com if public.'
-              : 'Direct API: PAT from DonkeyCODE; data file repo is wallOfFameData* (default Wolf2.0). Local: localStorage.';
+            : actionsModeConfigured() && !wallOfFamePreferDirectContentsApi()
+              ? 'Actions + team key: raw + repository_dispatch. Turn off \u201cPrefer direct Contents API\u201d to use this when PAT is set.'
+              : 'Default: GitHub Contents API GET/PUT with donkeycode_github_pat (wallOfFamePreferDirectContentsApi). Data repo: wallOfFameData*; local: localStorage.';
         wrap.appendChild(hint);
 
         syncEditPanelVisibility(panel);
@@ -1730,6 +1787,33 @@
 
     var lastWofActivate = 0;
 
+    /** Re-fetch wall-of-fame.json from GitHub when user opens the Wall of Fame tab (Contents API or proxy). */
+    function refreshWallOfFameFromGitOnTab(panel) {
+        if (!panel) {
+            return;
+        }
+        if (!syncConfigured() && !githubConfigured()) {
+            return;
+        }
+        wofLogSyncLine(panel, 'Tab focus: refreshing from repo…');
+        fetchCloud(
+            function (remote) {
+                if (remote === null) {
+                    wofLogSyncLine(panel, 'Tab refresh: fetch failed (see log above).');
+                    return;
+                }
+                entriesState = mergeEntries(entriesState, remote);
+                saveLocal(entriesState);
+                render(panel);
+                wofLogSyncLine(
+                    panel,
+                    'Tab refresh: merged ' + remote.length + ' entr' + (remote.length === 1 ? 'y' : 'ies') + ' from GitHub.'
+                );
+            },
+            panel
+        );
+    }
+
     var menuTabMo = null;
     var menuTabDebounce = null;
     function scheduleMenuTabRepair() {
@@ -1804,6 +1888,7 @@
         mountPanelInFimsTabSegment(panel, table);
         panel.style.display = 'flex';
         render(panel);
+        refreshWallOfFameFromGitOnTab(panel);
     }
 
     /**
