@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.19
-// @description  Cloud: one JSON file per save + index (fewer 409s); folder re-read on save. REST API + PAT.
+// @version      0.2.20
+// @description  Cloud: per-save files + index; Load WS folder next to title; no confirm on local delete. REST API + PAT.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -390,8 +390,9 @@
         }
         donkeycodeCurrentSessionFolderRaw();
         var fk = sessionFolderKeyCanonical();
-        loadFolderBannerLine.textContent =
-            'Active session folder: ' + sessionFolderDisplayLabel(fk) + (fk !== '__default__' ? ' (' + fk + ')' : '');
+        var label = sessionFolderDisplayLabel(fk);
+        var detail = fk !== '__default__' ? ' (' + fk + ')' : '';
+        loadFolderBannerLine.textContent = 'Folder: ' + label + detail;
     }
 
     /** User-visible label: "Default" for __default__, else the key (e.g. ops/team1). */
@@ -2060,7 +2061,16 @@
             'background:#20242b;color:#ecf0f1;border-radius:10px;box-shadow:0 12px 48px rgba(0,0,0,.55);font:13px/1.35 system-ui,Segoe UI,sans-serif;}' +
             '[' +
             MODAL_ATTR +
-            '] .dc-wss-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid #374250;font-weight:700;}' +
+            '] .dc-wss-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid #374250;font-weight:700;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-wss-head-main{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 14px;min-width:0;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-wss-title-main{flex:0 0 auto;}' +
+            '[' +
+            MODAL_ATTR +
+            '] .dc-wss-folder-inline{font-size:12px;font-weight:600;color:#5dade2;white-space:normal;word-break:break-word;max-width:100%;}' +
             '[' +
             MODAL_ATTR +
             '] .dc-wss-body{padding:12px 14px;overflow:auto;display:flex;flex-direction:column;gap:8px;}' +
@@ -2472,9 +2482,6 @@
         del.textContent = 'Delete';
         del.className = 'dc-wss-danger';
         del.addEventListener('click', function () {
-            if (!window.confirm('Delete saved state "' + (state.name || '(unnamed)') + '"?')) {
-                return;
-            }
             deleteState(state.id);
             refreshLocalRows();
         });
@@ -2585,26 +2592,29 @@
 
         var head = document.createElement('div');
         head.className = 'dc-wss-head';
+        var main = document.createElement('div');
+        main.className = 'dc-wss-head-main';
         var title = document.createElement('div');
+        title.className = 'dc-wss-title-main';
         title.textContent = 'Load WS';
+        var loadFolderLine = document.createElement('div');
+        loadFolderLine.className = 'dc-wss-folder-inline';
+        donkeycodeCurrentSessionFolderRaw();
+        var fkNow = sessionFolderKeyCanonical();
+        var label0 = sessionFolderDisplayLabel(fkNow);
+        loadFolderLine.textContent = 'Folder: ' + label0 + (fkNow !== '__default__' ? ' (' + fkNow + ')' : '');
+        loadFolderBannerLine = loadFolderLine;
+        main.appendChild(title);
+        main.appendChild(loadFolderLine);
         var close = document.createElement('button');
         close.type = 'button';
         close.textContent = 'Close';
         close.addEventListener('click', closeModal);
-        head.appendChild(title);
+        head.appendChild(main);
         head.appendChild(close);
 
         var body = document.createElement('div');
         body.className = 'dc-wss-body';
-
-        var loadFolderLine = document.createElement('div');
-        loadFolderLine.className = 'dc-wss-note';
-        donkeycodeCurrentSessionFolderRaw();
-        var fkNow = sessionFolderKeyCanonical();
-        loadFolderLine.textContent =
-            'Active session folder: ' + sessionFolderDisplayLabel(fkNow) + (fkNow !== '__default__' ? ' (' + fkNow + ')' : '');
-        loadFolderBannerLine = loadFolderLine;
-        body.appendChild(loadFolderLine);
 
         addSectionTitle(body, 'Local saves');
         localRowsHost = document.createElement('div');
