@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.8
-// @description  Session folder from donkeycode_current_session_folder; show on save, Load WS, and cloud list.
+// @version      0.2.9
+// @description  Cloud load: raw 404 falls back to Contents API when PAT set (private repo). Session folder in UI.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -503,8 +503,15 @@
         appendCloudSyncLog('GET (raw) ' + rawUrl);
         gmXhr('GET', rawUrl, { Accept: 'application/json' }, null, function (status, text) {
             if (status === 404) {
-                appendCloudSyncLog('raw GET: HTTP 404 (no file yet) — using empty document.');
-                cb(cloudDocFor([]), null, null);
+                if (resolvedGithubPat()) {
+                    appendCloudSyncLog(
+                        'raw GET: HTTP 404 — not served from raw (private repo, or file not on CDN). Trying Contents API with PAT…'
+                    );
+                    cb(null, null, null);
+                } else {
+                    appendCloudSyncLog('raw GET: HTTP 404 (no public file at this path) — using empty document.');
+                    cb(cloudDocFor([]), null, null);
+                }
                 return;
             }
             if (status < 200 || status >= 300) {
@@ -875,7 +882,8 @@
                 return String(b.savedAt || b.updatedAt || '').localeCompare(String(a.savedAt || a.updatedAt || ''));
             });
             if (!states.length) {
-                cloudRowsHost.textContent = 'No unexpired cloud states found.';
+                cloudRowsHost.textContent =
+                    'No unexpired cloud states found. If the JSON lives in a private repo, set donkeycode_github_pat and open the cloud log below. States older than 4 hours are dropped.';
                 return;
             }
             var sameFolder = states.filter(function (st) {
