@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.52
-// @description  Quick add: scrollable sector/region; compact labels; IATA map for preset gaps.
+// @version      2.0.53
+// @description  Quick add toggle in airport field; Clear all stations; compact presets.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -5476,7 +5476,7 @@
                 codLoopHostEl.style.display = 'none';
             }
             detailContentEl.innerHTML =
-                '<div style="color:#95a5a6;font-family:system-ui,sans-serif;">Select a station.</div>';
+                '<div style="color:#95a5a6;font-family:system-ui,sans-serif;">No station selected. Add airports or use Quick add.</div>';
             return;
         }
         var r = cacheByIcao[icaoFor(iata)];
@@ -7491,15 +7491,18 @@
 
         var quickAddHost = document.createElement('div');
         quickAddHost.setAttribute('data-dc-mx-quick-add', '1');
-        quickAddHost.style.cssText = 'flex:0 0 auto;min-height:0;';
+        quickAddHost.style.cssText = 'flex:0 0 auto;min-height:0;display:none;';
         var quickDeets = document.createElement('details');
         try {
-            quickDeets.open = false;
+            quickDeets.open = true;
         } catch (e) {}
         quickDeets.style.cssText = 'border:1px solid #3a3a45;border-radius:6px;background:#1e1e24;padding:6px 8px;';
         var quickSum = document.createElement('summary');
-        quickSum.textContent = 'Quick add';
-        quickSum.style.cssText = 'cursor:pointer;font-size:12px;font-weight:600;color:#5dade2;user-select:none;';
+        quickSum.textContent = 'Regions & sectors';
+        quickSum.style.cssText = 'cursor:pointer;font-size:12px;font-weight:600;color:#5dade2;user-select:none;list-style:none;';
+        try {
+            quickSum.style.listStyle = 'none';
+        } catch (e) {}
         quickDeets.appendChild(quickSum);
         var quickChWrap = document.createElement('div');
         quickChWrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;font-size:11px;color:#bdc3c7;margin-top:6px;';
@@ -7617,23 +7620,51 @@
         addRow.style.flexDirection = 'column';
         addRow.style.gap = '8px';
 
+        var inputWrap = document.createElement('div');
+        inputWrap.style.cssText =
+            'display:flex;align-items:stretch;gap:0;border:1px solid #444;border-radius:4px;background:#2a2a32;overflow:hidden;min-height:32px;';
+        var quickToggleBtn = document.createElement('button');
+        quickToggleBtn.type = 'button';
+        quickToggleBtn.textContent = 'Quick add';
+        quickToggleBtn.title = 'Show or hide region/sector quick add (below)';
+        quickToggleBtn.setAttribute('aria-expanded', 'false');
+        quickToggleBtn.setAttribute('aria-controls', 'dc-mx-quick-add-panel');
+        quickAddHost.id = 'dc-mx-quick-add-panel';
+        quickToggleBtn.style.cssText =
+            'flex:0 0 auto;align-self:stretch;padding:4px 6px;font-size:10px;font-weight:700;line-height:1.15;border:none;border-right:1px solid #444;background:#25252c;color:#5dade2;cursor:pointer;max-width:58px;text-align:center;';
         addInput = document.createElement('input');
         addInput.type = 'text';
         addInput.placeholder = 'KDEN or DEN';
         addInput.maxLength = 8;
-        addInput.style.width = '100%';
+        addInput.setAttribute('aria-label', 'Airport code to add');
+        addInput.style.flex = '1';
         addInput.style.minWidth = '0';
         addInput.style.boxSizing = 'border-box';
         addInput.style.padding = '6px 8px';
-        addInput.style.borderRadius = '4px';
-        addInput.style.border = '1px solid #444';
-        addInput.style.background = '#2a2a32';
+        addInput.style.border = 'none';
+        addInput.style.borderRadius = '0';
+        addInput.style.background = 'transparent';
         addInput.style.color = '#ecf0f1';
         addInput.style.fontSize = '12px';
+        quickToggleBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            e.preventDefault();
+            var hidden = quickAddHost.style.display === 'none' || !quickAddHost.style.display;
+            if (hidden) {
+                quickAddHost.style.display = 'block';
+                quickToggleBtn.setAttribute('aria-expanded', 'true');
+            } else {
+                quickAddHost.style.display = 'none';
+                quickToggleBtn.setAttribute('aria-expanded', 'false');
+            }
+        });
+        inputWrap.appendChild(quickToggleBtn);
+        inputWrap.appendChild(addInput);
         var addBtn = document.createElement('button');
         addBtn.type = 'button';
         addBtn.textContent = 'Add station';
-        addBtn.style.width = '100%';
+        addBtn.style.flex = '1';
+        addBtn.style.minWidth = '0';
         addBtn.style.boxSizing = 'border-box';
         addBtn.style.padding = '8px 10px';
         addBtn.style.border = 'none';
@@ -7643,6 +7674,14 @@
         addBtn.style.cursor = 'pointer';
         addBtn.style.fontSize = '13px';
         addBtn.style.flexShrink = '0';
+        var clearAllBtn = document.createElement('button');
+        clearAllBtn.type = 'button';
+        clearAllBtn.textContent = 'Clear all';
+        clearAllBtn.title = 'Remove every station from the tracked list';
+        clearAllBtn.style.cssText =
+            'flex:0 0 auto;padding:8px 10px;border:1px solid #7e3c3c;border-radius:4px;background:#4c2424;color:#fadbd8;cursor:pointer;font-size:12px;white-space:nowrap;';
+        var addBtnRow = document.createElement('div');
+        addBtnRow.style.cssText = 'display:flex;gap:6px;align-items:stretch;';
 
         function tryAddStation() {
             var raw = String(addInput.value || '').trim().toUpperCase();
@@ -7691,11 +7730,36 @@
                 tryAddStation();
             }
         });
-        addRow.appendChild(addInput);
-        addRow.appendChild(addBtn);
+        clearAllBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (!stationList.length) {
+                setStatusBar('No stations to clear.');
+                return;
+            }
+            if (!window.confirm('Remove all ' + stationList.length + ' station(s) from the tracked list?')) {
+                return;
+            }
+            stationList = [];
+            saveStationList(stationList);
+            pendingChangeTime = {};
+            selectedIata = null;
+            if (addInput) {
+                addInput.value = '';
+            }
+            renderStationList();
+            renderDetail(null, { skipCodLoop: true });
+            updateRefreshThisLabel();
+            updateAlertState();
+            setStatusBar('Cleared all stations · ' + new Date().toLocaleTimeString());
+            runPoll();
+        });
+        addBtnRow.appendChild(addBtn);
+        addBtnRow.appendChild(clearAllBtn);
+        addRow.appendChild(inputWrap);
+        addRow.appendChild(quickAddHost);
+        addRow.appendChild(addBtnRow);
 
         leftScroll.appendChild(listEl);
-        leftScroll.appendChild(quickAddHost);
         left.appendChild(sortRow);
         left.appendChild(leftScroll);
         left.appendChild(addRow);
