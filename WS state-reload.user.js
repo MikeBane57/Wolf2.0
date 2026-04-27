@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.18
-// @description  Cloud: GitHub REST Contents API only (no Actions/dispatch). Repo/path prefs + PAT.
+// @version      0.2.19
+// @description  Cloud: one JSON file per save + index (fewer 409s); folder re-read on save. REST API + PAT.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
-// @donkeycode-pref {"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"If blank: donkeycode_github_owner → MikeBane57. WoF prefs are not used.","default":"","placeholder":""},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: donkeycode_github_repo → DonkeyCODE.","default":"","placeholder":""},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: donkeycode_github_branch → main.","default":"","placeholder":""},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON path in repo","description":"Path to worksheet-states.json — NOT the Wall of Fame file. Empty → WORKSHEET STATES/worksheet-states.json","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture: target + elementFromPoint.","default":false}}
+// @donkeycode-pref {"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"If blank: donkeycode_github_owner → MikeBane57. WoF prefs are not used.","default":"","placeholder":""},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: donkeycode_github_repo → DonkeyCODE.","default":"","placeholder":""},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: donkeycode_github_branch → main.","default":"","placeholder":""},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON / folder hint in repo","description":"Legacy: path to a single worksheet-states.json. Empty → WORKSHEET STATES/worksheet-states.json. New cloud saves go under a parallel …/sessions/ folder (index + one file per save; legacy file is still read if no index).","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture: target + elementFromPoint.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // ==/UserScript==
@@ -43,7 +43,6 @@
     var WS_CLOUD_LOG_ID = 'dc-ws-cloud-sync-log';
     /** Load WS modal: note elements updated on each cloud refresh so folder changes without re-open. */
     var loadFolderBannerLine = null;
-    var loadFolderBannerSrc = null;
 
     function isWorksheetPage() {
         try {
@@ -254,6 +253,31 @@
         return (trimText(getPref('worksheetStateRepoPath', '')) || CLOUD_FILE_PATH).replace(/^\/+/, '');
     }
 
+    /**
+     * Sharded storage: one small JSON per save under …/sessions/; index.json lists them.
+     * `worksheetStateRepoPath` still points at the legacy file (e.g. …/worksheet-states.json); we derive …/sessions from its directory.
+     */
+    function cloudStorageDir() {
+        var p = trimText(resolvedCloudPath() || '') || CLOUD_FILE_PATH;
+        p = p.replace(/\\/g, '/');
+        if (/\.json$/i.test(p)) {
+            return p.replace(/\/[^/]+$/, '/sessions') || 'WORKSHEET STATES/sessions';
+        }
+        var d = p.replace(/\/+$/, '');
+        if (!d) {
+            d = 'WORKSHEET STATES';
+        }
+        return d + '/sessions';
+    }
+
+    function indexJsonPath() {
+        return cloudStorageDir() + '/index.json';
+    }
+
+    function stateJsonPathForId(id) {
+        return cloudStorageDir() + '/state-' + trimText(String(id == null ? '' : id)) + '.json';
+    }
+
     function githubApiHeaders() {
         return {
             Authorization: 'Bearer ' + resolvedGithubPat(),
@@ -270,7 +294,7 @@
             .join('/');
     }
 
-    function rawCloudUrl() {
+    function rawUrlForPath(relPath) {
         return (
             'https://raw.githubusercontent.com/' +
             encodeURIComponent(resolvedCloudOwner()) +
@@ -279,19 +303,27 @@
             '/' +
             encodeURIComponent(resolvedCloudBranch()) +
             '/' +
-            encodedRepoPath(resolvedCloudPath())
+            encodedRepoPath(relPath)
         );
     }
 
-    function githubContentsApiUrl() {
+    function rawCloudUrl() {
+        return rawUrlForPath(resolvedCloudPath());
+    }
+
+    function githubContentsApiUrlForPath(relPath) {
         return (
             'https://api.github.com/repos/' +
             encodeURIComponent(resolvedCloudOwner()) +
             '/' +
             encodeURIComponent(resolvedCloudRepo()) +
             '/contents/' +
-            encodedRepoPath(resolvedCloudPath())
+            encodedRepoPath(relPath)
         );
+    }
+
+    function githubContentsApiUrl() {
+        return githubContentsApiUrlForPath(resolvedCloudPath());
     }
 
     function legacySessionFolderFromPrefs() {
@@ -352,27 +384,14 @@
         return leg;
     }
 
-    function sessionFolderPrefSourceLine() {
-        if (lastSessionFolderPrefKey === 'legacy') {
-            return 'Source: legacy fallbacks in script (set donkeycode_current_session_folder in DonkeyCODE to avoid).';
-        }
-        if (lastSessionFolderPrefKey) {
-            return 'Source: DonkeyCODE · ' + lastSessionFolderPrefKey;
-        }
-        return (
-            'Source: (no session key read — using Default). If folder looks stuck: do not add donkeycode_current_session_folder to ' +
-            '@donkeycode-pref (script defaults override live injection).'
-        );
-    }
-
     function updateLoadFolderBanner() {
-        if (!loadFolderBannerLine || !loadFolderBannerSrc) {
+        if (!loadFolderBannerLine) {
             return;
         }
+        donkeycodeCurrentSessionFolderRaw();
         var fk = sessionFolderKeyCanonical();
         loadFolderBannerLine.textContent =
             'Active session folder: ' + sessionFolderDisplayLabel(fk) + (fk !== '__default__' ? ' (' + fk + ')' : '');
-        loadFolderBannerSrc.textContent = sessionFolderPrefSourceLine();
     }
 
     /** User-visible label: "Default" for __default__, else the key (e.g. ops/team1). */
@@ -621,8 +640,8 @@
         return deets;
     }
 
-    function rawGithubGetCloud(cb) {
-        var rawUrl = rawCloudUrl();
+    function rawGithubGetPath(relPath, cb) {
+        var rawUrl = rawUrlForPath(relPath);
         appendCloudSyncLog('GET (raw) ' + rawUrl);
         gmXhr('GET', rawUrl, { Accept: 'application/json' }, null, function (status, text) {
             if (status === 404) {
@@ -630,10 +649,10 @@
                     appendCloudSyncLog(
                         'raw GET: HTTP 404 — not served from raw (private repo, or file not on CDN). Trying Contents API with PAT…'
                     );
-                    cb(null, null, null);
+                    cb(null, null);
                 } else {
                     appendCloudSyncLog('raw GET: HTTP 404 (no public file at this path) — using empty document.');
-                    cb(cloudDocFor([]), null, null);
+                    cb('{"states":[]}', null);
                 }
                 return;
             }
@@ -643,11 +662,7 @@
                         'raw.githubusercontent.com: ' +
                         (githubApiErrorSummary(0, text) || 'request failed (private repo needs PAT for API fallback).');
                     appendCloudSyncLog('raw GET failed: ' + err0);
-                    cb(
-                        null,
-                        err0,
-                        null
-                    );
+                    cb(null, err0);
                     return;
                 }
                 var err1 =
@@ -655,19 +670,30 @@
                     status +
                     (text ? ' — ' + githubApiErrorSummary(status, text) : ' (is the repo public, or is donkeycode_github_pat set for private read?)');
                 appendCloudSyncLog('raw GET failed: ' + err1);
-                cb(
-                    null,
-                    err1,
-                    null
-                );
+                cb(null, err1);
                 return;
             }
             appendCloudSyncLog('raw GET: OK, parsing JSON…');
+            cb(text || '', null);
+        });
+    }
+
+    function rawGithubGetCloud(cb) {
+        rawGithubGetPath(resolvedCloudPath(), function (text, rawErr) {
+            if (rawErr) {
+                cb(null, rawErr, null);
+                return;
+            }
+            if (text == null) {
+                appendCloudSyncLog('raw: no body (treat as empty legacy document).');
+                cb(cloudDocFor([]), null, null);
+                return;
+            }
             cb(parseCloudDocument(text || '{"states":[]}'), null, null);
         });
     }
 
-    function githubGetCloud(cb) {
+    function githubGetJsonPath(relPath, cb) {
         if (!resolvedGithubPat()) {
             var e =
                 'Set donkeycode_github_pat in DonkeyCODE: needed to read a private ' +
@@ -679,84 +705,217 @@
             cb(null, e, null);
             return;
         }
-        var cUrl = githubContentsApiUrl() + '?ref=' + encodeURIComponent(resolvedCloudBranch());
+        var cUrl = githubContentsApiUrlForPath(relPath) + '?ref=' + encodeURIComponent(resolvedCloudBranch());
         appendCloudSyncLog('GET (Contents API) ' + cUrl);
         gmXhr('GET', cUrl, githubApiHeaders(), null, function (status, text) {
             if (status === 404) {
-                appendCloudSyncLog('GET /contents/: HTTP 404 (no file yet) — using empty document.');
-                cb(cloudDocFor([]), null, null);
+                appendCloudSyncLog('GET /contents/: HTTP 404 (no file) — ' + relPath);
+                cb(null, null);
                 return;
             }
             if (status < 200 || status >= 300) {
                 var err2 =
-                    'GET /contents/' + resolvedCloudPath() + ' HTTP ' + status + ' — ' + githubApiErrorSummary(status, text);
+                    'GET /contents/' + relPath + ' HTTP ' + status + ' — ' + githubApiErrorSummary(status, text);
                 appendCloudSyncLog('GET /contents/ failed: ' + err2);
-                cb(null, err2, null);
+                cb(null, err2);
                 return;
             }
             var meta = safeJsonParse(text, null);
             if (!meta) {
-                appendCloudSyncLog('GET /contents/: could not parse metadata JSON.');
-                cb(null, 'Contents API: could not parse file metadata JSON.', null);
+                appendCloudSyncLog('GET /contents/: could not parse metadata JSON — ' + relPath);
+                cb(null, 'Contents API: could not parse file metadata JSON.');
                 return;
             }
             var fsha = meta && meta.sha ? String(meta.sha) : null;
-            appendCloudSyncLog('GET /contents/: OK, file sha: ' + (fsha ? fsha.slice(0, 7) + '…' : '(none)'));
+            appendCloudSyncLog('GET /contents/: OK, file sha: ' + (fsha ? fsha.slice(0, 7) + '…' : '(none)') + ' — ' + relPath);
+            /** Second return value: SHA string when present (for call sites that need it; optional). */
+            var decoded = decodeGithubFileContent(meta.content || '');
+            cb([decoded, fsha], null);
+        });
+    }
+
+    function githubGetCloud(cb) {
+        githubGetJsonPath(resolvedCloudPath(), function (res, apiErr) {
+            if (apiErr) {
+                cb(null, apiErr, null);
+                return;
+            }
+            if (!res || res[0] == null) {
+                appendCloudSyncLog('GET /contents/: HTTP 404 (no file yet) — using empty document.');
+                cb(cloudDocFor([]), null, null);
+                return;
+            }
             appendCloudSyncLog('GET /contents/: decoded blob, parsing document…');
-            cb(parseCloudDocument(decodeGithubFileContent(meta.content || '')), null, fsha);
+            cb(parseCloudDocument(res[0]), null, res[1] != null ? res[1] : null);
+        });
+    }
+
+    function parseIndexDocument(text) {
+        var doc = safeJsonParse(text, null);
+        if (!doc || typeof doc !== 'object') {
+            return { version: 1, stateIds: [], updatedAt: 0, format: 'worksheet-states-shard' };
+        }
+        var ids = Array.isArray(doc.stateIds) ? doc.stateIds.map(function (x) { return trimText(String(x)); }) : [];
+        return {
+            version: doc.version || 1,
+            stateIds: ids.filter(Boolean),
+            updatedAt: doc.updatedAt != null ? doc.updatedAt : 0,
+            format: 'worksheet-states-shard'
+        };
+    }
+
+    function mergeStateListsIntoDoc(baseDoc, moreStates) {
+        var seen = {};
+        var out = [];
+        var j;
+        var st;
+        var arr = (moreStates || []).concat(baseDoc.states || []);
+        for (j = 0; j < arr.length; j++) {
+            st = arr[j];
+            if (!st || !st.id) {
+                continue;
+            }
+            var id = String(st.id);
+            if (seen[id]) {
+                continue;
+            }
+            seen[id] = true;
+            st = normalizeCloudState(st);
+            if (st && !isExpiredState(st)) {
+                out.push(st);
+            }
+        }
+        return { version: 1, states: out, updatedAt: Date.now() };
+    }
+
+    function loadStatesFromIndexShard(ids, fromIdx, outStates, onDone) {
+        if (fromIdx >= ids.length) {
+            onDone(outStates);
+            return;
+        }
+        var id = ids[fromIdx];
+        if (!id) {
+            loadStatesFromIndexShard(ids, fromIdx + 1, outStates, onDone);
+            return;
+        }
+        var path = stateJsonPathForId(id);
+        githubGetJsonPath(path, function (res, err) {
+            if (err) {
+                appendCloudSyncLog('State file GET failed: ' + path + ' — ' + err);
+                loadStatesFromIndexShard(ids, fromIdx + 1, outStates, onDone);
+                return;
+            }
+            var blob = res && res[0];
+            if (blob == null) {
+                appendCloudSyncLog('State file missing (skipping id): ' + path);
+                loadStatesFromIndexShard(ids, fromIdx + 1, outStates, onDone);
+                return;
+            }
+            var one = safeJsonParse(String(blob), null);
+            if (!one) {
+                loadStatesFromIndexShard(ids, fromIdx + 1, outStates, onDone);
+                return;
+            }
+            if (one.states && one.states[0]) {
+                one = one.states[0];
+            }
+            var n = normalizeCloudState(one);
+            if (n && !isExpiredState(n)) {
+                outStates.push(n);
+            }
+            loadStatesFromIndexShard(ids, fromIdx + 1, outStates, onDone);
+        });
+    }
+
+    function fetchCloudStatesWithIndexThenLegacy(cb) {
+        var idxPath = indexJsonPath();
+        var usePat = resolvedGithubPat();
+        function loadLegacy(mergeWith) {
+            var prior = mergeWith && mergeWith.states && mergeWith.states.length ? mergeWith : null;
+            rawGithubGetCloud(function (doc, rawErr) {
+                if (doc) {
+                    var m = prior ? mergeStateListsIntoDoc(doc, prior.states) : doc;
+                    var n0 = (m.states && m.states.length) || 0;
+                    appendCloudSyncLog('Load OK (raw legacy ' + resolvedCloudPath() + '): ' + n0 + ' state(s).');
+                    cb(m, null, null);
+                    return;
+                }
+                appendCloudSyncLog('Falling back to GitHub Contents API (private repo or raw failed)…');
+                githubGetCloud(function (doc2, apiErr) {
+                    if (doc2) {
+                        var m2 = prior ? mergeStateListsIntoDoc(doc2, prior.states) : doc2;
+                        var n2 = (m2.states && m2.states.length) || 0;
+                        appendCloudSyncLog('Load OK (Contents API legacy): ' + n2 + ' state(s).');
+                        cb(m2, null, null);
+                        return;
+                    }
+                    if (prior) {
+                        appendCloudSyncLog('Legacy load failed but we have sharded data: ' + (apiErr || rawErr || 'unknown'));
+                        cb(prior, null, null);
+                        return;
+                    }
+                    var err = apiErr || rawErr || 'Could not load cloud JSON (check prefs, donkeycode_github_*, and path).';
+                    appendCloudSyncLog('Load failed: ' + err);
+                    cb(null, err, null);
+                });
+            });
+        }
+        if (usePat) {
+            appendCloudSyncLog('Cloud index: GET (Contents API) ' + idxPath);
+            githubGetJsonPath(idxPath, function (res) {
+                var idxBody = res && res[0];
+                if (idxBody) {
+                    var ind = parseIndexDocument(idxBody);
+                    if (ind.stateIds && ind.stateIds.length) {
+                        appendCloudSyncLog('Index: ' + ind.stateIds.length + ' state file(s) under ' + cloudStorageDir());
+                        loadStatesFromIndexShard(ind.stateIds, 0, [], function (sharded) {
+                            var part = cloudDocFor(sharded);
+                            loadLegacy(part);
+                        });
+                        return;
+                    }
+                }
+                loadLegacy(null);
+            });
+            return;
+        }
+        rawGithubGetPath(idxPath, function (text) {
+            if (text) {
+                var ind2 = parseIndexDocument(text);
+                if (ind2.stateIds && ind2.stateIds.length) {
+                    appendCloudSyncLog('Index (raw) lists ' + ind2.stateIds.length + ' file(s) — set PAT to load sharded state bodies from private repo.');
+                }
+            }
+            loadLegacy(null);
         });
     }
 
     function fetchCloudStates(cb) {
+        var dir = cloudStorageDir();
         appendCloudSyncLog(
-            'Cloud mode: GitHub REST Contents API only — repo ' +
+            'Cloud: GitHub REST — dir ' + dir + ' (index + per-state files); legacy ' + resolvedCloudPath() + ' | repo ' +
                 resolvedCloudOwner() +
                 '/' +
                 resolvedCloudRepo() +
                 '@' +
-                resolvedCloudBranch() +
-                ' path ' +
-                resolvedCloudPath() +
-                '. (worksheet state data prefs → donkeycode_github_*; no Wall of Fame fallbacks)'
+                resolvedCloudBranch()
         );
         if (!resolvedGithubPat()) {
-            appendCloudSyncLog('Set donkeycode_github_pat for GET/PUT Contents API (private repo or when raw is unavailable).');
+            appendCloudSyncLog('Set donkeycode_github_pat to load sharded state files; raw may only show legacy single JSON.');
         }
-        rawGithubGetCloud(function (doc, rawErr) {
-            if (doc) {
-                var n0 = (doc.states && doc.states.length) || 0;
-                appendCloudSyncLog('Load OK (raw): ' + n0 + ' state(s) after parse/prune. (no blob sha — direct PUT will GET if needed.)');
-                cb(doc, null, null);
-                return;
-            }
-            appendCloudSyncLog('Falling back to GitHub Contents API (private repo or raw failed)…');
-            githubGetCloud(function (doc2, apiErr, sha) {
-                if (doc2) {
-                    var n2 = (doc2.states && doc2.states.length) || 0;
-                    appendCloudSyncLog('Load OK (Contents API): ' + n2 + ' state(s) after parse/prune.');
-                    cb(doc2, null, sha);
-                    return;
-                }
-                var err =
-                    apiErr ||
-                    rawErr ||
-                    'Could not load cloud JSON (check prefs, donkeycode_github_*, and worksheetStateRepoPath).';
-                appendCloudSyncLog('Load failed: ' + err);
-                cb(null, err, null);
-            });
-        });
+        fetchCloudStatesWithIndexThenLegacy(cb);
     }
 
-    function getContentsMetadataForPut(cb) {
+    function getContentsMetadataForPathPut(relPath, cb) {
         if (!resolvedGithubPat()) {
             cb(null, 'No PAT for GET /contents/');
             return;
         }
-        var cUrl = githubContentsApiUrl() + '?ref=' + encodeURIComponent(resolvedCloudBranch());
+        var cUrl = githubContentsApiUrlForPath(relPath) + '?ref=' + encodeURIComponent(resolvedCloudBranch());
         appendCloudSyncLog('PUT prep: GET metadata + SHA ' + cUrl);
         gmXhr('GET', cUrl, githubApiHeaders(), null, function (status, text) {
             if (status === 404) {
-                appendCloudSyncLog('PUT prep: file absent (HTTP 404) — will create on PUT without sha.');
+                appendCloudSyncLog('PUT prep: file absent (HTTP 404) — will create on PUT without sha. Path: ' + relPath);
                 cb({ sha: null }, null);
                 return;
             }
@@ -776,30 +935,28 @@
     }
 
     /**
-     * Direct Contents API PUT. Always refetches file SHA via GET /contents/ immediately before each PUT
-     * (saves that loaded via raw can have a stale or missing sha — that caused HTTP 409).
-     * On 409 (concurrent update), refetch SHA and retry up to 5 times with short delay.
-     * knownSha: ignored; kept for call-site compatibility.
+     * Direct Contents API PUT to `relPath` in the repo. Always refetches SHA before each attempt; 409 retry.
      */
-    function putCloudDocumentDirect(finalDoc, knownSha, cb) {
+    function putJsonAtCloudPath(relPath, jsonObj, commitMessage, cb) {
         if (!resolvedGithubPat()) {
             var perr =
                 'Direct mode: set donkeycode_github_pat with Contents read/write for repo ' +
                 resolvedCloudOwner() +
                 '/' +
                 resolvedCloudRepo() +
-                '. (Reading the file from raw.githubusercontent.com does not use your PAT; only API PUT can save.)';
+                '.';
             appendCloudSyncLog('PUT aborted: ' + perr);
             cb(false, perr);
             return;
         }
         var branch = resolvedCloudBranch();
-        var path = resolvedCloudPath();
-        var jsonStr = JSON.stringify(finalDoc, null, 2) + '\n';
+        var path = relPath;
+        var jsonStr = JSON.stringify(jsonObj, null, 2) + '\n';
         var max409 = 5;
         var att = 0;
+        var baseMsg = commitMessage || 'Worksheet state: update (DonkeyCODE API)';
         function doPutWithFreshSha() {
-            getContentsMetadataForPut(function (m, err) {
+            getContentsMetadataForPathPut(path, function (m, err) {
                 if (err) {
                     appendCloudSyncLog('PUT: could not get file SHA: ' + err);
                     cb(false, err);
@@ -807,18 +964,18 @@
                 }
                 var sha = m && m.sha ? String(m.sha) : null;
                 var body = {
-                    message: att > 0 ? 'Worksheet states: sync (retry ' + att + ' after 409)' : 'Worksheet states: sync (DonkeyCODE direct API)',
+                    message: att > 0 ? baseMsg + ' (retry ' + att + ' after 409)' : baseMsg,
                     content: utf8ToBase64(jsonStr),
                     branch: branch
                 };
                 if (sha) {
                     body.sha = sha;
                 }
-                var url = githubContentsApiUrl();
+                var url = githubContentsApiUrlForPath(path);
                 appendCloudSyncLog(
                     'PUT Contents ' +
                         path +
-                        (sha ? ' (sha ' + String(sha).slice(0, 7) + '…, fresh from GET /contents/)' : ' (new file)') +
+                        (sha ? ' (sha ' + String(sha).slice(0, 7) + '…' : ' (new file)') +
                         ' on ' +
                         branch
                 );
@@ -833,7 +990,7 @@
                     if (status === 409) {
                         att += 1;
                         if (att < max409) {
-                            appendCloudSyncLog('PUT HTTP 409 — file changed (another tab or race). Refetching SHA, retry ' + att + '/' + (max409 - 1) + '…');
+                            appendCloudSyncLog('PUT HTTP 409 — ' + path + ' changed. Refetching SHA, retry ' + att + '/' + (max409 - 1) + '…');
                             setTimeout(function () {
                                 doPutWithFreshSha();
                             }, 120);
@@ -850,25 +1007,92 @@
                 });
             });
         }
-        appendCloudSyncLog(
-            'PUT: always using fresh SHAs from GET /contents/ (ignores stale sha from raw load) — single file ' + path
-        );
+        appendCloudSyncLog('PUT: fresh SHAs for each attempt — ' + path);
         doPutWithFreshSha();
     }
 
-    function postCloudAfterMerge(mergedDoc, fileSha, cb) {
-        appendCloudSyncLog(
-            'Publish: GitHub REST Contents API PUT — api.github.com/repos/' +
-                resolvedCloudOwner() +
-                '/' +
-                resolvedCloudRepo() +
-                '/contents/' +
-                resolvedCloudPath() +
-                ' on ' +
-                resolvedCloudBranch()
+    function putCloudDocumentDirect(finalDoc, knownSha, cb) {
+        putJsonAtCloudPath(
+            resolvedCloudPath(),
+            finalDoc,
+            'Worksheet states: sync legacy file (DonkeyCODE API)',
+            cb
         );
-        var finalDoc = cloudDocFor((mergedDoc && mergedDoc.states) || []);
-        putCloudDocumentDirect(finalDoc, fileSha, cb);
+    }
+
+    function postCloudAfterMerge(mergedDoc, fileSha, cb) {
+        putCloudDocumentDirect(cloudDocFor((mergedDoc && mergedDoc.states) || []), fileSha, cb);
+    }
+
+    function deleteFileAtCloudPath(relPath, cb) {
+        if (!resolvedGithubPat()) {
+            cb(false, 'No PAT for delete');
+            return;
+        }
+        getContentsMetadataForPathPut(relPath, function (m, err) {
+            if (err) {
+                cb(false, err);
+                return;
+            }
+            if (!m || m.sha == null) {
+                appendCloudSyncLog('Delete: file absent, skip — ' + relPath);
+                cb(true, null);
+                return;
+            }
+            var sha = String(m.sha);
+            var delUrl = githubContentsApiUrlForPath(relPath);
+            var body = {
+                message: 'Worksheet state: remove ' + relPath,
+                sha: sha,
+                branch: resolvedCloudBranch()
+            };
+            appendCloudSyncLog('DELETE Contents ' + relPath);
+            var headers = githubApiHeaders();
+            headers['Content-Type'] = 'application/json';
+            gmXhr('DELETE', delUrl, headers, body, function (st, text) {
+                if (st === 200) {
+                    appendCloudSyncLog('DELETE OK: HTTP 200 ' + relPath);
+                    cb(true, null);
+                    return;
+                }
+                if (st === 404) {
+                    appendCloudSyncLog('DELETE: already gone (404) ' + relPath);
+                    cb(true, null);
+                    return;
+                }
+                cb(false, 'DELETE failed HTTP ' + st + ' — ' + githubApiErrorSummary(st, text));
+            });
+        });
+    }
+
+    function readCloudIndexForUpdate(cb) {
+        if (!resolvedGithubPat()) {
+            cb(null, null, 'No PAT');
+            return;
+        }
+        var idxP = indexJsonPath();
+        githubGetJsonPath(idxP, function (res, err) {
+            if (err) {
+                cb(null, null, err);
+                return;
+            }
+            var text = res && res[0];
+            if (text == null || text === '') {
+                cb(
+                    { version: 1, stateIds: [], format: 'worksheet-states-shard', updatedAt: 0 },
+                    {},
+                    null
+                );
+                return;
+            }
+            var ind = parseIndexDocument(String(text));
+            var seen = {};
+            var k;
+            for (k = 0; k < ind.stateIds.length; k++) {
+                seen[trimText(String(ind.stateIds[k]))] = true;
+            }
+            cb(ind, seen, null);
+        });
     }
 
     function saveStateToCloud(state, name, cb) {
@@ -879,6 +1103,8 @@
             }
             return;
         }
+        /** Re-read DonkeyCODE session folder on every save (not cached at modal open). */
+        donkeycodeCurrentSessionFolderRaw();
         if (name == null) {
             name = defaultSaveLabelFromState(state);
         }
@@ -894,72 +1120,99 @@
         state.savedAt = nowIso();
         state.updatedAt = state.savedAt;
         state.expiresAt = expiresAtFor(state.savedAt);
-        toast('Loading cloud states before save...', false);
-        appendCloudSyncLog(
-            'saveStateToCloud: name="' + name + '", folder=' + folderKey + ' (' + folderLabel + '), items=' + (state.items && state.items.length ? state.items.length : 0)
-        );
-        appendCloudSyncLog(
-            'saveStateToCloud: donkeycode_github_pat ' +
-                (resolvedGithubPat() ? 'is set (required for direct API save)' : 'is EMPTY') +
-                ' — target ' +
-                resolvedCloudOwner() +
-                '/' +
-                resolvedCloudRepo() +
-                ' path ' +
-                resolvedCloudPath()
-        );
-        appendCloudSyncLog('saveStateToCloud: ' + sessionFolderPrefSourceLine());
-        fetchCloudStates(function (doc, loadErr, fileSha) {
-            if (!doc) {
-                toast('Could not load cloud: ' + (loadErr || 'unknown error'), true);
-                if (cb) {
-                    cb(false);
-                }
-                return;
+        var norm = normalizeCloudState(state);
+        if (!norm) {
+            toast('Could not normalize state for cloud.', true);
+            if (cb) {
+                cb(false);
             }
-            if (!resolvedGithubPat()) {
-                var needPat =
-                    'To save, set donkeycode_github_pat (classic: repo scope, or fine-grained: Contents R/W) for ' +
-                    resolvedCloudOwner() +
-                    '/' +
-                    resolvedCloudRepo() +
-                    '. The list can load from raw.githubusercontent.com without a token; only the GitHub API can write the file.';
-                appendCloudSyncLog('saveStateToCloud ABORT: ' + needPat);
-                toast(needPat, true);
-                if (cb) {
-                    cb(false);
-                }
-                return;
+            return;
+        }
+        toast('Saving to cloud...', false);
+        appendCloudSyncLog(
+            'saveStateToCloud: name="' + name + '", id=' + norm.id + ', folder=' + folderKey + ' (' + folderLabel + '), items=' + norm.items.length
+        );
+        appendCloudSyncLog('saveStateToCloud: ' + (resolvedGithubPat() ? 'PAT set' : 'PAT missing') + ' — shard dir ' + cloudStorageDir());
+        if (!resolvedGithubPat()) {
+            var needPat =
+                'To save, set donkeycode_github_pat (Contents R/W) for ' + resolvedCloudOwner() + '/' + resolvedCloudRepo() + '.';
+            appendCloudSyncLog('saveStateToCloud ABORT: ' + needPat);
+            toast(needPat, true);
+            if (cb) {
+                cb(false);
             }
-            var states = (doc.states || []).filter(function (st) {
-                return st && st.id !== state.id && !isExpiredState(st);
-            });
-            states.unshift(normalizeCloudState(state));
-            appendCloudSyncLog(
-                'Merged new state; publishing, total states=' +
-                    states.length +
-                    ' — PUT will refetch file SHA from Contents API (raw load has no/could have stale sha).'
-            );
-            postCloudAfterMerge(cloudDocFor(states), fileSha, function (ok, err) {
-                if (!ok) {
-                    toast(err || 'Cloud save failed.', true);
+            return;
+        }
+        readCloudIndexForUpdate(function (indObj, seen, idxErr) {
+            if (idxErr) {
+                appendCloudSyncLog('Index read: ' + idxErr + ' (treating as empty index)');
+            }
+            if (!indObj) {
+                indObj = { version: 1, stateIds: [], format: 'worksheet-states-shard', updatedAt: 0 };
+            }
+            if (!seen) {
+                seen = {};
+            }
+            var idStr = String(norm.id);
+            var nextIds = indObj.stateIds ? indObj.stateIds.slice() : [];
+            if (seen && seen[idStr] === true) {
+            } else {
+                nextIds.unshift(idStr);
+            }
+            if (!seen) {
+                seen = {};
+            }
+            seen[idStr] = true;
+            var newIndex = {
+                version: 1,
+                format: 'worksheet-states-shard',
+                stateIds: nextIds.filter(function (x, j, a) {
+                    return x && a.indexOf(x) === j;
+                }),
+                updatedAt: Date.now()
+            };
+            var oneFile = { version: 1, state: norm, updatedAt: Date.now() };
+            var statePath = stateJsonPathForId(idStr);
+            appendCloudSyncLog('Sharded save: PUT ' + statePath + ' then ' + indexJsonPath());
+            putJsonAtCloudPath(
+                statePath,
+                oneFile,
+                'Worksheet state: ' + name,
+                function (ok1, err1) {
+                if (!ok1) {
+                    toast(err1 || 'Cloud save failed (state file).', true);
                     if (cb) {
                         cb(false);
                     }
                     return;
                 }
-                toast('Saved to cloud: "' + name + '" in ' + resolvedCloudOwner() + '/' + resolvedCloudBranch() + ' ' + resolvedCloudPath(), false);
-                refreshCloudRows();
-                if (cb) {
-                    cb(true);
+                putJsonAtCloudPath(
+                    indexJsonPath(),
+                    newIndex,
+                    'Worksheet state index: add ' + idStr,
+                    function (ok2, err2) {
+                    if (!ok2) {
+                        appendCloudSyncLog('WARNING: state file saved but index update failed: ' + (err2 || ''));
+                        toast(err2 || 'Saved state file but index update failed — refresh the list or retry.', true);
+                        if (cb) {
+                            cb(false);
+                        }
+                        return;
+                    }
+                    toast('Saved to cloud: "' + name + '" @ ' + statePath, false);
+                    refreshCloudRows();
+                    if (cb) {
+                        cb(true);
+                    }
                 }
-            });
+                );
+            }
+            );
         });
     }
 
     /**
-     * Remove one state from the shared cloud document by id (Load WS → cloud rows).
-     * Same publish path as save: GitHub Contents API PUT only.
+     * Remove one state: sharded path = DELETE state file + update index; else legacy single JSON.
      */
     function deleteCloudStateById(stateId, nameHint) {
         var sid = trimText(String(stateId == null ? '' : stateId));
@@ -968,44 +1221,77 @@
             return;
         }
         var label = trimText(String(nameHint || '')) || sid;
+        donkeycodeCurrentSessionFolderRaw();
         toast('Removing from cloud...', false);
         appendCloudSyncLog('deleteCloudStateById: id="' + sid + '", label="' + label + '"');
-        fetchCloudStates(function (doc, loadErr, fileSha) {
-            if (!doc) {
-                toast('Could not load cloud: ' + (loadErr || 'unknown error'), true);
-                return;
-            }
-            if (!resolvedGithubPat()) {
-                var needPat =
-                    'To delete, set donkeycode_github_pat (Contents R/W) for ' +
-                    resolvedCloudOwner() +
-                    '/' +
-                    resolvedCloudRepo() +
-                    '.';
-                appendCloudSyncLog('deleteCloudStateById ABORT: ' + needPat);
-                toast(needPat, true);
-                return;
-            }
-            var arr = (doc.states || []).filter(function (st) {
-                return st && !isExpiredState(st);
-            });
-            var before = arr.length;
-            var next = arr.filter(function (st) {
-                return trimText(String(st && st.id != null ? st.id : '')) !== sid;
-            });
-            if (next.length === before) {
-                toast('That cloud state was not found (expired, wrong id, or already removed).', true);
-                refreshCloudRows();
-                return;
-            }
-            appendCloudSyncLog('deleteCloudStateById: publishing, remaining states=' + next.length);
-            postCloudAfterMerge(cloudDocFor(next), fileSha, function (ok, err) {
-                if (!ok) {
-                    toast(err || 'Cloud delete failed.', true);
+        if (!resolvedGithubPat()) {
+            var needPatD =
+                'To delete, set donkeycode_github_pat (Contents R/W) for ' + resolvedCloudOwner() + '/' + resolvedCloudRepo() + '.';
+            appendCloudSyncLog('deleteCloudStateById ABORT: ' + needPatD);
+            toast(needPatD, true);
+            return;
+        }
+        readCloudIndexForUpdate(function (indObj, seenMap) {
+            var inShard = indObj && indObj.stateIds && indObj.stateIds.indexOf(sid) >= 0;
+            if (inShard) {
+                var statePath = stateJsonPathForId(sid);
+                deleteFileAtCloudPath(statePath, function (okDel) {
+                if (!okDel) {
+                    toast('Could not remove state file from cloud.', true);
                     return;
                 }
-                toast('Removed from cloud: "' + label + '"', false);
-                refreshCloudRows();
+                var nextIds = (indObj.stateIds || []).filter(function (x) {
+                    return trimText(String(x)) !== sid;
+                });
+                var newIndex = {
+                    version: 1,
+                    format: 'worksheet-states-shard',
+                    stateIds: nextIds,
+                    updatedAt: Date.now()
+                };
+                putJsonAtCloudPath(
+                    indexJsonPath(),
+                    newIndex,
+                    'Worksheet state index: remove ' + sid,
+                    function (ok2, err2) {
+                    if (!ok2) {
+                        toast(err2 || 'Removed file but index update failed — refresh or retry.', true);
+                        refreshCloudRows();
+                        return;
+                    }
+                    toast('Removed from cloud: "' + label + '"', false);
+                    refreshCloudRows();
+                }
+                );
+            });
+                return;
+            }
+            fetchCloudStates(function (doc, loadErr) {
+                if (!doc) {
+                    toast('Could not load cloud: ' + (loadErr || 'unknown error'), true);
+                    return;
+                }
+                var arr = (doc.states || []).filter(function (st) {
+                    return st && !isExpiredState(st);
+                });
+                var before = arr.length;
+                var next = arr.filter(function (st) {
+                    return trimText(String(st && st.id != null ? st.id : '')) !== sid;
+                });
+                if (next.length === before) {
+                    toast('That cloud state was not found (expired, wrong id, or already removed).', true);
+                    refreshCloudRows();
+                    return;
+                }
+                appendCloudSyncLog('delete (legacy file): remaining states=' + next.length);
+                postCloudAfterMerge(cloudDocFor(next), null, function (ok, err) {
+                    if (!ok) {
+                        toast(err || 'Cloud delete failed.', true);
+                        return;
+                    }
+                    toast('Removed from cloud: "' + label + '"', false);
+                    refreshCloudRows();
+                });
             });
         });
     }
@@ -1033,7 +1319,7 @@
             updateLoadFolderBanner();
             if (!doc) {
                 cloudRowsHost.textContent =
-                    'Could not load cloud: ' + (loadErr || 'Check PAT (repo + workflow scope), team key = WOF/WORKSHEET secret, and repo/branch/path.');
+                    'Could not load cloud: ' + (loadErr || 'Check donkeycode_github_pat and repo/branch/path in DonkeyCODE preferences.');
                 return;
             }
             var folderKey = sessionFolderKeyCanonical();
@@ -1105,7 +1391,7 @@
             });
         } else {
             delCloud.disabled = true;
-            delCloud.title = 'This entry has no id — cannot delete (re-save from a current script).';
+            delCloud.title = 'This entry has no id — cannot delete.';
         }
         actions.appendChild(recall);
         actions.appendChild(delCloud);
@@ -2084,7 +2370,6 @@
         localRowsHost = null;
         wsCloudLogPre = null;
         loadFolderBannerLine = null;
-        loadFolderBannerSrc = null;
     }
 
     function openRecallDialog() {
@@ -2314,27 +2599,16 @@
 
         var loadFolderLine = document.createElement('div');
         loadFolderLine.className = 'dc-wss-note';
+        donkeycodeCurrentSessionFolderRaw();
         var fkNow = sessionFolderKeyCanonical();
         loadFolderLine.textContent =
             'Active session folder: ' + sessionFolderDisplayLabel(fkNow) + (fkNow !== '__default__' ? ' (' + fkNow + ')' : '');
-        var loadFolderSrc = document.createElement('div');
-        loadFolderSrc.className = 'dc-wss-note';
-        loadFolderSrc.style.marginTop = '2px';
-        loadFolderSrc.style.fontSize = '10px';
-        loadFolderSrc.style.color = '#95a5a6';
-        loadFolderSrc.textContent = sessionFolderPrefSourceLine();
         loadFolderBannerLine = loadFolderLine;
-        loadFolderBannerSrc = loadFolderSrc;
         body.appendChild(loadFolderLine);
-        body.appendChild(loadFolderSrc);
 
         addSectionTitle(body, 'Local saves');
-        var localNote = document.createElement('div');
-        localNote.className = 'dc-wss-note';
-        localNote.textContent = 'Local saves are listed first and stay in this browser only.';
         localRowsHost = document.createElement('div');
         localRowsHost.className = 'dc-wss-local-rows';
-        body.appendChild(localNote);
         body.appendChild(localRowsHost);
 
         addSectionTitle(body, 'Cloud saves');
