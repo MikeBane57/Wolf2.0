@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.10
-// @description  Cloud save logs direct PUT vs Actions; raw 404→API with PAT; session folder in UI.
+// @version      0.2.11
+// @description  Cloud save requires PAT for direct PUT (raw can load without); clearer abort + logs.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -657,7 +657,14 @@
 
     function putCloudDocumentDirect(finalDoc, knownSha, cb) {
         if (!resolvedGithubPat()) {
-            cb(false, 'Direct mode: set donkeycode_github_pat (Contents: read/write on ' + resolvedCloudOwner() + '/' + resolvedCloudRepo() + ').');
+            var perr =
+                'Direct mode: set donkeycode_github_pat with Contents read/write for repo ' +
+                resolvedCloudOwner() +
+                '/' +
+                resolvedCloudRepo() +
+                '. (Reading the file from raw.githubusercontent.com does not use your PAT; only API PUT can save.)';
+            appendCloudSyncLog('PUT aborted: ' + perr);
+            cb(false, perr);
             return;
         }
         var branch = resolvedCloudBranch();
@@ -831,9 +838,33 @@
         appendCloudSyncLog(
             'saveStateToCloud: name="' + name + '", folder=' + folderKey + ' (' + folderLabel + '), items=' + (state.items && state.items.length ? state.items.length : 0)
         );
+        appendCloudSyncLog(
+            'saveStateToCloud: donkeycode_github_pat ' +
+                (resolvedGithubPat() ? 'is set (required for direct API save)' : 'is EMPTY') +
+                ' — target ' +
+                resolvedCloudOwner() +
+                '/' +
+                resolvedCloudRepo() +
+                ' path ' +
+                resolvedCloudPath()
+        );
         fetchCloudStates(function (doc, loadErr, fileSha) {
             if (!doc) {
                 toast('Could not load cloud: ' + (loadErr || 'unknown error'), true);
+                if (cb) {
+                    cb(false);
+                }
+                return;
+            }
+            if (!useWorksheetGithubActions() && !resolvedGithubPat()) {
+                var needPat =
+                    'To save, set donkeycode_github_pat (classic: repo scope, or fine-grained: Contents R/W) for ' +
+                    resolvedCloudOwner() +
+                    '/' +
+                    resolvedCloudRepo() +
+                    '. The list can load from raw.githubusercontent.com without a token; only the GitHub API can write the file.';
+                appendCloudSyncLog('saveStateToCloud ABORT: ' + needPat);
+                toast(needPat, true);
                 if (cb) {
                     cb(false);
                 }
