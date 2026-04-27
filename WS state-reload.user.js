@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.15
-// @description  State capture: all tails first (every N## in text), then lines only if no real tail. Cloud delete, etc.
+// @version      0.2.16
+// @description  Cloud PUT: fresh SHA before each write; multi-409 retry. No Actions by default. Tail capture, etc.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
-// @donkeycode-pref {"worksheetStateUseGithubActions":{"type":"boolean","group":"Worksheet state — GitHub","label":"Use GitHub Actions (repository_dispatch)","description":"Off (default): direct Contents API PUT with donkeycode_github_pat. On: POST …/dispatches (worksheet-state-put) + team key to match WOF/WORKSHEET repo secret.","default":false},"worksheetStateProxyUrl":{"type":"string","group":"Worksheet state — GitHub","label":"Team proxy base URL (optional)","description":"Reserved: Wall of Fame uses wallOfFameProxyUrl for a server-side host. Worksheet state does not call a proxy yet — use Actions or direct API.","default":"","placeholder":""},"worksheetStateTeamKey":{"type":"string","group":"Worksheet state — GitHub","label":"Team key (Actions mode)","description":"Same value as repo secret WORKSHEET_STATE_TEAM_KEY or WOF_TEAM_KEY (Actions workflow). If blank, uses wallOfFameTeamKey. Not your GitHub PAT.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"Repo for worksheet-states.json. If blank: wallOfFameDataOwner → donkeycode_github_owner → MikeBane57.","default":"","placeholder":"MikeBane57"},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: wallOfFameDataRepo → donkeycode_github_repo → Wolf2.0.","default":"","placeholder":"Wolf2.0"},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: wallOfFameDataBranch → donkeycode_github_branch → main.","default":"","placeholder":"main"},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON path in repo","description":"Path to worksheet-states.json — NOT the Wall of Fame file. Empty → WORKSHEET STATES/worksheet-states.json","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture: target + elementFromPoint.","default":false}}
+// @donkeycode-pref {"worksheetStateUseGithubActions":{"type":"boolean","group":"Worksheet state — GitHub","label":"Use GitHub Actions (repository_dispatch)","description":"Keep OFF: direct GitHub Contents API GET/PUT only (donkeycode_github_pat). On only if you use the optional workflow. Default false.","default":false},"worksheetStateProxyUrl":{"type":"string","group":"Worksheet state — GitHub","label":"Team proxy base URL (optional)","description":"Reserved: Wall of Fame uses wallOfFameProxyUrl for a server-side host. Worksheet state does not call a proxy yet — use Actions or direct API.","default":"","placeholder":""},"worksheetStateTeamKey":{"type":"string","group":"Worksheet state — GitHub","label":"Team key (Actions mode)","description":"Same value as repo secret WORKSHEET_STATE_TEAM_KEY or WOF_TEAM_KEY (Actions workflow). If blank, uses wallOfFameTeamKey. Not your GitHub PAT.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"Repo for worksheet-states.json. If blank: wallOfFameDataOwner → donkeycode_github_owner → MikeBane57.","default":"","placeholder":"MikeBane57"},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: wallOfFameDataRepo → donkeycode_github_repo → Wolf2.0.","default":"","placeholder":"Wolf2.0"},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: wallOfFameDataBranch → donkeycode_github_branch → main.","default":"","placeholder":"main"},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON path in repo","description":"Path to worksheet-states.json — NOT the Wall of Fame file. Empty → WORKSHEET STATES/worksheet-states.json","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture: target + elementFromPoint.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // ==/UserScript==
@@ -816,6 +816,12 @@
         });
     }
 
+    /**
+     * Direct Contents API PUT. Always refetches file SHA via GET /contents/ immediately before each PUT
+     * (saves that loaded via raw can have a stale or missing sha — that caused HTTP 409).
+     * On 409 (concurrent update), refetch SHA and retry up to 5 times with short delay.
+     * knownSha: ignored; kept for call-site compatibility.
+     */
     function putCloudDocumentDirect(finalDoc, knownSha, cb) {
         if (!resolvedGithubPat()) {
             var perr =
@@ -831,55 +837,64 @@
         var branch = resolvedCloudBranch();
         var path = resolvedCloudPath();
         var jsonStr = JSON.stringify(finalDoc, null, 2) + '\n';
-        function doPut(sha, isRetry) {
-            var body = {
-                message: isRetry ? 'Worksheet states: sync (retry after conflict)' : 'Worksheet states: sync (DonkeyCODE direct API)',
-                content: utf8ToBase64(jsonStr),
-                branch: branch
-            };
-            if (sha) {
-                body.sha = sha;
-            }
-            var url = githubContentsApiUrl();
-            appendCloudSyncLog(
-                'PUT Contents ' + path + (sha ? ' (sha ' + String(sha).slice(0, 7) + '…)' : ' (new file)') + ' on ' + branch
-            );
-            var headers = githubApiHeaders();
-            headers['Content-Type'] = 'application/json';
-            gmXhr('PUT', url, headers, body, function (status, text) {
-                if (status === 200 || status === 201) {
-                    appendCloudSyncLog('PUT succeeded: HTTP ' + status);
-                    cb(true, null);
-                    return;
-                }
-                if (status === 409 && !isRetry) {
-                    appendCloudSyncLog('PUT HTTP 409 conflict — refetching SHA, retrying once…');
-                    getContentsMetadataForPut(function (m, err) {
-                        if (err || !m) {
-                            cb(false, err || '409 and could not refetch SHA');
-                            return;
-                        }
-                        doPut(m.sha, true);
-                    });
-                    return;
-                }
-                var detail = githubApiErrorSummary(status, text);
-                var msg = 'PUT failed: HTTP ' + status + (detail ? ' — ' + detail : '');
-                appendCloudSyncLog(msg);
-                cb(false, msg);
-            });
-        }
-        if (knownSha) {
-            doPut(knownSha, false);
-        } else {
+        var max409 = 5;
+        var att = 0;
+        function doPutWithFreshSha() {
             getContentsMetadataForPut(function (m, err) {
                 if (err) {
+                    appendCloudSyncLog('PUT: could not get file SHA: ' + err);
                     cb(false, err);
                     return;
                 }
-                doPut(m && m.sha ? m.sha : null, false);
+                var sha = m && m.sha ? String(m.sha) : null;
+                var body = {
+                    message: att > 0 ? 'Worksheet states: sync (retry ' + att + ' after 409)' : 'Worksheet states: sync (DonkeyCODE direct API)',
+                    content: utf8ToBase64(jsonStr),
+                    branch: branch
+                };
+                if (sha) {
+                    body.sha = sha;
+                }
+                var url = githubContentsApiUrl();
+                appendCloudSyncLog(
+                    'PUT Contents ' +
+                        path +
+                        (sha ? ' (sha ' + String(sha).slice(0, 7) + '…, fresh from GET /contents/)' : ' (new file)') +
+                        ' on ' +
+                        branch
+                );
+                var headers = githubApiHeaders();
+                headers['Content-Type'] = 'application/json';
+                gmXhr('PUT', url, headers, body, function (status, text) {
+                    if (status === 200 || status === 201) {
+                        appendCloudSyncLog('PUT succeeded: HTTP ' + status);
+                        cb(true, null);
+                        return;
+                    }
+                    if (status === 409) {
+                        att += 1;
+                        if (att < max409) {
+                            appendCloudSyncLog('PUT HTTP 409 — file changed (another tab or race). Refetching SHA, retry ' + att + '/' + (max409 - 1) + '…');
+                            setTimeout(function () {
+                                doPutWithFreshSha();
+                            }, 120);
+                            return;
+                        }
+                    }
+                    var detail = githubApiErrorSummary(status, text);
+                    var msg = 'PUT failed: HTTP ' + status + (detail ? ' — ' + detail : '');
+                    if (status === 409) {
+                        msg += ' (still conflicting after ' + (max409 - 1) + ' retries; save again in a few seconds if needed.)';
+                    }
+                    appendCloudSyncLog(msg);
+                    cb(false, msg);
+                });
             });
         }
+        appendCloudSyncLog(
+            'PUT: always using fresh SHAs from GET /contents/ (ignores stale sha from raw load) — single file ' + path
+        );
+        doPutWithFreshSha();
     }
 
     function postCloudAfterMerge(mergedDoc, fileSha, cb) {
@@ -1036,7 +1051,11 @@
                 return st && st.id !== state.id && !isExpiredState(st);
             });
             states.unshift(normalizeCloudState(state));
-            appendCloudSyncLog('Merged new state; publishing, total states=' + states.length + (fileSha ? ' (use GET sha: ' + String(fileSha).slice(0, 7) + '…)' : ' (raw load: refetch sha if PUT)') + '…');
+            appendCloudSyncLog(
+                'Merged new state; publishing, total states=' +
+                    states.length +
+                    ' — PUT will refetch file SHA from Contents API (raw load has no/could have stale sha).'
+            );
             postCloudAfterMerge(cloudDocFor(states), fileSha, function (ok, err) {
                 if (!ok) {
                     toast(err || 'Cloud save failed.', true);
