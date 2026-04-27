@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.16
-// @description  Cloud PUT: fresh SHA before each write; multi-409 retry. No Actions by default. Tail capture, etc.
+// @version      0.2.17
+// @description  Cloud repo: worksheetState* + donkeycode_github_* only (no Wall of Fame fallbacks). PUT retry, tails, etc.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
-// @donkeycode-pref {"worksheetStateUseGithubActions":{"type":"boolean","group":"Worksheet state — GitHub","label":"Use GitHub Actions (repository_dispatch)","description":"Keep OFF: direct GitHub Contents API GET/PUT only (donkeycode_github_pat). On only if you use the optional workflow. Default false.","default":false},"worksheetStateProxyUrl":{"type":"string","group":"Worksheet state — GitHub","label":"Team proxy base URL (optional)","description":"Reserved: Wall of Fame uses wallOfFameProxyUrl for a server-side host. Worksheet state does not call a proxy yet — use Actions or direct API.","default":"","placeholder":""},"worksheetStateTeamKey":{"type":"string","group":"Worksheet state — GitHub","label":"Team key (Actions mode)","description":"Same value as repo secret WORKSHEET_STATE_TEAM_KEY or WOF_TEAM_KEY (Actions workflow). If blank, uses wallOfFameTeamKey. Not your GitHub PAT.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"Repo for worksheet-states.json. If blank: wallOfFameDataOwner → donkeycode_github_owner → MikeBane57.","default":"","placeholder":"MikeBane57"},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: wallOfFameDataRepo → donkeycode_github_repo → Wolf2.0.","default":"","placeholder":"Wolf2.0"},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: wallOfFameDataBranch → donkeycode_github_branch → main.","default":"","placeholder":"main"},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON path in repo","description":"Path to worksheet-states.json — NOT the Wall of Fame file. Empty → WORKSHEET STATES/worksheet-states.json","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture: target + elementFromPoint.","default":false}}
+// @donkeycode-pref {"worksheetStateUseGithubActions":{"type":"boolean","group":"Worksheet state — GitHub","label":"Use GitHub Actions (repository_dispatch)","description":"Keep OFF: direct GitHub Contents API GET/PUT only (donkeycode_github_pat). On only if you use the optional workflow. Default false.","default":false},"worksheetStateProxyUrl":{"type":"string","group":"Worksheet state — GitHub","label":"Team proxy base URL (optional)","description":"Reserved: Wall of Fame uses wallOfFameProxyUrl for a server-side host. Worksheet state does not call a proxy yet — use Actions or direct API.","default":"","placeholder":""},"worksheetStateTeamKey":{"type":"string","group":"Worksheet state — GitHub","label":"Team key (Actions mode only)","description":"WORKSHEET_STATE_TEAM_KEY in repo (Actions). Not used for direct API. Not your PAT.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"If blank: donkeycode_github_owner → MikeBane57. WoF prefs are not used.","default":"","placeholder":""},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: donkeycode_github_repo → DonkeyCODE.","default":"","placeholder":""},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: donkeycode_github_branch → main.","default":"","placeholder":""},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON path in repo","description":"Path to worksheet-states.json — NOT the Wall of Fame file. Empty → WORKSHEET STATES/worksheet-states.json","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture: target + elementFromPoint.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // ==/UserScript==
@@ -27,7 +27,7 @@
     var BRIEF_HOST_ID = 'dc-brief-ai-ws-host';
     var STATE_TTL_MS = 4 * 60 * 60 * 1000;
     var GITHUB_OWNER = 'MikeBane57';
-    var GITHUB_REPO = 'Wolf2.0';
+    var GITHUB_REPO = 'DonkeyCODE';
     var GITHUB_BRANCH = 'main';
     var CLOUD_FILE_PATH = 'WORKSHEET STATES/worksheet-states.json';
     var CLOUD_EVENT_TYPE = 'worksheet-state-put';
@@ -243,7 +243,7 @@
         if (!useWorksheetGithubActions()) {
             return false;
         }
-        if (!trimText(getPref('worksheetStateTeamKey', '')) && !trimText(getPref('wallOfFameTeamKey', ''))) {
+        if (!trimText(getPref('worksheetStateTeamKey', ''))) {
             return false;
         }
         if (!trimText(getPref('donkeycode_github_pat', ''))) {
@@ -253,14 +253,11 @@
     }
 
     /**
-     * Repo for worksheet JSON: worksheet prefs → WoF data prefs → DonkeyCODE session sync
-     * (donkeycode_github_owner/repo/branch) → MikeBane57 / Wolf2.0 / main.
-     * Same idea as wallOfFameData* overriding session when sync points at another repo.
+     * Repo for worksheet-states.json: worksheet state prefs, then donkeycode_github_* (no Wall of Fame fallbacks).
      */
     function resolvedCloudOwner() {
         return (
             trimText(getPref('worksheetStateDataOwner', '')) ||
-            trimText(getPref('wallOfFameDataOwner', '')) ||
             trimText(getPref('donkeycode_github_owner', '')) ||
             GITHUB_OWNER
         );
@@ -269,7 +266,6 @@
     function resolvedCloudRepo() {
         return (
             trimText(getPref('worksheetStateDataRepo', '')) ||
-            trimText(getPref('wallOfFameDataRepo', '')) ||
             trimText(getPref('donkeycode_github_repo', '')) ||
             GITHUB_REPO
         );
@@ -278,7 +274,6 @@
     function resolvedCloudBranch() {
         return (
             trimText(getPref('worksheetStateDataBranch', '')) ||
-            trimText(getPref('wallOfFameDataBranch', '')) ||
             trimText(getPref('donkeycode_github_branch', '')) ||
             GITHUB_BRANCH
         );
@@ -289,7 +284,7 @@
     }
 
     function resolvedTeamKey() {
-        return trimText(getPref('worksheetStateTeamKey', '')) || trimText(getPref('wallOfFameTeamKey', ''));
+        return trimText(getPref('worksheetStateTeamKey', ''));
     }
 
     function githubApiHeaders() {
@@ -758,7 +753,7 @@
                 resolvedCloudBranch() +
                 ' path ' +
                 resolvedCloudPath() +
-                '. (worksheet state prefs → wallOfFame data prefs → donkeycode_github_*)'
+                '. (worksheet state data prefs → donkeycode_github_*; no Wall of Fame fallbacks)'
         );
         if (!useWorksheetGithubActions() && !resolvedGithubPat()) {
             appendCloudSyncLog('Direct mode requires donkeycode_github_pat for GET/PUT Contents API.');
@@ -922,8 +917,8 @@
     }
 
     function dispatchCloudDoc(doc, cb) {
-        if (!trimText(getPref('worksheetStateTeamKey', '')) && !trimText(getPref('wallOfFameTeamKey', ''))) {
-            var a = 'Set worksheetStateTeamKey or wallOfFameTeamKey in DonkeyCODE (must match WOF_TEAM_KEY or WORKSHEET_STATE_TEAM_KEY in repo).';
+        if (!trimText(getPref('worksheetStateTeamKey', ''))) {
+            var a = 'Set worksheetStateTeamKey in DonkeyCODE (must match WORKSHEET_STATE_TEAM_KEY or WOF_TEAM_KEY in repo secret for Actions dispatch).';
             appendCloudSyncLog('Save aborted: ' + a);
             cb(false, a);
             return;
