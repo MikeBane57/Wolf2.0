@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.14
-// @description  Cloud rows: Delete from cloud (replaces save copy). Session folder + direct API.
+// @version      0.2.15
+// @description  State capture: all tails first (every N## in text), then lines only if no real tail. Cloud delete, etc.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -1496,6 +1496,34 @@
         return '';
     }
 
+    /**
+     * Every real tail token in a string (not just the first) — avoids losing N456 when N123 is first
+     * in the same cell.
+     */
+    function allRealTailsFromText(text) {
+        var matches = trimText(text).toUpperCase().match(/\bN[0-9A-Z]{2,6}\b/g);
+        if (!matches || !matches.length) {
+            return [];
+        }
+        var out = [];
+        var i;
+        for (i = 0; i < matches.length; i++) {
+            var m = matches[i];
+            if (m === 'NXXXXX' || m === 'NXXXX') {
+                continue;
+            }
+            if (out.indexOf(m) < 0) {
+                out.push(m);
+            }
+        }
+        return out;
+    }
+
+    /** For line capture: "no real tail" (only N/AXXXX placeholders or no N-tail) so we may use N/A line #. */
+    function isTailPlaceholderOrAbsent(text) {
+        return allRealTailsFromText(text).length === 0;
+    }
+
     function lineFromText(text) {
         var t = trimText(text);
         var m = t.match(/(?:^|\s)#\s*(\d{1,4})(?:\b|$)/);
@@ -1540,20 +1568,33 @@
                 continue;
             }
 
-            var tail = validTailFromText(text);
-            if (tail) {
+            var tails = allRealTailsFromText(text);
+            var tj;
+            for (tj = 0; tj < tails.length; tj++) {
+                var tail = tails[tj];
                 var kt = 'tail:' + tail;
                 if (!seen[kt]) {
                     seen[kt] = true;
                     items.push({ type: 'tail', value: tail });
                 }
+            }
+        }
+        for (i = 0; i < nodes.length; i++) {
+            var el2 = nodes[i];
+            if (isIgnoredNode(el2) || !isVisible(el2)) {
                 continue;
             }
-
-            if (hasMatchingDescendant(el)) {
+            var text2 = trimText(el2.textContent || '');
+            if (!text2 || text2.length > 180) {
                 continue;
             }
-            var line = lineFromText(text);
+            if (!isTailPlaceholderOrAbsent(text2)) {
+                continue;
+            }
+            if (hasMatchingDescendant(el2)) {
+                continue;
+            }
+            var line = lineFromText(text2);
             if (line) {
                 var kl = 'line:' + line;
                 if (!seen[kl]) {
