@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.9
-// @description  Cloud load: raw 404 falls back to Contents API when PAT set (private repo). Session folder in UI.
+// @version      0.2.10
+// @description  Cloud save logs direct PUT vs Actions; raw 404→API with PAT; session folder in UI.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -716,9 +716,24 @@
 
     function postCloudAfterMerge(mergedDoc, fileSha, cb) {
         if (useWorksheetGithubActions()) {
+            appendCloudSyncLog(
+                'Publish: GitHub Actions (POST …/dispatches, event ' +
+                    CLOUD_EVENT_TYPE +
+                    '). Pref worksheetStateUseGithubActions is ON — not using direct Contents API PUT.'
+            );
             dispatchCloudDoc(mergedDoc, cb);
             return;
         }
+        appendCloudSyncLog(
+            'Publish: direct GitHub Contents API PUT (default). Pref worksheetStateUseGithubActions is OFF → PUT api.github.com/repos/' +
+                resolvedCloudOwner() +
+                '/' +
+                resolvedCloudRepo() +
+                '/contents/' +
+                resolvedCloudPath() +
+                ' on ' +
+                resolvedCloudBranch()
+        );
         var finalDoc = cloudDocFor((mergedDoc && mergedDoc.states) || []);
         putCloudDocumentDirect(finalDoc, fileSha, cb);
     }
