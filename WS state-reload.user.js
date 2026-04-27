@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.9
-// @description  Cloud load: raw 404 falls back to Contents API when PAT set (private repo). Session folder in UI.
+// @version      0.2.18
+// @description  Cloud: GitHub REST Contents API only (no Actions/dispatch). Repo/path prefs + PAT.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
-// @donkeycode-pref {"worksheetStateUseGithubActions":{"type":"boolean","group":"Worksheet state — GitHub","label":"Use GitHub Actions (repository_dispatch)","description":"Off (default): direct Contents API PUT with donkeycode_github_pat. On: POST …/dispatches (worksheet-state-put) + team key to match WOF/WORKSHEET repo secret.","default":false},"worksheetStateProxyUrl":{"type":"string","group":"Worksheet state — GitHub","label":"Team proxy base URL (optional)","description":"Reserved: Wall of Fame uses wallOfFameProxyUrl for a server-side host. Worksheet state does not call a proxy yet — use Actions or direct API.","default":"","placeholder":""},"worksheetStateTeamKey":{"type":"string","group":"Worksheet state — GitHub","label":"Team key (Actions mode)","description":"Same value as repo secret WORKSHEET_STATE_TEAM_KEY or WOF_TEAM_KEY (Actions workflow). If blank, uses wallOfFameTeamKey. Not your GitHub PAT.","default":""},"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"Repo for worksheet-states.json. If blank: wallOfFameDataOwner → donkeycode_github_owner → MikeBane57.","default":"","placeholder":"MikeBane57"},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: wallOfFameDataRepo → donkeycode_github_repo → Wolf2.0.","default":"","placeholder":"Wolf2.0"},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: wallOfFameDataBranch → donkeycode_github_branch → main.","default":"","placeholder":"main"},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON path in repo","description":"Path to worksheet-states.json — NOT the Wall of Fame file. Empty → WORKSHEET STATES/worksheet-states.json","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture: target + elementFromPoint.","default":false}}
+// @donkeycode-pref {"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"If blank: donkeycode_github_owner → MikeBane57. WoF prefs are not used.","default":"","placeholder":""},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: donkeycode_github_repo → DonkeyCODE.","default":"","placeholder":""},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: donkeycode_github_branch → main.","default":"","placeholder":""},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON path in repo","description":"Path to worksheet-states.json — NOT the Wall of Fame file. Empty → WORKSHEET STATES/worksheet-states.json","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture: target + elementFromPoint.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // ==/UserScript==
@@ -27,10 +27,9 @@
     var BRIEF_HOST_ID = 'dc-brief-ai-ws-host';
     var STATE_TTL_MS = 4 * 60 * 60 * 1000;
     var GITHUB_OWNER = 'MikeBane57';
-    var GITHUB_REPO = 'Wolf2.0';
+    var GITHUB_REPO = 'DonkeyCODE';
     var GITHUB_BRANCH = 'main';
     var CLOUD_FILE_PATH = 'WORKSHEET STATES/worksheet-states.json';
-    var CLOUD_EVENT_TYPE = 'worksheet-state-put';
 
     var mountObserver = null;
     var mountRaf = 0;
@@ -42,6 +41,9 @@
     /** Live reference to the scrollable <pre> in the open Load/Cloud modal (for WoF-style debug log). */
     var wsCloudLogPre = null;
     var WS_CLOUD_LOG_ID = 'dc-ws-cloud-sync-log';
+    /** Load WS modal: note elements updated on each cloud refresh so folder changes without re-open. */
+    var loadFolderBannerLine = null;
+    var loadFolderBannerSrc = null;
 
     function isWorksheetPage() {
         try {
@@ -86,47 +88,147 @@
         }
     }
 
+    /**
+     * Which DonkeyCODE pref key last supplied the session folder (debug / Load WS line).
+     * 'legacy' = legacy key list. '' = __default__ / no value.
+     */
+    var lastSessionFolderPrefKey = '';
+
+    function getPrefRaw(key) {
+        if (typeof donkeycodeGetPref !== 'function' || !key) {
+            return null;
+        }
+        try {
+            return donkeycodeGetPref(key);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * DonkeyCODE may expose a string, JSON, or a plain object with name/path/folder/…
+     */
+    function extractFolderStringFromDonkeycodeValue(maybe) {
+        if (maybe == null) {
+            return '';
+        }
+        if (typeof maybe === 'object' && !Array.isArray(maybe) && maybe !== null) {
+            var pickO =
+                maybe.name ||
+                maybe.path ||
+                maybe.folder ||
+                maybe.folderName ||
+                maybe.key ||
+                maybe.id ||
+                maybe.slug ||
+                maybe.label ||
+                maybe.sessionFolder ||
+                maybe.session;
+            if (pickO != null) {
+                var t = trimText(String(pickO));
+                if (t) {
+                    return t;
+                }
+            }
+        }
+        var s = typeof maybe === 'string' ? maybe : JSON.stringify(maybe);
+        s = trimText(s);
+        if (!s) {
+            return '';
+        }
+        if (s === '__default__' || s.toLowerCase() === 'default') {
+            return s === '__default__' ? '__default__' : 'default';
+        }
+        if (s.charAt(0) === '{' || s.charAt(0) === '[') {
+            var o = safeJsonParse(s, null);
+            if (o && typeof o === 'object' && !Array.isArray(o)) {
+                return extractFolderStringFromDonkeycodeValue(o);
+            }
+        }
+        return s;
+    }
+
+    function globalDonkeycodeSessionFolder() {
+        var g;
+        try {
+            g = typeof globalThis !== 'undefined' ? globalThis : window;
+        } catch (e) {
+            g = window;
+        }
+        if (!g) {
+            return '';
+        }
+        if (typeof g.donkeycodeGetCurrentSessionFolder === 'function') {
+            try {
+                var v = g.donkeycodeGetCurrentSessionFolder();
+                var s = extractFolderStringFromDonkeycodeValue(v);
+                s = trimText(String(s == null ? '' : s));
+                if (s) {
+                    lastSessionFolderPrefKey = 'donkeycodeGetCurrentSessionFolder()';
+                    return s;
+                }
+            } catch (e2) {}
+        }
+        if (g.donkeycodeCurrentSessionFolder != null && g.donkeycodeCurrentSessionFolder !== '') {
+            var s2 = extractFolderStringFromDonkeycodeValue(g.donkeycodeCurrentSessionFolder);
+            s2 = trimText(String(s2 == null ? '' : s2));
+            if (s2) {
+                lastSessionFolderPrefKey = 'window.donkeycodeCurrentSessionFolder';
+                return s2;
+            }
+        }
+        return '';
+    }
+
+    /**
+     * Live session folder: DonkeyCODE runtime first (getCurrentSessionFolder / global), then merged prefs.
+     * Order matters: @donkeycode-pref fixed values override runtime injection — do not put current session in schema.
+     * Re-read every time; no top-level cache.
+     */
+    function donkeycodeCurrentSessionFolderRaw() {
+        lastSessionFolderPrefKey = '';
+        var fromGlobal = globalDonkeycodeSessionFolder();
+        if (fromGlobal) {
+            return fromGlobal;
+        }
+        var tryKeys = [
+            'donkeycode_current_session_folder',
+            'donkeycode_active_session_folder',
+            'donkeycode_session_folder',
+            'donkeycode_session_folder_key',
+            'donkeycode_active_session_key',
+            'donkeycode_session_key',
+            'donkeycode_active_session',
+            'donkeycode_current_session',
+            'donkeycode_current_session_id'
+        ];
+        var i;
+        for (i = 0; i < tryKeys.length; i++) {
+            var k = tryKeys[i];
+            var v = getPrefRaw(k);
+            if (v === undefined || v === null || (typeof v === 'string' && v === '')) {
+                continue;
+            }
+            var ex = extractFolderStringFromDonkeycodeValue(v);
+            ex = trimText(String(ex == null ? '' : ex));
+            if (ex) {
+                lastSessionFolderPrefKey = k;
+                return ex;
+            }
+        }
+        return '';
+    }
+
     function resolvedGithubPat() {
         return trimText(getPref('donkeycode_github_pat', ''));
     }
 
-    function boolWorksheetActionsEnabled() {
-        var v = getPref('worksheetStateUseGithubActions', false);
-        if (v === true || v === 'true' || v === 1) {
-            return true;
-        }
-        if (v === false || v === 'false' || v === 0) {
-            return false;
-        }
-        return false;
-    }
-
-    function useWorksheetGithubActions() {
-        return boolWorksheetActionsEnabled();
-    }
-
-    function worksheetActionsModeReady() {
-        if (!useWorksheetGithubActions()) {
-            return false;
-        }
-        if (!trimText(getPref('worksheetStateTeamKey', '')) && !trimText(getPref('wallOfFameTeamKey', ''))) {
-            return false;
-        }
-        if (!trimText(getPref('donkeycode_github_pat', ''))) {
-            return false;
-        }
-        return true;
-    }
-
     /**
-     * Repo for worksheet JSON: worksheet prefs → WoF data prefs → DonkeyCODE session sync
-     * (donkeycode_github_owner/repo/branch) → MikeBane57 / Wolf2.0 / main.
-     * Same idea as wallOfFameData* overriding session when sync points at another repo.
+     * Repo for worksheet-states.json: worksheet state prefs, then donkeycode_github_* (no Wall of Fame fallbacks).
      */
     function resolvedCloudOwner() {
         return (
             trimText(getPref('worksheetStateDataOwner', '')) ||
-            trimText(getPref('wallOfFameDataOwner', '')) ||
             trimText(getPref('donkeycode_github_owner', '')) ||
             GITHUB_OWNER
         );
@@ -135,7 +237,6 @@
     function resolvedCloudRepo() {
         return (
             trimText(getPref('worksheetStateDataRepo', '')) ||
-            trimText(getPref('wallOfFameDataRepo', '')) ||
             trimText(getPref('donkeycode_github_repo', '')) ||
             GITHUB_REPO
         );
@@ -144,7 +245,6 @@
     function resolvedCloudBranch() {
         return (
             trimText(getPref('worksheetStateDataBranch', '')) ||
-            trimText(getPref('wallOfFameDataBranch', '')) ||
             trimText(getPref('donkeycode_github_branch', '')) ||
             GITHUB_BRANCH
         );
@@ -152,10 +252,6 @@
 
     function resolvedCloudPath() {
         return (trimText(getPref('worksheetStateRepoPath', '')) || CLOUD_FILE_PATH).replace(/^\/+/, '');
-    }
-
-    function resolvedTeamKey() {
-        return trimText(getPref('worksheetStateTeamKey', '')) || trimText(getPref('wallOfFameTeamKey', ''));
     }
 
     function githubApiHeaders() {
@@ -198,37 +294,35 @@
         );
     }
 
-    /** DonkeyCODE-injected: __default__ or a folder key (e.g. ops/team1). Read at runtime; do not hard-code. */
-    function donkeycodeCurrentSessionFolderRaw() {
-        return trimText(getPref('donkeycode_current_session_folder', ''));
-    }
-
     function legacySessionFolderFromPrefs() {
         var keys = [
             'donkeycode_current_folder',
             'donkeycode_folder',
-            'donkeycode_active_session_folder',
-            'donkeycode_session_folder',
             'donkeycode_session_name',
-            'donkeycode_active_session',
             'donkeycode_active_session_name',
-            'donkeycode_session',
-            'donkeycode_active_tab_folder'
+            'donkeycode_active_tab_folder',
+            'donkeycode_session'
         ];
         var i;
         for (i = 0; i < keys.length; i++) {
-            var v = trimText(getPref(keys[i], ''));
-            if (v) {
-                var t = v.replace(/^\/+|\/+$/g, '');
-                if (!t) {
-                    continue;
-                }
-                if (/[\\/]/.test(t) && (t.indexOf('github') >= 0 || t.indexOf('.com') >= 0 || t.split('/').length > 2)) {
-                    var seg = t.split(/[\\/]+/).filter(Boolean);
-                    t = seg[seg.length - 1] || t;
-                }
-                return t || 'Default';
+            var v = getPrefRaw(keys[i]);
+            if (v === undefined || v === null) {
+                continue;
             }
+            var t = extractFolderStringFromDonkeycodeValue(v);
+            t = trimText(String(t == null ? '' : t));
+            if (!t) {
+                continue;
+            }
+            t = t.replace(/^\/+|\/+$/g, '');
+            if (!t) {
+                continue;
+            }
+            if (/[\\/]/.test(t) && (t.indexOf('github') >= 0 || t.indexOf('.com') >= 0 || t.split('/').length > 2)) {
+                var seg = t.split(/[\\/]+/).filter(Boolean);
+                t = seg[seg.length - 1] || t;
+            }
+            return t || 'Default';
         }
         return '';
     }
@@ -238,7 +332,7 @@
      * Legacy "Default" / "default" maps to __default__.
      */
     function sessionFolderKeyCanonical() {
-        var r = donkeycodeCurrentSessionFolderRaw();
+        var r = trimText(donkeycodeCurrentSessionFolderRaw());
         if (r) {
             if (r === '__default__' || r.toLowerCase() === 'default') {
                 return '__default__';
@@ -246,10 +340,39 @@
             return r;
         }
         var leg = trimText(legacySessionFolderFromPrefs());
+        if (leg) {
+            lastSessionFolderPrefKey = 'legacy';
+        }
         if (!leg || leg === 'Default') {
+            if (!leg) {
+                lastSessionFolderPrefKey = '';
+            }
             return '__default__';
         }
         return leg;
+    }
+
+    function sessionFolderPrefSourceLine() {
+        if (lastSessionFolderPrefKey === 'legacy') {
+            return 'Source: legacy fallbacks in script (set donkeycode_current_session_folder in DonkeyCODE to avoid).';
+        }
+        if (lastSessionFolderPrefKey) {
+            return 'Source: DonkeyCODE · ' + lastSessionFolderPrefKey;
+        }
+        return (
+            'Source: (no session key read — using Default). If folder looks stuck: do not add donkeycode_current_session_folder to ' +
+            '@donkeycode-pref (script defaults override live injection).'
+        );
+    }
+
+    function updateLoadFolderBanner() {
+        if (!loadFolderBannerLine || !loadFolderBannerSrc) {
+            return;
+        }
+        var fk = sessionFolderKeyCanonical();
+        loadFolderBannerLine.textContent =
+            'Active session folder: ' + sessionFolderDisplayLabel(fk) + (fk !== '__default__' ? ' (' + fk + ')' : '');
+        loadFolderBannerSrc.textContent = sessionFolderPrefSourceLine();
     }
 
     /** User-visible label: "Default" for __default__, else the key (e.g. ops/team1). */
@@ -430,7 +553,7 @@
         deets.style.cssText = 'flex-shrink:0;margin-top:4px;';
         var sum = document.createElement('summary');
         sum.textContent = headingText || 'Cloud sync debug log';
-        sum.title = 'Expand to view fetch/dispatch log (Wall of Fame style)';
+        sum.title = 'Expand to view cloud sync log (GET/PUT Contents API)';
         sum.style.cssText = 'cursor:pointer;user-select:none;font-size:12px;font-weight:600;color:#5dade2;';
         var inner = document.createElement('div');
         inner.style.cssText = 'display:flex;flex-direction:column;gap:6px;padding:8px 0 0;';
@@ -585,11 +708,8 @@
     }
 
     function fetchCloudStates(cb) {
-        var mode = useWorksheetGithubActions() ? 'actions' : 'direct-API';
         appendCloudSyncLog(
-            'Cloud mode: ' +
-                mode +
-                ' — repo ' +
+            'Cloud mode: GitHub REST Contents API only — repo ' +
                 resolvedCloudOwner() +
                 '/' +
                 resolvedCloudRepo() +
@@ -597,10 +717,10 @@
                 resolvedCloudBranch() +
                 ' path ' +
                 resolvedCloudPath() +
-                '. (worksheet state prefs → wallOfFame data prefs → donkeycode_github_*)'
+                '. (worksheet state data prefs → donkeycode_github_*; no Wall of Fame fallbacks)'
         );
-        if (!useWorksheetGithubActions() && !resolvedGithubPat()) {
-            appendCloudSyncLog('Direct mode requires donkeycode_github_pat for GET/PUT Contents API.');
+        if (!resolvedGithubPat()) {
+            appendCloudSyncLog('Set donkeycode_github_pat for GET/PUT Contents API (private repo or when raw is unavailable).');
         }
         rawGithubGetCloud(function (doc, rawErr) {
             if (doc) {
@@ -655,138 +775,100 @@
         });
     }
 
+    /**
+     * Direct Contents API PUT. Always refetches file SHA via GET /contents/ immediately before each PUT
+     * (saves that loaded via raw can have a stale or missing sha — that caused HTTP 409).
+     * On 409 (concurrent update), refetch SHA and retry up to 5 times with short delay.
+     * knownSha: ignored; kept for call-site compatibility.
+     */
     function putCloudDocumentDirect(finalDoc, knownSha, cb) {
         if (!resolvedGithubPat()) {
-            cb(false, 'Direct mode: set donkeycode_github_pat (Contents: read/write on ' + resolvedCloudOwner() + '/' + resolvedCloudRepo() + ').');
+            var perr =
+                'Direct mode: set donkeycode_github_pat with Contents read/write for repo ' +
+                resolvedCloudOwner() +
+                '/' +
+                resolvedCloudRepo() +
+                '. (Reading the file from raw.githubusercontent.com does not use your PAT; only API PUT can save.)';
+            appendCloudSyncLog('PUT aborted: ' + perr);
+            cb(false, perr);
             return;
         }
         var branch = resolvedCloudBranch();
         var path = resolvedCloudPath();
         var jsonStr = JSON.stringify(finalDoc, null, 2) + '\n';
-        function doPut(sha, isRetry) {
-            var body = {
-                message: isRetry ? 'Worksheet states: sync (retry after conflict)' : 'Worksheet states: sync (DonkeyCODE direct API)',
-                content: utf8ToBase64(jsonStr),
-                branch: branch
-            };
-            if (sha) {
-                body.sha = sha;
-            }
-            var url = githubContentsApiUrl();
-            appendCloudSyncLog(
-                'PUT Contents ' + path + (sha ? ' (sha ' + String(sha).slice(0, 7) + '…)' : ' (new file)') + ' on ' + branch
-            );
-            var headers = githubApiHeaders();
-            headers['Content-Type'] = 'application/json';
-            gmXhr('PUT', url, headers, body, function (status, text) {
-                if (status === 200 || status === 201) {
-                    appendCloudSyncLog('PUT succeeded: HTTP ' + status);
-                    cb(true, null);
-                    return;
-                }
-                if (status === 409 && !isRetry) {
-                    appendCloudSyncLog('PUT HTTP 409 conflict — refetching SHA, retrying once…');
-                    getContentsMetadataForPut(function (m, err) {
-                        if (err || !m) {
-                            cb(false, err || '409 and could not refetch SHA');
-                            return;
-                        }
-                        doPut(m.sha, true);
-                    });
-                    return;
-                }
-                var detail = githubApiErrorSummary(status, text);
-                var msg = 'PUT failed: HTTP ' + status + (detail ? ' — ' + detail : '');
-                appendCloudSyncLog(msg);
-                cb(false, msg);
-            });
-        }
-        if (knownSha) {
-            doPut(knownSha, false);
-        } else {
+        var max409 = 5;
+        var att = 0;
+        function doPutWithFreshSha() {
             getContentsMetadataForPut(function (m, err) {
                 if (err) {
+                    appendCloudSyncLog('PUT: could not get file SHA: ' + err);
                     cb(false, err);
                     return;
                 }
-                doPut(m && m.sha ? m.sha : null, false);
+                var sha = m && m.sha ? String(m.sha) : null;
+                var body = {
+                    message: att > 0 ? 'Worksheet states: sync (retry ' + att + ' after 409)' : 'Worksheet states: sync (DonkeyCODE direct API)',
+                    content: utf8ToBase64(jsonStr),
+                    branch: branch
+                };
+                if (sha) {
+                    body.sha = sha;
+                }
+                var url = githubContentsApiUrl();
+                appendCloudSyncLog(
+                    'PUT Contents ' +
+                        path +
+                        (sha ? ' (sha ' + String(sha).slice(0, 7) + '…, fresh from GET /contents/)' : ' (new file)') +
+                        ' on ' +
+                        branch
+                );
+                var headers = githubApiHeaders();
+                headers['Content-Type'] = 'application/json';
+                gmXhr('PUT', url, headers, body, function (status, text) {
+                    if (status === 200 || status === 201) {
+                        appendCloudSyncLog('PUT succeeded: HTTP ' + status);
+                        cb(true, null);
+                        return;
+                    }
+                    if (status === 409) {
+                        att += 1;
+                        if (att < max409) {
+                            appendCloudSyncLog('PUT HTTP 409 — file changed (another tab or race). Refetching SHA, retry ' + att + '/' + (max409 - 1) + '…');
+                            setTimeout(function () {
+                                doPutWithFreshSha();
+                            }, 120);
+                            return;
+                        }
+                    }
+                    var detail = githubApiErrorSummary(status, text);
+                    var msg = 'PUT failed: HTTP ' + status + (detail ? ' — ' + detail : '');
+                    if (status === 409) {
+                        msg += ' (still conflicting after ' + (max409 - 1) + ' retries; save again in a few seconds if needed.)';
+                    }
+                    appendCloudSyncLog(msg);
+                    cb(false, msg);
+                });
             });
         }
+        appendCloudSyncLog(
+            'PUT: always using fresh SHAs from GET /contents/ (ignores stale sha from raw load) — single file ' + path
+        );
+        doPutWithFreshSha();
     }
 
     function postCloudAfterMerge(mergedDoc, fileSha, cb) {
-        if (useWorksheetGithubActions()) {
-            dispatchCloudDoc(mergedDoc, cb);
-            return;
-        }
-        var finalDoc = cloudDocFor((mergedDoc && mergedDoc.states) || []);
-        putCloudDocumentDirect(finalDoc, fileSha, cb);
-    }
-
-    function dispatchCloudDoc(doc, cb) {
-        if (!trimText(getPref('worksheetStateTeamKey', '')) && !trimText(getPref('wallOfFameTeamKey', ''))) {
-            var a = 'Set worksheetStateTeamKey or wallOfFameTeamKey in DonkeyCODE (must match WOF_TEAM_KEY or WORKSHEET_STATE_TEAM_KEY in repo).';
-            appendCloudSyncLog('Save aborted: ' + a);
-            cb(false, a);
-            return;
-        }
-        if (!resolvedGithubPat()) {
-            var b = 'Set donkeycode_github_pat in DonkeyCODE prefs so repository_dispatch can run.';
-            appendCloudSyncLog('Save aborted: ' + b);
-            cb(false, b);
-            return;
-        }
-        var teamKey = resolvedTeamKey();
-        if (!teamKey) {
-            cb(false, 'Team key missing');
-            return;
-        }
-        var headers = githubApiHeaders();
-        headers['Content-Type'] = 'application/json';
-        var stArr = (doc && doc.states) || [];
-        var body = {
-            event_type: CLOUD_EVENT_TYPE,
-            client_payload: {
-                team_key: teamKey,
-                document: cloudDocFor(stArr),
-                path: resolvedCloudPath()
-            }
-        };
-        var url =
-            'https://api.github.com/repos/' +
-            encodeURIComponent(resolvedCloudOwner()) +
-            '/' +
-            encodeURIComponent(resolvedCloudRepo()) +
-            '/dispatches';
         appendCloudSyncLog(
-            'POST repository_dispatch event ' +
-                CLOUD_EVENT_TYPE +
-                ' to ' +
+            'Publish: GitHub REST Contents API PUT — api.github.com/repos/' +
                 resolvedCloudOwner() +
                 '/' +
                 resolvedCloudRepo() +
-                ', path in payload: ' +
+                '/contents/' +
                 resolvedCloudPath() +
-                ', states in merge: ' +
-                stArr.length
+                ' on ' +
+                resolvedCloudBranch()
         );
-        gmXhr('POST', url, headers, body, function (status, text) {
-            if (status === 204) {
-                appendCloudSyncLog('Dispatch accepted: HTTP 204. Check GitHub Actions → Worksheet state sync.');
-                cb(true, null);
-                return;
-            }
-            var detail = githubApiErrorSummary(status, text);
-            var msg =
-                'POST repository_dispatch failed: HTTP ' +
-                status +
-                (detail ? ' — ' + detail : '') +
-                (status === 403 && /workflow/i.test(String(detail))
-                    ? ' Regenerate donkeycode_github_pat with "workflow" scope (same as Wall of Fame).'
-                    : '');
-            appendCloudSyncLog('Dispatch failed: ' + msg);
-            cb(false, msg);
-        });
+        var finalDoc = cloudDocFor((mergedDoc && mergedDoc.states) || []);
+        putCloudDocumentDirect(finalDoc, fileSha, cb);
     }
 
     function saveStateToCloud(state, name, cb) {
@@ -816,9 +898,34 @@
         appendCloudSyncLog(
             'saveStateToCloud: name="' + name + '", folder=' + folderKey + ' (' + folderLabel + '), items=' + (state.items && state.items.length ? state.items.length : 0)
         );
+        appendCloudSyncLog(
+            'saveStateToCloud: donkeycode_github_pat ' +
+                (resolvedGithubPat() ? 'is set (required for direct API save)' : 'is EMPTY') +
+                ' — target ' +
+                resolvedCloudOwner() +
+                '/' +
+                resolvedCloudRepo() +
+                ' path ' +
+                resolvedCloudPath()
+        );
+        appendCloudSyncLog('saveStateToCloud: ' + sessionFolderPrefSourceLine());
         fetchCloudStates(function (doc, loadErr, fileSha) {
             if (!doc) {
                 toast('Could not load cloud: ' + (loadErr || 'unknown error'), true);
+                if (cb) {
+                    cb(false);
+                }
+                return;
+            }
+            if (!resolvedGithubPat()) {
+                var needPat =
+                    'To save, set donkeycode_github_pat (classic: repo scope, or fine-grained: Contents R/W) for ' +
+                    resolvedCloudOwner() +
+                    '/' +
+                    resolvedCloudRepo() +
+                    '. The list can load from raw.githubusercontent.com without a token; only the GitHub API can write the file.';
+                appendCloudSyncLog('saveStateToCloud ABORT: ' + needPat);
+                toast(needPat, true);
                 if (cb) {
                     cb(false);
                 }
@@ -828,7 +935,11 @@
                 return st && st.id !== state.id && !isExpiredState(st);
             });
             states.unshift(normalizeCloudState(state));
-            appendCloudSyncLog('Merged new state; publishing, total states=' + states.length + (fileSha ? ' (use GET sha: ' + String(fileSha).slice(0, 7) + '…)' : ' (raw load: refetch sha if PUT)') + '…');
+            appendCloudSyncLog(
+                'Merged new state; publishing, total states=' +
+                    states.length +
+                    ' — PUT will refetch file SHA from Contents API (raw load has no/could have stale sha).'
+            );
             postCloudAfterMerge(cloudDocFor(states), fileSha, function (ok, err) {
                 if (!ok) {
                     toast(err || 'Cloud save failed.', true);
@@ -837,15 +948,64 @@
                     }
                     return;
                 }
-                if (useWorksheetGithubActions()) {
-                    toast('Cloud save requested for "' + name + '". It may take a moment (Actions) to appear.', false);
-                } else {
-                    toast('Saved to cloud: "' + name + '" in ' + resolvedCloudOwner() + '/' + resolvedCloudBranch() + ' ' + resolvedCloudPath(), false);
-                }
+                toast('Saved to cloud: "' + name + '" in ' + resolvedCloudOwner() + '/' + resolvedCloudBranch() + ' ' + resolvedCloudPath(), false);
                 refreshCloudRows();
                 if (cb) {
                     cb(true);
                 }
+            });
+        });
+    }
+
+    /**
+     * Remove one state from the shared cloud document by id (Load WS → cloud rows).
+     * Same publish path as save: GitHub Contents API PUT only.
+     */
+    function deleteCloudStateById(stateId, nameHint) {
+        var sid = trimText(String(stateId == null ? '' : stateId));
+        if (!sid) {
+            toast('Cannot delete: this cloud entry has no id.', true);
+            return;
+        }
+        var label = trimText(String(nameHint || '')) || sid;
+        toast('Removing from cloud...', false);
+        appendCloudSyncLog('deleteCloudStateById: id="' + sid + '", label="' + label + '"');
+        fetchCloudStates(function (doc, loadErr, fileSha) {
+            if (!doc) {
+                toast('Could not load cloud: ' + (loadErr || 'unknown error'), true);
+                return;
+            }
+            if (!resolvedGithubPat()) {
+                var needPat =
+                    'To delete, set donkeycode_github_pat (Contents R/W) for ' +
+                    resolvedCloudOwner() +
+                    '/' +
+                    resolvedCloudRepo() +
+                    '.';
+                appendCloudSyncLog('deleteCloudStateById ABORT: ' + needPat);
+                toast(needPat, true);
+                return;
+            }
+            var arr = (doc.states || []).filter(function (st) {
+                return st && !isExpiredState(st);
+            });
+            var before = arr.length;
+            var next = arr.filter(function (st) {
+                return trimText(String(st && st.id != null ? st.id : '')) !== sid;
+            });
+            if (next.length === before) {
+                toast('That cloud state was not found (expired, wrong id, or already removed).', true);
+                refreshCloudRows();
+                return;
+            }
+            appendCloudSyncLog('deleteCloudStateById: publishing, remaining states=' + next.length);
+            postCloudAfterMerge(cloudDocFor(next), fileSha, function (ok, err) {
+                if (!ok) {
+                    toast(err || 'Cloud delete failed.', true);
+                    return;
+                }
+                toast('Removed from cloud: "' + label + '"', false);
+                refreshCloudRows();
             });
         });
     }
@@ -864,11 +1024,13 @@
             return;
         }
         cloudRowsHost.textContent = 'Loading cloud states...';
+        updateLoadFolderBanner();
         fetchCloudStates(function (doc, loadErr) {
             if (!cloudRowsHost) {
                 return;
             }
             cloudRowsHost.textContent = '';
+            updateLoadFolderBanner();
             if (!doc) {
                 cloudRowsHost.textContent =
                     'Could not load cloud: ' + (loadErr || 'Check PAT (repo + workflow scope), team key = WOF/WORKSHEET secret, and repo/branch/path.');
@@ -931,19 +1093,22 @@
             closeModal();
             applyStateToWorksheet(state, 'cloud state "' + (state.name || '(unnamed)') + '"');
         });
-        var toCloud = document.createElement('button');
-        toCloud.type = 'button';
-        toCloud.textContent = 'Save copy to cloud';
-        toCloud.title = 'Copy this snapshot to shared cloud (same as Load WS → Cloud saves)';
-        toCloud.addEventListener('click', function () {
-            var snap = { items: (state.items || []).slice() };
-            if (state.title) {
-                snap.title = state.title;
-            }
-            saveStateToCloud(snap, state.name);
-        });
+        var delCloud = document.createElement('button');
+        delCloud.type = 'button';
+        delCloud.textContent = 'Delete';
+        delCloud.className = 'dc-wss-danger';
+        delCloud.title = 'Remove this save from the shared cloud JSON file';
+        if (state.id) {
+            delCloud.addEventListener('click', function (e) {
+                e.stopPropagation();
+                deleteCloudStateById(state.id, state.name);
+            });
+        } else {
+            delCloud.disabled = true;
+            delCloud.title = 'This entry has no id — cannot delete (re-save from a current script).';
+        }
         actions.appendChild(recall);
-        actions.appendChild(toCloud);
+        actions.appendChild(delCloud);
         row.appendChild(info);
         row.appendChild(actions);
         return row;
@@ -1226,6 +1391,34 @@
         return '';
     }
 
+    /**
+     * Every real tail token in a string (not just the first) — avoids losing N456 when N123 is first
+     * in the same cell.
+     */
+    function allRealTailsFromText(text) {
+        var matches = trimText(text).toUpperCase().match(/\bN[0-9A-Z]{2,6}\b/g);
+        if (!matches || !matches.length) {
+            return [];
+        }
+        var out = [];
+        var i;
+        for (i = 0; i < matches.length; i++) {
+            var m = matches[i];
+            if (m === 'NXXXXX' || m === 'NXXXX') {
+                continue;
+            }
+            if (out.indexOf(m) < 0) {
+                out.push(m);
+            }
+        }
+        return out;
+    }
+
+    /** For line capture: "no real tail" (only N/AXXXX placeholders or no N-tail) so we may use N/A line #. */
+    function isTailPlaceholderOrAbsent(text) {
+        return allRealTailsFromText(text).length === 0;
+    }
+
     function lineFromText(text) {
         var t = trimText(text);
         var m = t.match(/(?:^|\s)#\s*(\d{1,4})(?:\b|$)/);
@@ -1270,20 +1463,33 @@
                 continue;
             }
 
-            var tail = validTailFromText(text);
-            if (tail) {
+            var tails = allRealTailsFromText(text);
+            var tj;
+            for (tj = 0; tj < tails.length; tj++) {
+                var tail = tails[tj];
                 var kt = 'tail:' + tail;
                 if (!seen[kt]) {
                     seen[kt] = true;
                     items.push({ type: 'tail', value: tail });
                 }
+            }
+        }
+        for (i = 0; i < nodes.length; i++) {
+            var el2 = nodes[i];
+            if (isIgnoredNode(el2) || !isVisible(el2)) {
                 continue;
             }
-
-            if (hasMatchingDescendant(el)) {
+            var text2 = trimText(el2.textContent || '');
+            if (!text2 || text2.length > 180) {
                 continue;
             }
-            var line = lineFromText(text);
+            if (!isTailPlaceholderOrAbsent(text2)) {
+                continue;
+            }
+            if (hasMatchingDescendant(el2)) {
+                continue;
+            }
+            var line = lineFromText(text2);
             if (line) {
                 var kl = 'line:' + line;
                 if (!seen[kl]) {
@@ -1877,6 +2083,8 @@
         cloudRowsHost = null;
         localRowsHost = null;
         wsCloudLogPre = null;
+        loadFolderBannerLine = null;
+        loadFolderBannerSrc = null;
     }
 
     function openRecallDialog() {
@@ -2109,7 +2317,16 @@
         var fkNow = sessionFolderKeyCanonical();
         loadFolderLine.textContent =
             'Active session folder: ' + sessionFolderDisplayLabel(fkNow) + (fkNow !== '__default__' ? ' (' + fkNow + ')' : '');
+        var loadFolderSrc = document.createElement('div');
+        loadFolderSrc.className = 'dc-wss-note';
+        loadFolderSrc.style.marginTop = '2px';
+        loadFolderSrc.style.fontSize = '10px';
+        loadFolderSrc.style.color = '#95a5a6';
+        loadFolderSrc.textContent = sessionFolderPrefSourceLine();
+        loadFolderBannerLine = loadFolderLine;
+        loadFolderBannerSrc = loadFolderSrc;
         body.appendChild(loadFolderLine);
+        body.appendChild(loadFolderSrc);
 
         addSectionTitle(body, 'Local saves');
         var localNote = document.createElement('div');
@@ -2137,7 +2354,7 @@
         panel.appendChild(body);
         overlay.appendChild(panel);
         document.body.appendChild(overlay);
-        appendCloudSyncLog('Open: Load WS — use Refresh cloud list to trace raw/API GETs; To cloud or dispatch logs POST 204.');
+        appendCloudSyncLog('Open: Load WS — Refresh cloud list traces GET; save uses PUT Contents API only.');
         refreshLocalRows();
         refreshCloudRows();
     }
