@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.7.8
-// @description  WoF: default direct Contents API GET/PUT with PAT; refresh from Git on tab. Optional Actions/raw.
+// @version      2.7.9
+// @description  WoF: GM_xhr GET without data field + full request log (fixes silent fetch). Direct API default.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
@@ -483,8 +483,11 @@
      * DonkeyCODE: pass `data` (string or object; bridge may stringify objects) and set
      * Content-Type for GitHub REST JSON bodies. See SCRIPT_STANDARD_PLAN.md GM_xhr section.
      */
-    function githubXhr(method, url, bodyObj, cb) {
+    function githubXhr(method, url, bodyObj, cb, logLine) {
         if (typeof GM_xmlhttpRequest !== 'function') {
+            if (typeof logLine === 'function') {
+                logLine('GM_xmlhttpRequest not available (grant @grant GM_xmlhttpRequest in DonkeyCODE).');
+            }
             cb(0, '');
             return;
         }
@@ -497,24 +500,51 @@
         if (hasBody) {
             payload = typeof bodyObj === 'string' ? bodyObj : JSON.stringify(bodyObj);
         }
-        GM_xmlhttpRequest({
+        if (typeof logLine === 'function') {
+            logLine('GM_xhr: ' + method + ' ' + url + (hasBody ? ' (with body)' : ' (no body field — GET must not send data)'));
+        }
+        var req = {
             method: method,
             url: url,
             headers: headers,
-            data: payload,
-            onload: function(res) {
-                cb(res.status || 0, res.responseText || '');
+            onload: function (res) {
+                var st = (res && res.status) || 0;
+                if (typeof logLine === 'function') {
+                    var rt = (res && res.responseText) || '';
+                    logLine('GM_xhr onload: HTTP ' + st + (rt ? ', body len ' + String(rt).length : ''));
+                }
+                cb(st, (res && res.responseText) || '');
             },
-            onerror: function() {
+            onerror: function (res) {
+                if (typeof logLine === 'function') {
+                    var s = res && res.status;
+                    var t = res && res.statusText;
+                    logLine('GM_xhr onerror' + (s != null ? ' status=' + s : '') + (t ? ' ' + t : '') + ' — network/CORS/bridge. Check @connect api.github.com + DonkeyCODE host access for api.github.com.');
+                }
                 cb(0, '');
-            }
-        });
+            },
+            ontimeout: function () {
+                if (typeof logLine === 'function') {
+                    logLine('GM_xhr ontimeout — request to api.github.com did not complete.');
+                }
+                cb(0, '');
+            },
+            timeout: 60000
+        };
+        if (hasBody) {
+            req.data = payload;
+        }
+        GM_xmlhttpRequest(req);
     }
 
     function githubGetFile(cb, logDebug) {
         var branch = encodeURIComponent(resolvedWallOfFameDataBranch());
         var url = githubContentsApiUrl() + '?ref=' + branch;
-        githubXhr('GET', url, null, function(status, text) {
+        githubXhr(
+            'GET',
+            url,
+            null,
+            function (status, text) {
             if (typeof logDebug === 'function') {
                 logDebug('Contents API GET HTTP ' + status + ' — ' + url);
             }
@@ -527,8 +557,19 @@
                 return;
             }
             if (status < 200 || status >= 300) {
-                if (typeof logDebug === 'function' && status === 0) {
-                    logDebug('Contents GET failed (HTTP 0): check PAT, @connect api.github.com, DonkeyCODE site access.');
+                if (typeof logDebug === 'function') {
+                    if (status === 0) {
+                        logDebug('Contents GET failed (HTTP 0): no response — see GM_xhr lines above; @connect api.github.com, host permission for api.github.com.');
+                    } else {
+                        var errSum = '';
+                        try {
+                            var er = JSON.parse(text || '{}');
+                            if (er && er.message) {
+                                errSum = ' — ' + String(er.message).slice(0, 200);
+                            }
+                        } catch (e1) {}
+                        logDebug('Contents GET error HTTP ' + status + errSum);
+                    }
                 }
                 cb(null, null);
                 return;
@@ -548,7 +589,9 @@
                 }
                 cb(null, githubFileSha);
             }
-        });
+        },
+            logDebug
+        );
     }
 
     function githubPutFile(entries, sha, cb) {
