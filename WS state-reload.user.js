@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.20
-// @description  Cloud: per-save files + index; Load WS folder next to title; no confirm on local delete. REST API + PAT.
+// @version      0.2.21
+// @description  Cloud: per-save files + index (fix: load unwraps state.*); Load WS folder in header. REST API + PAT.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -817,7 +817,10 @@
                 loadStatesFromIndexShard(ids, fromIdx + 1, outStates, onDone);
                 return;
             }
-            if (one.states && one.states[0]) {
+            /** Per-file save format: { state: { id, name, items, ... } } — not top-level items. */
+            if (one.state && typeof one.state === 'object' && Array.isArray(one.state.items)) {
+                one = one.state;
+            } else if (one.states && one.states[0]) {
                 one = one.states[0];
             }
             var n = normalizeCloudState(one);
