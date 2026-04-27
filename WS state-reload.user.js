@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.11
-// @description  Cloud save requires PAT for direct PUT (raw can load without); clearer abort + logs.
+// @version      0.2.12
+// @description  Session folder: read multiple DonkeyCODE keys + JSON; show source. PAT note for cloud save.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -84,6 +84,99 @@
         } catch (e) {
             return fallback;
         }
+    }
+
+    /**
+     * Which DonkeyCODE pref key last supplied the session folder (debug / Load WS line).
+     * 'legacy' = legacy key list. '' = __default__ / no value.
+     */
+    var lastSessionFolderPrefKey = '';
+
+    function getPrefRaw(key) {
+        if (typeof donkeycodeGetPref !== 'function' || !key) {
+            return null;
+        }
+        try {
+            return donkeycodeGetPref(key);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * DonkeyCODE may expose a string, JSON, or a plain object with name/path/folder/…
+     */
+    function extractFolderStringFromDonkeycodeValue(maybe) {
+        if (maybe == null) {
+            return '';
+        }
+        if (typeof maybe === 'object' && !Array.isArray(maybe) && maybe !== null) {
+            var pickO =
+                maybe.name ||
+                maybe.path ||
+                maybe.folder ||
+                maybe.folderName ||
+                maybe.key ||
+                maybe.id ||
+                maybe.slug ||
+                maybe.label ||
+                maybe.sessionFolder ||
+                maybe.session;
+            if (pickO != null) {
+                var t = trimText(String(pickO));
+                if (t) {
+                    return t;
+                }
+            }
+        }
+        var s = typeof maybe === 'string' ? maybe : JSON.stringify(maybe);
+        s = trimText(s);
+        if (!s) {
+            return '';
+        }
+        if (s === '__default__' || s.toLowerCase() === 'default') {
+            return s === '__default__' ? '__default__' : 'default';
+        }
+        if (s.charAt(0) === '{' || s.charAt(0) === '[') {
+            var o = safeJsonParse(s, null);
+            if (o && typeof o === 'object' && !Array.isArray(o)) {
+                return extractFolderStringFromDonkeycodeValue(o);
+            }
+        }
+        return s;
+    }
+
+    /**
+     * Tries the keys DonkeyCODE may use (documented + common variants) before legacy fallbacks.
+     */
+    function donkeycodeCurrentSessionFolderRaw() {
+        lastSessionFolderPrefKey = '';
+        var tryKeys = [
+            'donkeycode_current_session_folder',
+            'donkeycode_active_session_folder',
+            'donkeycode_session_folder',
+            'donkeycode_session_folder_key',
+            'donkeycode_active_session_key',
+            'donkeycode_session_key',
+            'donkeycode_active_session',
+            'donkeycode_current_session',
+            'donkeycode_current_session_id'
+        ];
+        var i;
+        for (i = 0; i < tryKeys.length; i++) {
+            var k = tryKeys[i];
+            var v = getPrefRaw(k);
+            if (v === undefined || v === null || (typeof v === 'string' && v === '')) {
+                continue;
+            }
+            var ex = extractFolderStringFromDonkeycodeValue(v);
+            ex = trimText(String(ex == null ? '' : ex));
+            if (ex) {
+                lastSessionFolderPrefKey = k;
+                return ex;
+            }
+        }
+        return '';
     }
 
     function resolvedGithubPat() {
@@ -198,37 +291,35 @@
         );
     }
 
-    /** DonkeyCODE-injected: __default__ or a folder key (e.g. ops/team1). Read at runtime; do not hard-code. */
-    function donkeycodeCurrentSessionFolderRaw() {
-        return trimText(getPref('donkeycode_current_session_folder', ''));
-    }
-
     function legacySessionFolderFromPrefs() {
         var keys = [
             'donkeycode_current_folder',
             'donkeycode_folder',
-            'donkeycode_active_session_folder',
-            'donkeycode_session_folder',
             'donkeycode_session_name',
-            'donkeycode_active_session',
             'donkeycode_active_session_name',
-            'donkeycode_session',
-            'donkeycode_active_tab_folder'
+            'donkeycode_active_tab_folder',
+            'donkeycode_session'
         ];
         var i;
         for (i = 0; i < keys.length; i++) {
-            var v = trimText(getPref(keys[i], ''));
-            if (v) {
-                var t = v.replace(/^\/+|\/+$/g, '');
-                if (!t) {
-                    continue;
-                }
-                if (/[\\/]/.test(t) && (t.indexOf('github') >= 0 || t.indexOf('.com') >= 0 || t.split('/').length > 2)) {
-                    var seg = t.split(/[\\/]+/).filter(Boolean);
-                    t = seg[seg.length - 1] || t;
-                }
-                return t || 'Default';
+            var v = getPrefRaw(keys[i]);
+            if (v === undefined || v === null) {
+                continue;
             }
+            var t = extractFolderStringFromDonkeycodeValue(v);
+            t = trimText(String(t == null ? '' : t));
+            if (!t) {
+                continue;
+            }
+            t = t.replace(/^\/+|\/+$/g, '');
+            if (!t) {
+                continue;
+            }
+            if (/[\\/]/.test(t) && (t.indexOf('github') >= 0 || t.indexOf('.com') >= 0 || t.split('/').length > 2)) {
+                var seg = t.split(/[\\/]+/).filter(Boolean);
+                t = seg[seg.length - 1] || t;
+            }
+            return t || 'Default';
         }
         return '';
     }
@@ -238,7 +329,7 @@
      * Legacy "Default" / "default" maps to __default__.
      */
     function sessionFolderKeyCanonical() {
-        var r = donkeycodeCurrentSessionFolderRaw();
+        var r = trimText(donkeycodeCurrentSessionFolderRaw());
         if (r) {
             if (r === '__default__' || r.toLowerCase() === 'default') {
                 return '__default__';
@@ -246,10 +337,26 @@
             return r;
         }
         var leg = trimText(legacySessionFolderFromPrefs());
+        if (leg) {
+            lastSessionFolderPrefKey = 'legacy';
+        }
         if (!leg || leg === 'Default') {
+            if (!leg) {
+                lastSessionFolderPrefKey = '';
+            }
             return '__default__';
         }
         return leg;
+    }
+
+    function sessionFolderPrefSourceLine() {
+        if (lastSessionFolderPrefKey === 'legacy') {
+            return 'Source: legacy fallbacks in script (set donkeycode_current_session_folder in DonkeyCODE to avoid).';
+        }
+        if (lastSessionFolderPrefKey) {
+            return 'Source: DonkeyCODE · ' + lastSessionFolderPrefKey;
+        }
+        return 'Source: (no session key read — using Default) · expect pref donkeycode_current_session_folder or related.';
     }
 
     /** User-visible label: "Default" for __default__, else the key (e.g. ops/team1). */
@@ -848,6 +955,7 @@
                 ' path ' +
                 resolvedCloudPath()
         );
+        appendCloudSyncLog('saveStateToCloud: ' + sessionFolderPrefSourceLine());
         fetchCloudStates(function (doc, loadErr, fileSha) {
             if (!doc) {
                 toast('Could not load cloud: ' + (loadErr || 'unknown error'), true);
@@ -2155,7 +2263,14 @@
         var fkNow = sessionFolderKeyCanonical();
         loadFolderLine.textContent =
             'Active session folder: ' + sessionFolderDisplayLabel(fkNow) + (fkNow !== '__default__' ? ' (' + fkNow + ')' : '');
+        var loadFolderSrc = document.createElement('div');
+        loadFolderSrc.className = 'dc-wss-note';
+        loadFolderSrc.style.marginTop = '2px';
+        loadFolderSrc.style.fontSize = '10px';
+        loadFolderSrc.style.color = '#95a5a6';
+        loadFolderSrc.textContent = sessionFolderPrefSourceLine();
         body.appendChild(loadFolderLine);
+        body.appendChild(loadFolderSrc);
 
         addSectionTitle(body, 'Local saves');
         var localNote = document.createElement('div');
