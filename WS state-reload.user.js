@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.6
-// @description  Load WS UI trim; collapsed cloud debug log; direct/Actions cloud.
+// @version      0.2.8
+// @description  Session folder from donkeycode_current_session_folder; show on save, Load WS, and cloud list.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -198,11 +198,12 @@
         );
     }
 
-    /**
-     * DonkeyCODE "session folder" name for tags (e.g. Default, or a custom name), not a Git path.
-     * Prefer human session keys; avoid donkeycode_*_sessions_root (often a repo path) for display.
-     */
-    function activeDonkeyCodeFolder() {
+    /** DonkeyCODE-injected: __default__ or a folder key (e.g. ops/team1). Read at runtime; do not hard-code. */
+    function donkeycodeCurrentSessionFolderRaw() {
+        return trimText(getPref('donkeycode_current_session_folder', ''));
+    }
+
+    function legacySessionFolderFromPrefs() {
         var keys = [
             'donkeycode_current_folder',
             'donkeycode_folder',
@@ -229,13 +230,61 @@
                 return t || 'Default';
             }
         }
-        return 'Default';
+        return '';
+    }
+
+    /**
+     * Canonical folder key for storage and equality (cloud/local). __default__ = built-in Default folder.
+     * Legacy "Default" / "default" maps to __default__.
+     */
+    function sessionFolderKeyCanonical() {
+        var r = donkeycodeCurrentSessionFolderRaw();
+        if (r) {
+            if (r === '__default__' || r.toLowerCase() === 'default') {
+                return '__default__';
+            }
+            return r;
+        }
+        var leg = trimText(legacySessionFolderFromPrefs());
+        if (!leg || leg === 'Default') {
+            return '__default__';
+        }
+        return leg;
+    }
+
+    /** User-visible label: "Default" for __default__, else the key (e.g. ops/team1). */
+    function sessionFolderDisplayLabel(keyOrCanonical) {
+        var k = trimText(String(keyOrCanonical == null ? '' : keyOrCanonical));
+        if (!k) {
+            return 'Default';
+        }
+        if (k === '__default__' || k === 'Default' || k.toLowerCase() === 'default') {
+            return 'Default';
+        }
+        return k;
+    }
+
+    /**
+     * @deprecated use sessionFolderDisplayLabel(sessionFolderKeyCanonical()) for UI; key for save/compare.
+     * Kept for existing call sites: returns display label of active session.
+     */
+    function activeDonkeyCodeFolder() {
+        return sessionFolderDisplayLabel(sessionFolderKeyCanonical());
+    }
+
+    function normalizeSessionFolderKey(s) {
+        var t = trimText(String(s == null ? '' : s));
+        if (!t) {
+            return '__default__';
+        }
+        if (t === '__default__' || t === 'Default' || t.toLowerCase() === 'default') {
+            return '__default__';
+        }
+        return t;
     }
 
     function normalizeFolderForCompare(s) {
-        return String(s == null ? '' : s)
-            .toLowerCase()
-            .replace(/^\/+|\/+$/g, '');
+        return String(normalizeSessionFolderKey(s)).toLowerCase();
     }
 
     function decodeGithubFileContent(b64) {
@@ -261,7 +310,7 @@
             return null;
         }
         var savedAt = trimText(state.savedAt || state.updatedAt || state.capturedAt || nowIso());
-        var folder = trimText(state.folder || state.folderName || 'Default') || 'Default';
+        var folder = normalizeSessionFolderKey(state.folder || state.sessionFolder || state.folderName);
         var id = trimText(state.id) || stateId();
         return {
             id: id,
@@ -748,16 +797,17 @@
         if (!name) {
             name = defaultSaveLabelFromState(state);
         }
-        var folder = activeDonkeyCodeFolder();
+        var folderKey = sessionFolderKeyCanonical();
+        var folderLabel = sessionFolderDisplayLabel(folderKey);
         state.id = stateId();
         state.name = name;
-        state.folder = folder;
+        state.folder = folderKey;
         state.savedAt = nowIso();
         state.updatedAt = state.savedAt;
         state.expiresAt = expiresAtFor(state.savedAt);
         toast('Loading cloud states before save...', false);
         appendCloudSyncLog(
-            'saveStateToCloud: name="' + name + '", folder=' + folder + ', items=' + (state.items && state.items.length ? state.items.length : 0)
+            'saveStateToCloud: name="' + name + '", folder=' + folderKey + ' (' + folderLabel + '), items=' + (state.items && state.items.length ? state.items.length : 0)
         );
         fetchCloudStates(function (doc, loadErr, fileSha) {
             if (!doc) {
@@ -817,7 +867,7 @@
                     'Could not load cloud: ' + (loadErr || 'Check PAT (repo + workflow scope), team key = WOF/WORKSHEET secret, and repo/branch/path.');
                 return;
             }
-            var folder = activeDonkeyCodeFolder();
+            var folderKey = sessionFolderKeyCanonical();
             var states = (doc.states || []).filter(function (st) {
                 return st && !isExpiredState(st);
             });
@@ -829,11 +879,11 @@
                 return;
             }
             var sameFolder = states.filter(function (st) {
-                return normalizeFolderForCompare(st.folder) === normalizeFolderForCompare(folder);
+                return normalizeFolderForCompare(st.folder) === normalizeFolderForCompare(folderKey);
             });
             var list = sameFolder.concat(
                 states.filter(function (st) {
-                    return normalizeFolderForCompare(st.folder) !== normalizeFolderForCompare(folder);
+                    return normalizeFolderForCompare(st.folder) !== normalizeFolderForCompare(folderKey);
                 })
             );
             for (var i = 0; i < list.length; i++) {
@@ -851,11 +901,15 @@
         name.textContent = state.name || '(unnamed)';
         var meta = document.createElement('div');
         meta.className = 'dc-wss-meta';
+        var cloudFolderKey = normalizeSessionFolderKey(state.folder);
         meta.textContent =
+            'Session: ' +
+            sessionFolderDisplayLabel(cloudFolderKey) +
+            ' — ' +
             itemSummary(state.items) +
-            ' - saved ' +
+            ' — saved ' +
             formatDate(state.savedAt || state.updatedAt || state.capturedAt) +
-            ' - ' +
+            ' — ' +
             formatExpiresLabel(state.expiresAt);
         info.appendChild(name);
         info.appendChild(meta);
@@ -1235,7 +1289,8 @@
             capturedAt: nowIso(),
             title: trimText(document.title || 'Worksheet'),
             url: String(location.href || ''),
-            items: items
+            items: items,
+            sessionFolder: sessionFolderKeyCanonical()
         };
     }
 
@@ -1792,6 +1847,7 @@
         var name = uniqueStateNameInStore(defaultSaveLabelFromState(state), null);
         state.id = stateId();
         state.name = name;
+        state.sessionFolder = sessionFolderKeyCanonical();
         state.updatedAt = nowIso();
         state.expiresAt = expiresAtFor(state.updatedAt);
         var store = readStateStore();
@@ -1871,11 +1927,17 @@
         name.textContent = state.name || '(unnamed)';
         var meta = document.createElement('div');
         meta.className = 'dc-wss-meta';
+        var localFolderLine = 'Session: not recorded';
+        if (Object.prototype.hasOwnProperty.call(state, 'sessionFolder') && state.sessionFolder != null) {
+            localFolderLine = 'Session: ' + sessionFolderDisplayLabel(normalizeSessionFolderKey(state.sessionFolder));
+        }
         meta.textContent =
+            localFolderLine +
+            ' — ' +
             itemSummary(state.items) +
-            ' - saved ' +
+            ' — saved ' +
             formatDate(state.updatedAt || state.capturedAt) +
-            ' - ' +
+            ' — ' +
             formatExpiresLabel(state.expiresAt);
         info.appendChild(name);
         info.appendChild(meta);
@@ -1918,7 +1980,7 @@
         var toCloud = document.createElement('button');
         toCloud.type = 'button';
         toCloud.textContent = 'To cloud';
-        toCloud.title = 'Upload this snapshot to shared cloud states for folder ' + activeDonkeyCodeFolder();
+        toCloud.title = 'Upload to shared cloud; tagged for session folder ' + sessionFolderDisplayLabel(sessionFolderKeyCanonical());
         toCloud.addEventListener('click', function () {
             if (!state || !Array.isArray(state.items) || !state.items.length) {
                 toast('This state is empty.', true);
@@ -2033,6 +2095,13 @@
 
         var body = document.createElement('div');
         body.className = 'dc-wss-body';
+
+        var loadFolderLine = document.createElement('div');
+        loadFolderLine.className = 'dc-wss-note';
+        var fkNow = sessionFolderKeyCanonical();
+        loadFolderLine.textContent =
+            'Active session folder: ' + sessionFolderDisplayLabel(fkNow) + (fkNow !== '__default__' ? ' (' + fkNow + ')' : '');
+        body.appendChild(loadFolderLine);
 
         addSectionTitle(body, 'Local saves');
         var localNote = document.createElement('div');
