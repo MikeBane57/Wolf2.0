@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.8.0
-// @description  WoF: WOFDATA/wall-of-fame.json on DonkeyCODE repo; donkeycode_github_* fallbacks; direct Contents only (no Actions by default).
+// @version      2.8.1
+// @description  WoF: PUT with fresh GET/contents SHA + multi-409 retry (same as WS state). WOFDATA path, direct API.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
@@ -602,41 +602,92 @@
         );
     }
 
-    function githubPutFile(entries, sha, cb) {
+    /**
+     * Contents API PUT: always refetch file SHA with GET /contents/ immediately before each PUT
+     * (avoids 409 from stale sha). On 409, refetch and retry (same pattern as WS state-reload).
+     * Second arg (sha) is ignored; kept for call-site compatibility.
+     */
+    function githubPutFile(entries, ignoredSha, cb, logDebug) {
         var branch = resolvedWallOfFameDataBranch();
+        var max409 = 5;
+        var att = 0;
         var payload = {
             entries: entries,
             updatedAt: Date.now()
         };
         var bodyStr = JSON.stringify(payload, null, 2);
-        var body = {
-            message: 'Wall of Fame sync (DonkeyCODE)',
-            content: utf8ToBase64(bodyStr),
-            branch: branch
-        };
-        if (sha) {
-            body.sha = sha;
-        }
-        var url = githubContentsApiUrl();
-        githubXhr('PUT', url, body, function(status, text) {
-            if (status === 200 || status === 201) {
-                try {
-                    var meta = JSON.parse(text);
-                    if (meta.content && meta.content.sha) {
-                        githubFileSha = meta.content.sha;
-                    } else if (meta.commit && meta.commit.sha) {
-                        githubFileSha = meta.commit.sha;
+        function doAttempt() {
+            githubGetFile(
+                function (remote, sha) {
+                    if (logDebug) {
+                        logDebug(
+                            'PUT pre: fresh sha from GET /contents/' + (sha ? ' ' + String(sha).slice(0, 7) + '…' : ' (new file, no sha)')
+                        );
                     }
-                } catch (e) {}
-                cb(true, null);
-                return;
-            }
-            if (status === 409) {
-                cb(false, 'conflict');
-                return;
-            }
-            cb(false, explainGithubPublishError(status, text));
-        });
+                    var body = {
+                        message:
+                            att > 0
+                                ? 'Wall of Fame sync (retry ' + att + ' after 409)'
+                                : 'Wall of Fame sync (DonkeyCODE)',
+                        content: utf8ToBase64(bodyStr),
+                        branch: branch
+                    };
+                    if (sha) {
+                        body.sha = sha;
+                    }
+                    var url = githubContentsApiUrl();
+                    githubXhr(
+                        'PUT',
+                        url,
+                        body,
+                        function (status, text) {
+                            if (status === 200 || status === 201) {
+                                try {
+                                    var meta = JSON.parse(text);
+                                    if (meta.content && meta.content.sha) {
+                                        githubFileSha = meta.content.sha;
+                                    } else if (meta.commit && meta.commit.sha) {
+                                        githubFileSha = meta.commit.sha;
+                                    }
+                                } catch (e) {}
+                                cb(true, null);
+                                return;
+                            }
+                            if (status === 409) {
+                                att += 1;
+                                if (att < max409) {
+                                    if (logDebug) {
+                                        logDebug('PUT HTTP 409 — refetching sha, retry ' + att + '/' + (max409 - 1) + '…');
+                                    }
+                                    setTimeout(function () {
+                                        doAttempt();
+                                    }, 120);
+                                    return;
+                                }
+                            }
+                            if (logDebug) {
+                                logDebug('PUT failed: HTTP ' + status + (text ? ' ' + String(text).slice(0, 120) : ''));
+                            }
+                            if (status === 409) {
+                                cb(
+                                    false,
+                                    'Conflict: file changed repeatedly. Save again in a few seconds. ' +
+                                        (explainGithubPublishError(status, text) || '')
+                                );
+                                return;
+                            }
+                            cb(false, explainGithubPublishError(status, text));
+                        },
+                        logDebug
+                    );
+                },
+                logDebug
+            );
+        }
+        if (logDebug) {
+            logDebug('PUT: fresh GET/contents/ SHA before each attempt (stale-shas caused 409 like worksheet state).');
+        }
+        doAttempt();
     }
 
     function isUnlocked() {
@@ -960,38 +1011,20 @@
                 if (panel) {
                     render(panel);
                 }
-                githubPutFile(toSave, sha, function(ok, err) {
+                githubPutFile(
+                    toSave,
+                    null,
+                    function (ok, err) {
                     if (ok) {
                         wofAppendPublishLog(panel, 'PUT succeeded (HTTP 200/201).');
                         cb(true, null);
                         return;
                     }
-                    if (err === 'conflict') {
-                        wofAppendPublishLog(panel, '409 conflict — refetching SHA and retrying once…');
-                        githubGetFile(
-                            function(remote2, sha2) {
-                            var retryPayload = prepareEntriesForPublish(entriesState);
-                            entriesState = retryPayload;
-                            saveLocal(entriesState);
-                            if (panel) {
-                                render(panel);
-                            }
-                            githubPutFile(retryPayload, sha2, function(ok2, err2) {
-                                if (ok2) {
-                                    wofAppendPublishLog(panel, 'Retry PUT succeeded.');
-                                } else {
-                                    wofAppendPublishLog(panel, 'Retry failed: ' + (err2 || ''));
-                                }
-                                cb(ok2, err2 || null);
-                            });
-                        },
-                        wofPublishDbg
-                        );
-                        return;
-                    }
                     wofAppendPublishLog(panel, 'PUT error: ' + (err || ''));
                     cb(false, err || 'GitHub PUT failed');
-                });
+                },
+                    wofPublishDbg
+                );
             },
             wofPublishDbg
             );
