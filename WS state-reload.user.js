@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.13
-// @description  Session folder: live read (no cache) + runtime hooks; do not put donkeycode_current_session_folder in @donkeycode-pref.
+// @version      0.2.14
+// @description  Cloud rows: Delete from cloud (replaces save copy). Session folder + direct API.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -1058,6 +1058,63 @@
         });
     }
 
+    /**
+     * Remove one state from the shared cloud document by id (Load WS → cloud rows).
+     * Same publish path as save: direct PUT or repository_dispatch.
+     */
+    function deleteCloudStateById(stateId, nameHint) {
+        var sid = trimText(String(stateId == null ? '' : stateId));
+        if (!sid) {
+            toast('Cannot delete: this cloud entry has no id.', true);
+            return;
+        }
+        var label = trimText(String(nameHint || '')) || sid;
+        toast('Removing from cloud...', false);
+        appendCloudSyncLog('deleteCloudStateById: id="' + sid + '", label="' + label + '"');
+        fetchCloudStates(function (doc, loadErr, fileSha) {
+            if (!doc) {
+                toast('Could not load cloud: ' + (loadErr || 'unknown error'), true);
+                return;
+            }
+            if (!useWorksheetGithubActions() && !resolvedGithubPat()) {
+                var needPat =
+                    'To delete, set donkeycode_github_pat (Contents R/W) for ' +
+                    resolvedCloudOwner() +
+                    '/' +
+                    resolvedCloudRepo() +
+                    '.';
+                appendCloudSyncLog('deleteCloudStateById ABORT: ' + needPat);
+                toast(needPat, true);
+                return;
+            }
+            var arr = (doc.states || []).filter(function (st) {
+                return st && !isExpiredState(st);
+            });
+            var before = arr.length;
+            var next = arr.filter(function (st) {
+                return trimText(String(st && st.id != null ? st.id : '')) !== sid;
+            });
+            if (next.length === before) {
+                toast('That cloud state was not found (expired, wrong id, or already removed).', true);
+                refreshCloudRows();
+                return;
+            }
+            appendCloudSyncLog('deleteCloudStateById: publishing, remaining states=' + next.length);
+            postCloudAfterMerge(cloudDocFor(next), fileSha, function (ok, err) {
+                if (!ok) {
+                    toast(err || 'Cloud delete failed.', true);
+                    return;
+                }
+                if (useWorksheetGithubActions()) {
+                    toast('Cloud delete requested for "' + label + '". It may take a moment (Actions) to update.', false);
+                } else {
+                    toast('Removed from cloud: "' + label + '"', false);
+                }
+                refreshCloudRows();
+            });
+        });
+    }
+
     function saveCurrentStateToCloud() {
         var state = collectWorksheetState();
         if (!state.items.length) {
@@ -1141,19 +1198,22 @@
             closeModal();
             applyStateToWorksheet(state, 'cloud state "' + (state.name || '(unnamed)') + '"');
         });
-        var toCloud = document.createElement('button');
-        toCloud.type = 'button';
-        toCloud.textContent = 'Save copy to cloud';
-        toCloud.title = 'Copy this snapshot to shared cloud (same as Load WS → Cloud saves)';
-        toCloud.addEventListener('click', function () {
-            var snap = { items: (state.items || []).slice() };
-            if (state.title) {
-                snap.title = state.title;
-            }
-            saveStateToCloud(snap, state.name);
-        });
+        var delCloud = document.createElement('button');
+        delCloud.type = 'button';
+        delCloud.textContent = 'Delete';
+        delCloud.className = 'dc-wss-danger';
+        delCloud.title = 'Remove this save from the shared cloud JSON file';
+        if (state.id) {
+            delCloud.addEventListener('click', function (e) {
+                e.stopPropagation();
+                deleteCloudStateById(state.id, state.name);
+            });
+        } else {
+            delCloud.disabled = true;
+            delCloud.title = 'This entry has no id — cannot delete (re-save from a current script).';
+        }
         actions.appendChild(recall);
-        actions.appendChild(toCloud);
+        actions.appendChild(delCloud);
         row.appendChild(info);
         row.appendChild(actions);
         return row;
