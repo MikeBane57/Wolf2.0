@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.7.6
-// @description  FIMS tab: Wall of Fame; data from WALL of FAME/wall-of-fame.json + local cache (no baked-in accolades)
+// @version      2.7.7
+// @description  WoF: sync log always visible; fetch logs URL/status/fallback. Git push/pull debuggable.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
@@ -105,6 +105,11 @@
         return v;
     }
 
+    function wofLogSyncLine(panel, msg) {
+        var p = panel || document.getElementById(PANEL_ID);
+        wofAppendPublishLog(p, msg);
+    }
+
     function wofAppendPublishLog(panel, msg) {
         var line =
             '[' +
@@ -181,16 +186,23 @@
     /**
      * Public raw file GET. Returns null entries → caller may fall back to Contents API (private repo).
      */
-    function rawGithubGet(cb) {
+    function rawGithubGet(cb, logDebug) {
         if (typeof GM_xmlhttpRequest !== 'function') {
+            if (typeof logDebug === 'function') {
+                logDebug('raw GET skipped: GM_xmlhttpRequest unavailable (DonkeyCODE / @grant).');
+            }
             cb(null);
             return;
         }
+        var u = rawGithubWallOfFameUrl();
         GM_xmlhttpRequest({
             method: 'GET',
-            url: rawGithubWallOfFameUrl(),
+            url: u,
             onload: function(res) {
                 var st = res.status || 0;
+                if (typeof logDebug === 'function') {
+                    logDebug('raw GET HTTP ' + st + ' — ' + u);
+                }
                 if (st === 404) {
                     cb([]);
                     return;
@@ -202,12 +214,18 @@
                 var text = res.responseText || '';
                 var entries = parseEntriesFromJsonText(text);
                 if (entries === null) {
+                    if (typeof logDebug === 'function') {
+                        logDebug('raw: JSON parse failed (invalid wall-of-fame.json).');
+                    }
                     cb(null);
                     return;
                 }
                 cb(entries);
             },
             onerror: function() {
+                if (typeof logDebug === 'function') {
+                    logDebug('raw GET network error — ' + u);
+                }
                 cb(null);
             }
         });
@@ -481,16 +499,25 @@
         });
     }
 
-    function githubGetFile(cb) {
+    function githubGetFile(cb, logDebug) {
         var branch = encodeURIComponent(resolvedWallOfFameDataBranch());
         var url = githubContentsApiUrl() + '?ref=' + branch;
         githubXhr('GET', url, null, function(status, text) {
+            if (typeof logDebug === 'function') {
+                logDebug('Contents API GET HTTP ' + status + ' — ' + url);
+            }
             if (status === 404) {
                 githubFileSha = null;
+                if (typeof logDebug === 'function') {
+                    logDebug('Contents: file not at path (HTTP 404) — check wallOfFameRepoPath / branch / repo.');
+                }
                 cb(null, null);
                 return;
             }
             if (status < 200 || status >= 300) {
+                if (typeof logDebug === 'function' && status === 0) {
+                    logDebug('Contents GET failed (HTTP 0): check PAT, @connect api.github.com, DonkeyCODE site access.');
+                }
                 cb(null, null);
                 return;
             }
@@ -499,8 +526,14 @@
                 githubFileSha = meta.sha || null;
                 var raw = decodeGithubFileContent(meta.content || '');
                 var entries = parseEntriesFromJsonText(raw);
+                if (entries === null && typeof logDebug === 'function') {
+                    logDebug('Contents: decoded JSON invalid (fix wall-of-fame.json in repo).');
+                }
                 cb(entries, githubFileSha);
             } catch (e) {
+                if (typeof logDebug === 'function') {
+                    logDebug('Contents: could not parse metadata JSON.');
+                }
                 cb(null, githubFileSha);
             }
         });
@@ -706,34 +739,80 @@
         renderCards(panel);
     }
 
-    function fetchCloud(cb) {
+    function fetchCloud(cb, panel) {
+        var log = function(m) {
+            wofLogSyncLine(panel, m);
+        };
+        var owner = resolvedWallOfFameDataOwner();
+        var repo = resolvedWallOfFameDataRepo();
+        var branch = resolvedWallOfFameDataBranch();
+        var path = resolvedGithubFilePath();
+        log(
+            'Fetch start — repo ' +
+                owner +
+                '/' +
+                repo +
+                '@' +
+                branch +
+                ', path: ' +
+                path +
+                (proxyConfigured() ? ' (proxy mode)' : actionsModeConfigured() ? ' (Actions: raw then API if needed)' : ' (direct API)')
+        );
         if (proxyConfigured()) {
-            proxyGetFile(cb);
+            log('GET via proxy ' + String(proxyBaseUrl() || '').replace(/\/+$/, '') + '/wall-of-fame');
+            proxyGetFile(function(ent) {
+                if (ent === null) {
+                    log('Proxy: failed (HTTP not 2xx, bad JSON, or network).');
+                } else {
+                    log('Proxy: OK, ' + ent.length + ' entr' + (ent.length === 1 ? 'y' : 'ies') + '.');
+                }
+                cb(ent);
+            });
             return;
         }
         if (actionsModeConfigured()) {
             rawGithubGet(function(entries) {
                 if (entries !== null) {
+                    log('Using raw result: ' + entries.length + ' entries.');
                     cb(entries);
                     return;
                 }
                 if (githubConfigured()) {
-                    githubGetFile(function(e2) {
-                        cb(e2);
-                    });
+                    log('Raw failed or private; trying Contents API with PAT…');
+                    githubGetFile(
+                        function(e2) {
+                            if (e2 === null) {
+                                log('Contents API fetch failed — see lines above.');
+                            } else {
+                                log('Contents API: ' + e2.length + ' entries.');
+                            }
+                            cb(e2);
+                        },
+                        log
+                    );
                     return;
                 }
+                log('No PAT: cannot fall back to Contents API for private repo. Set donkeycode_github_pat.');
                 cb(null);
-            });
+            }, log);
             return;
         }
         if (!githubConfigured()) {
+            log('No donkeycode_github_pat — cannot GET private file. Public raw only works if actions+raw path is used; for direct mode set PAT.');
             cb(null);
             return;
         }
-        githubGetFile(function(entries) {
-            cb(entries);
-        });
+        githubGetFile(
+            function(entries) {
+                if (entries === null) {
+                    log('Direct Contents GET failed — check PAT scope (Contents read) and path.');
+                } else {
+                    log('Direct Contents: ' + entries.length + ' entries.');
+                }
+                cb(entries);
+            },
+            log
+        );
     }
 
     function postCloud(entries, cb, panelOpt) {
@@ -758,9 +837,13 @@
             wofAppendPublishLog(panel, 'Direct: PUT Contents API (PAT needs Contents write on ' + owner + '/' + repo + ')');
         }
 
+        function wofPublishDbg(m) {
+            wofAppendPublishLog(panel, m);
+        }
         function doGithubPut() {
             wofAppendPublishLog(panel, 'GET file metadata + SHA…');
-            githubGetFile(function(remote, sha) {
+            githubGetFile(
+                function(remote, sha) {
                 if (remote === null && sha === null) {
                     wofAppendPublishLog(panel, 'Note: file missing or GET failed (HTTP not 2xx). Attempting create/update anyway.');
                 } else {
@@ -786,7 +869,8 @@
                     }
                     if (err === 'conflict') {
                         wofAppendPublishLog(panel, '409 conflict — refetching SHA and retrying once…');
-                        githubGetFile(function(remote2, sha2) {
+                        githubGetFile(
+                            function(remote2, sha2) {
                             var retryPayload = prepareEntriesForPublish(entriesState);
                             entriesState = retryPayload;
                             saveLocal(entriesState);
@@ -801,13 +885,17 @@
                                 }
                                 cb(ok2, err2 || null);
                             });
-                        });
+                        },
+                        wofPublishDbg
+                        );
                         return;
                     }
                     wofAppendPublishLog(panel, 'PUT error: ' + (err || ''));
                     cb(false, err || 'GitHub PUT failed');
                 });
-            });
+            },
+            wofPublishDbg
+            );
         }
 
         if (proxyConfigured()) {
@@ -867,16 +955,22 @@
                 cb(false, msg);
                 return;
             }
-            rawGithubGet(function(remote) {
+            rawGithubGet(
+                function(remote) {
                 if (remote === null && githubConfigured()) {
                     wofAppendPublishLog(panel, 'raw.githubusercontent.com failed; trying Contents API GET…');
-                    githubGetFile(function(r2) {
+                    githubGetFile(
+                        function(r2) {
                         runActionsDispatch(r2 || []);
-                    });
+                    },
+                    wofPublishDbg
+                    );
                     return;
                 }
                 runActionsDispatch(remote || []);
-            });
+            },
+            wofPublishDbg
+            );
             return;
         }
 
@@ -1042,7 +1136,7 @@
             '#' + PANEL_ID + ' .dc-wof-btn-sec{background:rgba(255,255,255,.12);color:#eee;}',
             '#' + PANEL_ID + ' .dc-wof-list{margin:8px 0 0;padding-left:1.1em;font-size:.8rem;opacity:.9;}',
             '#' + PANEL_ID + ' .dc-wof-hint{font-size:.65rem;opacity:.6;margin-top:10px;line-height:1.4;}',
-            '#' + PANEL_ID + ' #dc-wof-publish-log{display:none;width:100%;max-height:120px;overflow:auto;margin-top:10px;padding:8px;',
+            '#' + PANEL_ID + ' #dc-wof-publish-log{display:block;width:100%;min-height:64px;max-height:180px;overflow:auto;margin-top:10px;padding:8px;',
             'font-family:ui-monospace,monospace;font-size:10px;line-height:1.35;white-space:pre-wrap;word-break:break-word;',
             'background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#c8e0ff;}'
         ].join('');
@@ -1296,7 +1390,7 @@
             wrap.style.display = editPanelOpen ? 'block' : 'none';
         }
         if (pubLog) {
-            pubLog.style.display = editPanelOpen ? 'block' : 'none';
+            pubLog.style.display = 'block';
         }
         if (btn) {
             btn.textContent = editPanelOpen ? 'Hide editor' : 'Edit';
@@ -1502,18 +1596,28 @@
                 alert('Turn on sync: GitHub PAT, Actions + team key, or proxy + team key.');
                 return;
             }
+            wofClearPublishLog(panel);
+            wofAppendPublishLog(panel, 'Manual Fetch from GitHub (button)');
             fetchCloud(function(remote) {
                 if (remote === null) {
+                    wofAppendPublishLog(
+                        panel,
+                        'Fetch failed. Check log above, PAT, wallOfFameDataOwner/Repo/Branch, wallOfFameRepoPath, and console [Wall of Fame].'
+                    );
                     alert(
-                        'Could not load (check Actions + team key, PAT, @connect, or wallOfFameRepoPath). See browser / extension service worker logs.'
+                        'Could not load. Expand the debug log under the cards (or open Edit) and check console [Wall of Fame].'
                     );
                     return;
                 }
                 entriesState = mergeEntries(entriesState, remote);
                 saveLocal(entriesState);
                 renderCards(panel);
+                wofAppendPublishLog(
+                    panel,
+                    'Fetch merged: ' + remote.length + ' entr' + (remote.length === 1 ? 'y' : 'ies') + ' from repo.'
+                );
                 alert('Merged from repo: ' + remote.length + ' entr' + (remote.length === 1 ? 'y' : 'ies') + '.');
-            });
+            }, panel);
         });
         wrap.appendChild(imp);
 
@@ -1818,9 +1922,14 @@
         edit.className = 'dc-wof-edit';
         inner.appendChild(edit);
 
+        var logCap = document.createElement('div');
+        logCap.className = 'dc-wof-sync-log-cap';
+        logCap.style.cssText = 'font-size:0.65rem;opacity:0.75;margin-top:8px;';
+        logCap.textContent = 'Sync / publish log (Fetch + Publish write here; also console [Wall of Fame])';
+        inner.appendChild(logCap);
         var pubLog = document.createElement('pre');
         pubLog.id = 'dc-wof-publish-log';
-        pubLog.setAttribute('aria-label', 'Publish debug log');
+        pubLog.setAttribute('aria-label', 'Wall of Fame sync and publish debug log');
         inner.appendChild(pubLog);
 
         panel.appendChild(inner);
@@ -1831,22 +1940,29 @@
         render(panel);
 
         if (syncConfigured()) {
+            wofLogSyncLine(panel, 'Initial fetch on panel open (sync configured)…');
             fetchCloud(function(remote) {
                 if (remote !== null) {
                     entriesState = mergeEntries(entriesState, remote);
                     saveLocal(entriesState);
                     render(panel);
                 }
-            });
+            }, panel);
         } else if (!entriesState.length) {
             /** Public repo: load from raw.githubusercontent.com without PAT / Actions / proxy. */
-            rawGithubGet(function(remote) {
+            wofLogSyncLine(panel, 'No PAT — trying public raw only (if repo/file is public)…');
+            rawGithubGet(
+                function(remote) {
                 if (remote !== null && remote.length) {
                     entriesState = mergeEntries(entriesState, remote);
                     saveLocal(entriesState);
                     render(panel);
                 }
-            });
+            },
+            function(m) {
+                wofLogSyncLine(panel, m);
+            }
+            );
         }
 
         return panel;
