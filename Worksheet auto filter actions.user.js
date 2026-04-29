@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.3.8
-// @description  Worksheet: auto filter per worksheet tab; watch/interval/operational time scoped by session tab id.
+// @version      1.3.9
+// @description  Worksheet: auto filter per tab; watch row / divider / interval row; default actions pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
 // @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto filter actions","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto filter actions","label":"Interval (seconds)","description":"Default seconds for interval clicks when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
@@ -103,8 +103,8 @@
             watchOn: false,
             intervalOn: false,
             intervalSec: intervalSecFromPref(),
-            actionWatch: 'replace',
-            actionInterval: 'replace',
+            actionWatch: '',
+            actionInterval: '',
             metrics: { tails: true, lines: true, flights: true },
             collapsed: false,
             opTimeAuto: false
@@ -259,9 +259,20 @@
             o.intervalOn = !!s.intervalOn;
             var nsec = Number(s.intervalSec);
             o.intervalSec = Number.isFinite(nsec) ? Math.min(3600, Math.max(5, Math.floor(nsec))) : intervalSecFromPref();
-            o.actionWatch = s.actionWatch === 'append' || s.actionWatch === 'remove' ? s.actionWatch : 'replace';
+            o.actionWatch =
+                s.actionWatch === 'append' ||
+                s.actionWatch === 'remove' ||
+                s.actionWatch === 'replace' ||
+                s.actionWatch === ''
+                    ? s.actionWatch
+                    : '';
             o.actionInterval =
-                s.actionInterval === 'append' || s.actionInterval === 'remove' ? s.actionInterval : 'replace';
+                s.actionInterval === 'append' ||
+                s.actionInterval === 'remove' ||
+                s.actionInterval === 'replace' ||
+                s.actionInterval === ''
+                    ? s.actionInterval
+                    : '';
             o.metrics = {
                 tails: !!(s.metrics && s.metrics.tails),
                 lines: !!(s.metrics && s.metrics.lines),
@@ -322,7 +333,8 @@
 
     function writeActionWatch(a) {
         var s = readTabState();
-        s.actionWatch = a === 'append' || a === 'remove' ? a : 'replace';
+        s.actionWatch =
+            a === 'append' || a === 'remove' || a === 'replace' || a === '' ? a : '';
         writeTabState(s);
     }
 
@@ -332,7 +344,8 @@
 
     function writeActionInterval(a) {
         var s = readTabState();
-        s.actionInterval = a === 'append' || a === 'remove' ? a : 'replace';
+        s.actionInterval =
+            a === 'append' || a === 'remove' || a === 'replace' || a === '' ? a : '';
         writeTabState(s);
     }
 
@@ -614,6 +627,9 @@
     }
 
     function clickToolbarAction(action, reason) {
+        if (!action || action === '') {
+            return false;
+        }
         var name = labelForToolbarAction(action).toLowerCase();
         var btn = findToolbarButtonByLabel(name);
         if (!btn) {
@@ -649,6 +665,12 @@
         var act = readActionWatch();
         if (!lastSig) {
             lastSig = sig;
+            return;
+        }
+        if (!act) {
+            if (sig !== lastSig) {
+                lastSig = sig;
+            }
             return;
         }
         if (sig !== lastSig) {
@@ -727,7 +749,10 @@
                 return;
             }
             if (remaining <= 0) {
-                clickToolbarAction(readActionInterval(), 'interval');
+                var ia = readActionInterval();
+                if (ia) {
+                    clickToolbarAction(ia, 'interval');
+                }
                 remaining = intervalSecEffective();
             }
             setIntervalCountdownText(formatCountdownSeconds(remaining));
@@ -764,7 +789,10 @@
             ' .dc-war-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;width:100%;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-interval-row{justify-content:space-between;}' +
+            ' .dc-war-divider{border:none;border-top:1px solid rgba(93,173,226,.35);margin:6px 0;width:100%;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-interval-row .dc-war-interval-left input[data-dc-interval-toggle]{flex-shrink:0;margin:0;accent-color:#5dade2;width:14px;height:14px;}' +
             '#' +
             HOST_ID +
             ' .dc-war-interval-left{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;flex:1;min-width:0;}' +
@@ -1044,18 +1072,21 @@
         '<summary>Worksheet auto filter actions (this tab only)</summary>' +
         '<div class="dc-war-body">' +
         '<div class="dc-war-row dc-war-watch-row">' +
-        '<label><input type="checkbox" data-dc-watch-toggle /> Watch</label>' +
+        '<label><input type="checkbox" data-dc-watch-toggle /> Watch for change to…</label>' +
         '<label class="dc-war-metric"><input type="checkbox" data-dc-metric="tails" />AC</label>' +
         '<label class="dc-war-metric"><input type="checkbox" data-dc-metric="lines" />LN</label>' +
         '<label class="dc-war-metric"><input type="checkbox" data-dc-metric="flights" />FLT</label>' +
-        '<select class="dc-war-sel" data-dc-action-watch title="When counts change">' +
+        '<select class="dc-war-sel" data-dc-action-watch title="Toolbar button when counts change">' +
+        '<option value="">Pick a button…</option>' +
         '<option value="replace">Replace</option><option value="append">Append</option><option value="remove">Remove</option>' +
         '</select>' +
         '</div>' +
+        '<hr class="dc-war-divider" />' +
         '<div class="dc-war-row dc-war-interval-row">' +
         '<div class="dc-war-interval-left">' +
-        '<label><input type="checkbox" data-dc-interval-toggle /> Click</label>' +
-        '<select class="dc-war-sel" data-dc-action-interval title="Interval">' +
+        '<input type="checkbox" data-dc-interval-toggle title="Interval clicks" />' +
+        '<select class="dc-war-sel" data-dc-action-interval title="Toolbar button on interval">' +
+        '<option value="">Pick a button…</option>' +
         '<option value="replace">Replace</option><option value="append">Append</option><option value="remove">Remove</option>' +
         '</select>' +
         '<span>every</span>' +
