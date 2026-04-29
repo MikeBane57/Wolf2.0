@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.5.0
-// @description  Worksheet: right-click AC menu → "Wifi reset" (mailto). Schedule: highlights + dbl-click. Prefs: context menu, worksheet dbl-click off by default.
+// @version      1.5.2
+// @description  Worksheet: mailto via window.open in user gesture (avoids double-fire + blank tab); iframe fallback. Schedule unchanged.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"wifiResetHighlightEnabled":{"type":"boolean","group":"Wifi reset highlight","label":"Highlight allowlisted tails","description":"Color aircraft registrations that are in the wifi email list.","default":true},"wifiResetHighlightColor":{"type":"select","group":"Wifi reset highlight","label":"Tail highlight color","description":"Normal weight — only the color changes.","default":"#87CEFA","options":[{"value":"#87CEFA","label":"Sky blue"},{"value":"#ADD8E6","label":"Light blue"},{"value":"#B0E0E6","label":"Powder blue"},{"value":"#AFEEEE","label":"Pale turquoise"},{"value":"#7EC8E3","label":"Carolina blue"},{"value":"#6BB6FF","label":"Soft sky"},{"value":"#5DADE2","label":"Soft cyan"},{"value":"#48CAE4","label":"Bright sky"},{"value":"#89CFF0","label":"Baby blue"},{"value":"#9DD9F3","label":"Light cyan blue"},{"value":"#00BFFF","label":"Deep sky blue"},{"value":"#40E0D0","label":"Turquoise"}]}}
-// @donkeycode-pref {"wifiResetContextMenuWorksheet":{"type":"boolean","group":"Wifi reset worksheet","label":"Right-click menu: Wifi reset","description":"On worksheet AC right-click (same targets as Send AC to WS), add menu item that opens wifi-reset mailto for allowlisted N-number. Default ON.","default":true},"wifiResetWorksheetDblclick":{"type":"boolean","group":"Wifi reset worksheet","label":"Worksheet: double-click mailto","description":"OFF by default — use right-click menu to avoid React issues. When ON, bubble dblclick + deferred mailto on allowlisted tail.","default":false}}
+// @donkeycode-pref {"wifiResetDebugLog":{"type":"boolean","group":"Wifi reset debug","label":"Log to browser console","description":"When ON: prefix [Wifi reset] — init, mailto path, errors. Default OFF.","default":false}}
+// @donkeycode-pref {"wifiResetMailtoIframeWorksheet":{"type":"boolean","group":"Wifi reset worksheet","label":"Worksheet: iframe mailto fallback","description":"When context-menu window.open is blocked, ON (default): open mailto in a hidden iframe after a short delay. OFF: use programmatic link click (may blank React).","default":true}}
+// @donkeycode-pref {"wifiResetContextMenuWorksheet":{"type":"boolean","group":"Wifi reset worksheet","label":"Right-click menu: Wifi reset","description":"On worksheet AC right-click (same targets as Send AC to WS), add menu item that opens wifi-reset mailto for allowlisted N-number. Default ON.","default":true},"wifiResetWorksheetDblclick":{"type":"boolean","group":"Wifi reset worksheet","label":"Worksheet: double-click mailto","description":"OFF by default — use right-click menu. When ON, bubble dblclick + mailto on allowlisted tail.","default":false}}
 // @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
@@ -103,6 +105,10 @@
     var wsOnCtx = null;
     var wsLastContextRoot = null;
     var wsLastExtractedTail = '';
+
+    /** Menu item used to fire both mousedown + click → two mailto launches; guard applies to worksheet path. */
+    var lastWorksheetMailtoKey = '';
+    var lastWorksheetMailtoAt = 0;
 
     var RE_WS_N_NUMBER = /N\d{1,5}[A-Z]?/i;
     var RE_WS_TAIL_ALT = /\b([A-Z]{1,2}\d{1,5}[A-Z]{0,2})\b/;
@@ -424,23 +430,10 @@
                 ev.stopPropagation();
             }
             var wt = wifiTail;
-            setTimeout(function () {
-                wifiDbg('context menu Wifi reset → mailto', wt);
-                openMailtoForTail(wt);
-            }, 0);
+            wifiDbg('context menu Wifi reset → mailto', wt);
+            /** Synchronous mailto in user gesture (no setTimeout — keeps window.open unblocked; avoids double mailto from mousedown+click). */
+            openMailtoForTail(wt, { userGesture: true });
         }
-        item.addEventListener(
-            'mousedown',
-            function (e) {
-                if (!wifiTail) {
-                    return;
-                }
-                e.preventDefault();
-                e.stopPropagation();
-                activate(e);
-            },
-            true
-        );
         item.addEventListener('click', activate, true);
 
         if (opts.standalone) {
@@ -707,30 +700,122 @@
             .replace(/\r\n/g, '\n');
     }
 
-    function openMailtoForTail(tail) {
+    function mailtoHrefForTail(tail) {
+        var to = String(getPref('wifiResetEmailTo', 'LOM>NOC@anuvu.com') || 'LOM>NOC@anuvu.com').trim();
+        var subject = applyTemplate(
+            getPref('wifiResetSubjectTemplate', 'Jet {tail} Wifi Reset'),
+            tail
+        );
+        var body = applyTemplate(
+            getPref('wifiResetBodyTemplate', 'Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines'),
+            tail
+        );
+        return (
+            'mailto:' +
+            encodeURIComponent(to) +
+            '?subject=' +
+            encodeURIComponent(subject) +
+            '&body=' +
+            encodeURIComponent(body)
+        );
+    }
+
+    /**
+     * Programmatic link click on main document — OK on schedule; on worksheet + external mail handler
+     * some Chromium builds blank the SPA after launching mailto.
+     */
+    function openMailtoViaAnchorClick(href) {
+        var a = document.createElement('a');
+        a.href = href;
+        a.style.cssText = 'position:fixed;left:-9999px;top:0;';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+
+    /**
+     * Hidden iframe navigation — keeps mailto off the main frame (often fixes React white-screen).
+     */
+    function openMailtoViaHiddenIframe(href) {
+        var iframe = document.createElement('iframe');
+        iframe.style.cssText =
+            'position:fixed;width:1px;height:1px;left:-9999px;top:0;border:0;opacity:0;pointer-events:none';
+        iframe.setAttribute('aria-hidden', 'true');
+        iframe.src = href;
+        document.body.appendChild(iframe);
+        setTimeout(function () {
+            try {
+                iframe.remove();
+            } catch (e) {}
+        }, 8000);
+    }
+
+    /**
+     * Opens mailto in a separate browsing context. Must run synchronously inside a click/keydown user gesture
+     * or popup blockers may block; avoids navigating the React root when it succeeds.
+     */
+    function openMailtoViaBlankWindow(href) {
+        var w = window.open(href, '_blank', 'noopener,noreferrer');
+        if (!w) {
+            return false;
+        }
+        setTimeout(function () {
+            try {
+                w.close();
+            } catch (e) {}
+        }, 600);
+        return true;
+    }
+
+    function worksheetMailtoShouldDebounce(tail) {
+        var now = Date.now();
+        var key = String(tail || '');
+        if (key === lastWorksheetMailtoKey && now - lastWorksheetMailtoAt < 900) {
+            wifiDbg('worksheet mailto debounced (duplicate)', tail);
+            return true;
+        }
+        lastWorksheetMailtoKey = key;
+        lastWorksheetMailtoAt = now;
+        return false;
+    }
+
+    /**
+     * @param {string} tail
+     * @param {{ userGesture?: boolean }} [opts] — when true on worksheet, try window.open immediately (context menu).
+     */
+    function openMailtoForTail(tail, opts) {
+        opts = opts || {};
         try {
-            var to = String(getPref('wifiResetEmailTo', 'LOM>NOC@anuvu.com') || 'LOM>NOC@anuvu.com').trim();
-            var subject = applyTemplate(
-                getPref('wifiResetSubjectTemplate', 'Jet {tail} Wifi Reset'),
-                tail
-            );
-            var body = applyTemplate(
-                getPref('wifiResetBodyTemplate', 'Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines'),
-                tail
-            );
-            var href =
-                'mailto:' +
-                encodeURIComponent(to) +
-                '?subject=' +
-                encodeURIComponent(subject) +
-                '&body=' +
-                encodeURIComponent(body);
-            var a = document.createElement('a');
-            a.href = href;
-            a.style.cssText = 'position:fixed;left:-9999px;top:0;';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+            var href = mailtoHrefForTail(tail);
+            if (isWorksheetPath() && worksheetMailtoShouldDebounce(tail)) {
+                return;
+            }
+            if (
+                isWorksheetPath() &&
+                opts.userGesture &&
+                openMailtoViaBlankWindow(href)
+            ) {
+                wifiDbg('openMailto worksheet: window.open ok', tail);
+                return;
+            }
+            if (
+                isWorksheetPath() &&
+                getPref('wifiResetMailtoIframeWorksheet', true) !== false &&
+                getPref('wifiResetMailtoIframeWorksheet', true) !== 'false'
+            ) {
+                wifiDbg('openMailto worksheet: iframe path scheduled', tail);
+                setTimeout(function () {
+                    try {
+                        openMailtoViaHiddenIframe(href);
+                        wifiDbg('openMailto worksheet: iframe src set', tail);
+                    } catch (err2) {
+                        wifiDbg('iframe mailto failed, anchor fallback', err2);
+                        openMailtoViaAnchorClick(href);
+                    }
+                }, 280);
+                return;
+            }
+            openMailtoViaAnchorClick(href);
             wifiDbg('openMailtoForTail done', tail);
         } catch (err) {
             wifiDbg('openMailtoForTail threw', err && err.stack ? err.stack : String(err));
