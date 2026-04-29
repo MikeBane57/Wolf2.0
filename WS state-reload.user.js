@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.22
-// @description  Quick reload: wait for load + stable tail capture. Cloud sharded saves + index; REST API + PAT.
+// @version      0.2.23
+// @description  Cloud/sync logs and toolbar debug → extension inspector only (no page console). Quick reload settle.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
-// @donkeycode-pref {"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"If blank: donkeycode_github_owner → MikeBane57. WoF prefs are not used.","default":"","placeholder":""},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: donkeycode_github_repo → DonkeyCODE.","default":"","placeholder":""},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: donkeycode_github_branch → main.","default":"","placeholder":""},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON / folder hint in repo","description":"Legacy: path to a single worksheet-states.json. Empty → WORKSHEET STATES/worksheet-states.json. New cloud saves go under a parallel …/sessions/ folder (index + one file per save; legacy file is still read if no index).","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture: target + elementFromPoint.","default":false}}
+// @donkeycode-pref {"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"If blank: donkeycode_github_owner → MikeBane57. WoF prefs are not used.","default":"","placeholder":""},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: donkeycode_github_repo → DonkeyCODE.","default":"","placeholder":""},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: donkeycode_github_branch → main.","default":"","placeholder":""},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON / folder hint in repo","description":"Legacy: path to a single worksheet-states.json. Empty → WORKSHEET STATES/worksheet-states.json. New cloud saves go under a parallel …/sessions/ folder (index + one file per save; legacy file is still read if no index).","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (extension)","description":"When ON: helper-row click diagnostics post to DonkeyCODE service worker (DONKEYCODE_PAGE_LOG), not the page console. Default OFF.","default":false}}
 // @donkeycode-pref {"worksheetQuickReloadSettleMs":{"type":"number","group":"Worksheet state","label":"Quick reload: max wait for flights (ms)","description":"Before reload, wait until the captured tail/line count stops growing (so late-loaded aircraft are included) or this max time. Raise if quick reload still misses rows. Default 3200.","default":3200,"min":800,"max":20000}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
@@ -85,6 +85,20 @@
             return parsed || fallback;
         } catch (e) {
             return fallback;
+        }
+    }
+
+    /** Page → DonkeyCODE extension service worker (not the site DevTools console). */
+    function donkeycodePageLog(message, level) {
+        var s = String(message == null ? '' : message);
+        var lv = level || 'log';
+        if (typeof window !== 'undefined' && window.top) {
+            try {
+                window.top.postMessage(
+                    { type: 'DONKEYCODE_PAGE_LOG', message: s, level: lv },
+                    '*'
+                );
+            } catch (e) {}
         }
     }
 
@@ -551,9 +565,7 @@
     function appendCloudSyncLog(msg) {
         var line =
             '[' + new Date().toISOString().replace('T', ' ').slice(0, 23) + '] ' + String(msg == null ? '' : msg);
-        try {
-            console.info('[WS State][cloud]', msg);
-        } catch (e) {}
+        donkeycodePageLog('[WS State][cloud] ' + String(msg == null ? '' : msg));
         var el = wsCloudLogPre;
         if (!el) {
             return;
@@ -2024,9 +2036,7 @@
                     } catch (e) {}
                 }
             }
-            try {
-                console.log(lines.join('\n'));
-            } catch (e) {}
+            donkeycodePageLog(lines.join('\n'));
         };
         document.addEventListener('click', onToolbarClickDebug, true);
         try {
