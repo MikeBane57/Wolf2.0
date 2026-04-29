@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.4.0
-// @description  Allowlisted tail highlight + dbl-click mail. Opt-in console debug: pref wifiResetDebugLog (diagnose React/worksheet issues).
+// @version      1.4.1
+// @description  Worksheet: no span highlights + mailto without stopPropagation (fixes blank UI after dblclick). Schedule unchanged. Debug pref wifiResetDebugLog.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"wifiResetHighlightEnabled":{"type":"boolean","group":"Wifi reset highlight","label":"Highlight allowlisted tails","description":"Color aircraft registrations that are in the wifi email list.","default":true},"wifiResetHighlightColor":{"type":"select","group":"Wifi reset highlight","label":"Tail highlight color","description":"Normal weight — only the color changes.","default":"#87CEFA","options":[{"value":"#87CEFA","label":"Sky blue"},{"value":"#ADD8E6","label":"Light blue"},{"value":"#B0E0E6","label":"Powder blue"},{"value":"#AFEEEE","label":"Pale turquoise"},{"value":"#7EC8E3","label":"Carolina blue"},{"value":"#6BB6FF","label":"Soft sky"},{"value":"#5DADE2","label":"Soft cyan"},{"value":"#48CAE4","label":"Bright sky"},{"value":"#89CFF0","label":"Baby blue"},{"value":"#9DD9F3","label":"Light cyan blue"},{"value":"#00BFFF","label":"Deep sky blue"},{"value":"#40E0D0","label":"Turquoise"}]}}
 // @donkeycode-pref {"wifiResetDebugLog":{"type":"boolean","group":"Wifi reset debug","label":"Log to browser console","description":"When ON: prefix [Wifi reset] — init path, double-clicks, highlight/mail errors, window.onerror and unhandledrejection. Default OFF. Use to diagnose white-screen; turn OFF after.","default":false}}
 // @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
+// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // ==/UserScript==
 
@@ -94,6 +95,8 @@
     var highlightMo = null;
     var highlightDebounce = null;
     var wifiDebugGlobalHooksInstalled = false;
+    /** Same phase flag used for removeEventListener in cleanup. */
+    var dblClickListenersUseCapture = true;
 
     function wifiDebugEnabled() {
         var v = getPref('wifiResetDebugLog', false);
@@ -147,14 +150,23 @@
         return v;
     }
 
-    /**
-     * First allowlisted N-number in this element's text (scan ancestors).
-     */
+    function isWorksheetPath() {
+        return (location.pathname || '').indexOf('/widgets/worksheet') === 0;
+    }
+
+    /** Splitting text into spans breaks React on worksheet; mail still resolves from text without wrappers. */
+    function allowHighlightMutation() {
+        return !isWorksheetPath();
+    }
+
     function findAllowlistedTailFromEventTarget(target) {
-        if (!target || target.nodeType !== 1) {
+        if (!target) {
             return null;
         }
-        var el = target;
+        var el = target.nodeType === 3 ? target.parentElement : target;
+        if (!el || el.nodeType !== 1) {
+            return null;
+        }
         var hop;
         for (hop = 0; hop < 14 && el; hop++) {
             var text = el.textContent || '';
@@ -271,6 +283,9 @@
 
     function walkForHighlight(node) {
         try {
+            if (!allowHighlightMutation()) {
+                return;
+            }
             if (!node) {
                 return;
             }
@@ -303,7 +318,7 @@
     }
 
     function applyTailHighlights() {
-        if (!highlightEnabled()) {
+        if (!highlightEnabled() || !allowHighlightMutation()) {
             unwrapHighlights();
             return;
         }
@@ -313,7 +328,7 @@
     }
 
     function scheduleHighlight() {
-        if (!highlightEnabled()) {
+        if (!highlightEnabled() || !allowHighlightMutation()) {
             unwrapHighlights();
             return;
         }
@@ -369,17 +384,21 @@
             path: location.pathname,
             href: location.href.split('?')[0],
             highlight: highlightEnabled(),
+            worksheetSkipsDomHighlight: isWorksheetPath(),
             debug: wifiDebugEnabled()
         });
 
         scheduleHighlight();
-        highlightMo = new MutationObserver(function () {
-            scheduleHighlight();
-        });
-        if (document.documentElement) {
-            highlightMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+        if (allowHighlightMutation()) {
+            highlightMo = new MutationObserver(function () {
+                scheduleHighlight();
+            });
+            if (document.documentElement) {
+                highlightMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+            }
         }
 
+        dblClickListenersUseCapture = !isWorksheetPath();
         onDblClickCapture = function (e) {
             try {
                 if (e.button !== 0) {
@@ -391,7 +410,8 @@
                     tgt && tgt.nodeType === 1 && typeof tgt.className === 'string'
                         ? String(tgt.className).slice(0, 80)
                         : '';
-                wifiDbg('dblclick (capture)', {
+                wifiDbg('dblclick', {
+                    phase: isWorksheetPath() ? 'bubble-worksheet' : 'capture-schedule',
                     path: location.pathname,
                     tag: tag,
                     class: sample,
@@ -405,6 +425,15 @@
                 if (!tail) {
                     return;
                 }
+                if (isWorksheetPath()) {
+                    /** Let React receive the full native dblclick; mailto next tick (no stopPropagation). */
+                    var t = tail;
+                    setTimeout(function () {
+                        wifiDbg('opening mailto (deferred)', t);
+                        openMailtoForTail(t);
+                    }, 0);
+                    return;
+                }
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
@@ -414,7 +443,7 @@
                 wifiDbg('dblclick handler threw', err && err.stack ? err.stack : String(err));
             }
         };
-        document.addEventListener('dblclick', onDblClickCapture, true);
+        document.addEventListener('dblclick', onDblClickCapture, dblClickListenersUseCapture);
     }
 
     init();
@@ -442,7 +471,7 @@
         }
         unwrapHighlights();
         if (onDblClickCapture) {
-            document.removeEventListener('dblclick', onDblClickCapture, true);
+            document.removeEventListener('dblclick', onDblClickCapture, dblClickListenersUseCapture);
             onDblClickCapture = null;
         }
         window.__myScriptCleanup = undefined;
