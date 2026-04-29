@@ -1,10 +1,9 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.2.8
-// @description  Tail resolve: walk ancestors so clicks on nested spans still find row tail (e.g. worksheet cell). Worksheet dblclick bubble+defer.
+// @version      1.3.0
+// @description  Schedule only: allowlisted tail highlights + double-click wifi-reset email. Worksheet URL disabled (React crashes if we attach handlers — use Schedule for mailto until a stable integration exists).
 // @match        https://opssuitemain.swacorp.com/schedule*
-// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
 // @donkeycode-pref {"wifiResetHighlightEnabled":{"type":"boolean","group":"Wifi reset highlight","label":"Highlight allowlisted tails","description":"Color aircraft registrations that are in the wifi email list.","default":true},"wifiResetHighlightColor":{"type":"select","group":"Wifi reset highlight","label":"Tail highlight color","description":"Normal weight — only the color changes.","default":"#87CEFA","options":[{"value":"#87CEFA","label":"Sky blue"},{"value":"#ADD8E6","label":"Light blue"},{"value":"#B0E0E6","label":"Powder blue"},{"value":"#AFEEEE","label":"Pale turquoise"},{"value":"#7EC8E3","label":"Carolina blue"},{"value":"#6BB6FF","label":"Soft sky"},{"value":"#5DADE2","label":"Soft cyan"},{"value":"#48CAE4","label":"Bright sky"},{"value":"#89CFF0","label":"Baby blue"},{"value":"#9DD9F3","label":"Light cyan blue"},{"value":"#00BFFF","label":"Deep sky blue"},{"value":"#40E0D0","label":"Turquoise"}]}}
 // @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address. Default: LOM.NOC@anuvu.com.","default":"LOM.NOC@anuvu.com","placeholder":"LOM.NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
@@ -17,19 +16,7 @@
 
     function isWifiResetPage() {
         var p = location.pathname || '';
-        return p.indexOf('/schedule') === 0 || p.indexOf('/widgets/worksheet') === 0;
-    }
-
-    function isWorksheetWifiPage() {
-        return (location.pathname || '').indexOf('/widgets/worksheet') === 0;
-    }
-
-    /**
-     * Splitting text nodes into spans breaks React reconciliation on the worksheet (clicks can white-screen the app).
-     * Double-click mail still works: tail is resolved from element text, no wrapper needed.
-     */
-    function allowWifiHighlightDomMutation() {
-        return !isWorksheetWifiPage();
+        return p.indexOf('/schedule') === 0;
     }
 
     var TAIL_RE = /\b(N[0-9A-Z]{4,6})\b/g;
@@ -109,8 +96,6 @@
     var HIGHLIGHT_CLASS = 'dc-wifi-reset-tail';
 
     var onDblClickCapture = null;
-    /** Worksheet only: bubble phase — must not stopPropagation/preventDefault or React can blank the app. */
-    var onDblClickWorksheetBubble = null;
     var highlightMo = null;
 
     function getPref(key, def) {
@@ -125,8 +110,7 @@
     }
 
     /**
-     * Resolve allowlisted tail from the clicked node upward (few ancestor levels).
-     * Worksheet cells nest tail in a sibling div (e.g. click on "175" or MEL span — parent alone has no N-number).
+     * Resolve allowlisted tail from the clicked node upward (ancestor walk).
      * If more than one allowlisted tail appears in an ancestor's full text, treat as ambiguous (no mail).
      */
     function findAllowlistedTailFromEventTarget(target) {
@@ -195,9 +179,6 @@
      * Split text nodes so allowlisted N-numbers are wrapped in colored spans.
      */
     function highlightAllowlistedTailsInTextNode(textNode) {
-        if (!allowWifiHighlightDomMutation()) {
-            return;
-        }
         if (!textNode || textNode.nodeType !== 3) {
             return;
         }
@@ -267,7 +248,7 @@
      * not full document unwrap+rescan on every mutation (avoids scroll lag).
      */
     function scanWifiHighlights(root) {
-        if (!root || !highlightEnabled() || !isWifiResetPage() || !allowWifiHighlightDomMutation()) {
+        if (!root || !highlightEnabled() || !isWifiResetPage()) {
             return;
         }
         if (root.nodeType === 3) {
@@ -296,7 +277,7 @@
     }
 
     function onHighlightMutations(mutations) {
-        if (!highlightEnabled() || !isWifiResetPage() || !allowWifiHighlightDomMutation()) {
+        if (!highlightEnabled() || !isWifiResetPage()) {
             return;
         }
         var mi;
@@ -355,7 +336,7 @@
         var onNav = function() {
             if (!isWifiResetPage()) {
                 unwrapHighlights();
-            } else if (highlightEnabled() && document.body && allowWifiHighlightDomMutation()) {
+            } else if (highlightEnabled() && document.body) {
                 scanWifiHighlights(document.body);
             }
         };
@@ -363,7 +344,7 @@
         window.addEventListener('hashchange', onNav);
 
         function runInitialScan() {
-            if (!highlightEnabled() || !isWifiResetPage() || !allowWifiHighlightDomMutation()) {
+            if (!highlightEnabled() || !isWifiResetPage()) {
                 return;
             }
             if (document.body) {
@@ -380,57 +361,30 @@
                 requestAnimationFrame(startObserving);
                 return;
             }
-            if (!allowWifiHighlightDomMutation()) {
-                return;
-            }
             highlightMo.observe(document.body, { childList: true, subtree: true, characterData: true });
         }
         startObserving();
 
-        if (isWorksheetWifiPage()) {
-            onDblClickWorksheetBubble = function(e) {
-                if (!isWifiResetPage()) {
-                    return;
-                }
-                if (e.button !== 0) {
-                    return;
-                }
-                if (e.target && typeof e.target.closest === 'function' && e.target.closest(FLIGHT_PUCK_SELECTOR)) {
-                    return;
-                }
-                var tail = findAllowlistedTailFromEventTarget(e.target);
-                if (!tail) {
-                    return;
-                }
-                /** Defer mailto so React's native dblclick handling completes first. */
-                var t = tail;
-                setTimeout(function() {
-                    openMailtoForTail(t);
-                }, 0);
-            };
-            document.addEventListener('dblclick', onDblClickWorksheetBubble, false);
-        } else {
-            onDblClickCapture = function(e) {
-                if (!isWifiResetPage()) {
-                    return;
-                }
-                if (e.button !== 0) {
-                    return;
-                }
-                if (e.target && typeof e.target.closest === 'function' && e.target.closest(FLIGHT_PUCK_SELECTOR)) {
-                    return;
-                }
-                var tail = findAllowlistedTailFromEventTarget(e.target);
-                if (!tail) {
-                    return;
-                }
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                openMailtoForTail(tail);
-            };
-            document.addEventListener('dblclick', onDblClickCapture, true);
-        }
+        onDblClickCapture = function(e) {
+            if (!isWifiResetPage()) {
+                return;
+            }
+            if (e.button !== 0) {
+                return;
+            }
+            if (e.target && typeof e.target.closest === 'function' && e.target.closest(FLIGHT_PUCK_SELECTOR)) {
+                return;
+            }
+            var tail = findAllowlistedTailFromEventTarget(e.target);
+            if (!tail) {
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            openMailtoForTail(tail);
+        };
+        document.addEventListener('dblclick', onDblClickCapture, true);
 
         window.__wifiResetOnNav = onNav;
     }
@@ -448,10 +402,6 @@
             highlightMo = null;
         }
         unwrapHighlights();
-        if (onDblClickWorksheetBubble) {
-            document.removeEventListener('dblclick', onDblClickWorksheetBubble, false);
-            onDblClickWorksheetBubble = null;
-        }
         if (onDblClickCapture) {
             document.removeEventListener('dblclick', onDblClickCapture, true);
             onDblClickCapture = null;
