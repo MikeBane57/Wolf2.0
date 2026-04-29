@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.55
-// @description  Toolbar click debug → DonkeyCODE inspector only (no page console). Quick add; Clear all.
-// @match        https://opssuitemain.swacorp.com/*
+// @version      2.0.56
+// @description  Run on worksheet widget only (no schedule/other Ops Suite tabs). Toolbar debug → inspector only.
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
 // @connect      aviationweather.gov

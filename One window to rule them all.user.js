@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         One window to rule them all
 // @namespace    Wolf 2.0
-// @version      10.8
+// @version      10.9
 // @description  Position popup windows by URL; geometry from DonkeyCODE Pref (Scripts → gear) or defaults below.
 // @match        https://opssuitemain.swacorp.com/*
 // @run-at       document-start
@@ -70,7 +70,13 @@
     var s = document.createElement('script');
 
     s.textContent = `
-        console.log("=== POPUP ROUTER ACTIVE (Reuse + Reload URL) ===");
+        (function(){
+        if (typeof window !== 'undefined' && window.__owtrtaPopupRouterInstalled) {
+            return;
+        }
+        if (typeof window !== 'undefined') {
+            window.__owtrtaPopupRouterInstalled = true;
+        }
 
         const RULES = ${JSON.stringify(owtrtaWindowRules)};
         const originalOpen = window.open;
@@ -231,7 +237,9 @@
         window.__myScriptCleanup = function(){
             window.open = originalOpen;
             window.removeEventListener("click", onOwtrtaLinkClick, true);
+            try { delete window.__owtrtaPopupRouterInstalled; } catch (e) {}
         };
+        })();
     `;
 
     document.documentElement.appendChild(s);
