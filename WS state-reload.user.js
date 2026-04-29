@@ -1,14 +1,15 @@
 // ==UserScript==
 // @name         WS state/reload
 // @namespace    Wolf 2.0
-// @version      0.2.21
-// @description  Cloud: per-save files + index (fix: load unwraps state.*); Load WS folder in header. REST API + PAT.
+// @version      0.2.22
+// @description  Quick reload: wait for load + stable tail capture. Cloud sharded saves + index; REST API + PAT.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      *
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
 // @donkeycode-pref {"worksheetStateDataOwner":{"type":"string","group":"Worksheet state — data file","label":"JSON repo owner","description":"If blank: donkeycode_github_owner → MikeBane57. WoF prefs are not used.","default":"","placeholder":""},"worksheetStateDataRepo":{"type":"string","group":"Worksheet state — data file","label":"JSON repo name","description":"If blank: donkeycode_github_repo → DonkeyCODE.","default":"","placeholder":""},"worksheetStateDataBranch":{"type":"string","group":"Worksheet state — data file","label":"JSON branch","description":"If blank: donkeycode_github_branch → main.","default":"","placeholder":""},"worksheetStateRepoPath":{"type":"string","group":"Worksheet state — data file","label":"JSON / folder hint in repo","description":"Legacy: path to a single worksheet-states.json. Empty → WORKSHEET STATES/worksheet-states.json. New cloud saves go under a parallel …/sessions/ folder (index + one file per save; legacy file is still read if no index).","default":"","placeholder":"WORKSHEET STATES/worksheet-states.json"},"worksheetToolbarClickDebug":{"type":"boolean","group":"Worksheet state","label":"Log click target (debug)","description":"Log pointerdown/click in capture: target + elementFromPoint.","default":false}}
+// @donkeycode-pref {"worksheetQuickReloadSettleMs":{"type":"number","group":"Worksheet state","label":"Quick reload: max wait for flights (ms)","description":"Before reload, wait until the captured tail/line count stops growing (so late-loaded aircraft are included) or this max time. Raise if quick reload still misses rows. Default 3200.","default":3200,"min":800,"max":20000}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/WS%20state-reload.user.js
 // ==/UserScript==
@@ -1798,6 +1799,14 @@
         };
     }
 
+    function findWorksheetInput(name) {
+        var host = document.querySelector('div[name="' + name + '"]');
+        if (!host) {
+            return null;
+        }
+        return host.querySelector('input.search, input[aria-autocomplete="list"], input[type="text"]');
+    }
+
 
     function textLabel(el) {
         return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim();
@@ -2646,39 +2655,145 @@
         refreshCloudRows();
     }
 
-    function quickReload() {
-        var state = collectWorksheetState();
-        if (!state.items.length) {
-            toast('No visible tails or N/A line numbers found for quick reload.', true);
-            return;
+    function getQuickReloadSettleMaxMs() {
+        var n = getPref('worksheetQuickReloadSettleMs', 3200);
+        if (typeof n === 'string') {
+            n = parseInt(n, 10);
         }
-        try {
-            sessionStorage.setItem(SS_QUICK_STATE, JSON.stringify(state));
-            sessionStorage.setItem(SS_QUICK_RESTORE, '1');
-        } catch (e) {
-            toast('Could not save temporary reload state.', true);
-            return;
+        if (!Number.isFinite(n) || n < 800) {
+            n = 800;
         }
-        toast('Saved temporary state (' + itemSummary(state.items) + '), reloading...', false);
-        setTimeout(function () {
-            try {
-                window.location.reload(true);
-            } catch (e2) {
-                try {
-                    window.location.reload();
-                } catch (e3) {
-                    location.href = location.href;
-                }
-            }
-        }, 250);
+        if (n > 20000) {
+            n = 20000;
+        }
+        return n;
     }
 
-    function findWorksheetInput(name) {
-        var host = document.querySelector('div[name="' + name + '"]');
-        if (!host) {
-            return null;
+    var quickReloadSettleBusy = false;
+
+    /**
+     * Before capturing state for quick reload: wait for window load, worksheet inputs, then poll until
+     * visible tail/line count stops increasing (late-rendered aircraft).
+     */
+    function waitForWindowLoadThen(done) {
+        try {
+            if (document.readyState === 'complete') {
+                setTimeout(done, 0);
+                return;
+            }
+        } catch (e) {}
+        window.addEventListener(
+            'load',
+            function () {
+                done();
+            },
+            { once: true }
+        );
+    }
+
+    function waitForTailInputReady(deadlineMs, done) {
+        function tick() {
+            if (findWorksheetInput('tail')) {
+                done();
+                return;
+            }
+            if (Date.now() >= deadlineMs) {
+                done();
+                return;
+            }
+            setTimeout(tick, 200);
         }
-        return host.querySelector('input.search, input[aria-autocomplete="list"], input[type="text"]');
+        tick();
+    }
+
+    /**
+     * Poll collectWorksheetState until items.length is unchanged for 2 consecutive polls (~400ms) or deadline.
+     * Keeps the snapshot with the highest item count if still growing at timeout.
+     */
+    function collectWorksheetStateWhenSettled(deadlineMs, done) {
+        var best = null;
+        var bestCount = 0;
+        var lastCount = -1;
+        var stablePolls = 0;
+        var POLL_MS = 200;
+        var STABLE_NEED = 2;
+        function tick() {
+            var now = Date.now();
+            var state = collectWorksheetState();
+            var c = state.items ? state.items.length : 0;
+            if (c > bestCount) {
+                bestCount = c;
+                best = state;
+            }
+            if (c === lastCount) {
+                stablePolls++;
+            } else {
+                lastCount = c;
+                stablePolls = 0;
+            }
+            if (stablePolls >= STABLE_NEED && c > 0) {
+                done(state);
+                return;
+            }
+            if (now >= deadlineMs) {
+                done(best || state);
+                return;
+            }
+            setTimeout(tick, Math.min(POLL_MS, Math.max(0, deadlineMs - Date.now())));
+        }
+        tick();
+    }
+
+    function quickReload() {
+        if (quickReloadSettleBusy) {
+            return;
+        }
+        quickReloadSettleBusy = true;
+        var settleMs = getQuickReloadSettleMaxMs();
+        var t0 = Date.now();
+        var deadline = t0 + settleMs;
+        toast('Quick reload: waiting for worksheet / flights to finish loading...', false);
+
+        function doReload(state) {
+            quickReloadSettleBusy = false;
+            if (!state || !state.items || !state.items.length) {
+                toast('No visible tails or N/A line numbers found for quick reload.', true);
+                return;
+            }
+            try {
+                sessionStorage.setItem(SS_QUICK_STATE, JSON.stringify(state));
+                sessionStorage.setItem(SS_QUICK_RESTORE, '1');
+            } catch (e) {
+                toast('Could not save temporary reload state.', true);
+                return;
+            }
+            var waited = Date.now() - t0;
+            var extra =
+                waited > 500
+                    ? ' (waited ' + (Math.round(waited / 100) / 10) + 's for load)'
+                    : '';
+            toast('Saved temporary state (' + itemSummary(state.items) + ')' + extra + ', reloading...', false);
+            setTimeout(function () {
+                try {
+                    window.location.reload(true);
+                } catch (e2) {
+                    try {
+                        window.location.reload();
+                    } catch (e3) {
+                        location.href = location.href;
+                    }
+                }
+            }, 250);
+        }
+
+        waitForWindowLoadThen(function () {
+            deadline = Date.now() + settleMs;
+            waitForTailInputReady(deadline, function () {
+                collectWorksheetStateWhenSettled(deadline, function (state) {
+                    doReload(state);
+                });
+            });
+        });
     }
 
     function setInputAndCommit(input, value) {
@@ -2779,10 +2894,35 @@
             return;
         }
         var tries = 0;
-        var maxTries = 80;
+        var maxTries = 100;
+        function needsLineInput() {
+            var j;
+            for (j = 0; j < state.items.length; j++) {
+                if (state.items[j] && state.items[j].type === 'line') {
+                    return true;
+                }
+            }
+            return false;
+        }
+        function inputsReady() {
+            var tailOk = !!findWorksheetInput('tail');
+            if (!needsLineInput()) {
+                return tailOk;
+            }
+            return tailOk && !!findWorksheetInput('line');
+        }
         function waitAndApply() {
             tries++;
-            if (findWorksheetInput('tail') || findWorksheetInput('line')) {
+            if (typeof document !== 'undefined' && document.readyState !== 'complete') {
+                if (tries >= maxTries) {
+                    toast('Worksheet page did not finish loading; quick restore stopped.', true);
+                    restoreTimer = null;
+                    return;
+                }
+                restoreTimer = setTimeout(waitAndApply, 250);
+                return;
+            }
+            if (inputsReady()) {
                 applyStateToWorksheet(state, 'quick reload');
                 restoreTimer = null;
                 return;
