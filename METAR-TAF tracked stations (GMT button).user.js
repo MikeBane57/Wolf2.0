@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.54
-// @description  Quick add in airport field; Clear all without confirm; compact presets.
+// @version      2.0.55
+// @description  Toolbar click debug → DonkeyCODE inspector only (no page console). Quick add; Clear all.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
@@ -13,6 +13,7 @@
 // @connect      atis.info
 // @connect      api.open-meteo.com
 // @connect      weather.cod.edu
+// @donkeycode-pref {"metarWatchToolbarClickDebug":{"type":"boolean","group":"METAR watch · debug","label":"Log worksheet toolbar clicks (extension inspector)","description":"When ON, helper-row click diagnostics go to the DonkeyCODE service worker (DONKEYCODE_PAGE_LOG), not the page console. Default OFF.","default":false}}
 // @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchNotifyRulesMode":{"type":"select","group":"METAR watch · notify rules","label":"Notify only when rules match","description":"Off: notify on any METAR/TAF change. Global: JSON rules apply to every station. Per IATA: global rules plus optional per-airport JSON overrides.","default":"off","options":[{"value":"off","label":"Off (any change)"},{"value":"global","label":"Global rules only"},{"value":"per_iata","label":"Global + per-IATA overrides"}]},"metarWatchNotifyRulesGlobal":{"type":"string","group":"METAR watch · notify rules","label":"Global rules (JSON, optional)","description":"Use the modal 'Alert rules' form instead. If you save the form, it overrides this string. Array of rules, OR empty. Example: [{\"metar\":{\"ceilingFtMax\":1000}},{\"taf\":{\"visibilitySmMax\":0.5}}].","default":""},"metarWatchNotifyRulesPerIata":{"type":"string","group":"METAR watch · notify rules","label":"Per-IATA rules (JSON, optional)","description":"Form overrides when saved. Example: {\"ATL\":[{\"metar\":{\"ceilingFtMax\":500}}]}.","default":""},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1},"metarWatchCodPrefetchSectors":{"type":"boolean","group":"METAR watch · panels","label":"COD: prefetch tracked sectors","description":"After each METAR poll, background-download COD frames once per NEXLAB sector covering your station list (same cache for all airports in that sector). Turn off to save bandwidth.","default":true},"metarWatchSharedPoll":{"type":"boolean","group":"METAR watch","label":"Sync alerts across tabs","description":"One tab leads background METAR/TAF polls; other tabs receive the same fetches and can share the leader’s alert/notification state. Reduces duplicate traffic. Best with the same station list.","default":true},"metarWatchTextHighlightSwStyle":{"type":"boolean","group":"METAR watch · text colors","label":"SW-style token colors in METAR/TAF","description":"In the detail panel, color tokens like the SW Airport tooltip (IFR red, MVFR orange, etc.). Optional notify-rule highlights still take priority.","default":true},"metarHighlightIFR":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight IFR (ceiling/vis)","default":true},"metarHighlightMVFR":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight MVFR","default":true},"metarHighlightCrosswind":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight crosswind","default":true},"metarHighlightLLWS":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight LLWS / WS","default":true},"metarHighlightIcing":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight icing","default":true},"metarHighlightTS":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight thunderstorms","default":true},"metarWatchModalStateJson":{"type":"string","group":"METAR watch · saved from modal","label":"Alert modal bundle (auto)","description":"Written when you save Notification alert conditions. Syncs via DonkeyCODE session storage.","default":""}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
@@ -5846,11 +5847,26 @@
         }
     }
 
+    function donkeycodePageLog(msg) {
+        if (msg == null) {
+            return;
+        }
+        var s = String(msg);
+        if (typeof window !== 'undefined' && window.top) {
+            try {
+                window.top.postMessage(
+                    { type: 'DONKEYCODE_PAGE_LOG', message: s, level: 'log' },
+                    '*'
+                );
+            } catch (e) {}
+        }
+    }
+
     function ensureWorksheetToolbarClickDebug() {
         if (!isWorksheetWidgetPage() || onToolbarClickDebug) {
             return;
         }
-        if (getPref('worksheetToolbarClickDebug', false) !== true) {
+        if (boolPref('metarWatchToolbarClickDebug', false) !== true) {
             return;
         }
         onToolbarClickDebug = function (ev) {
@@ -5884,9 +5900,7 @@
                 '  target: ' + (t && t.tagName) + (t && t.getAttribute('id') ? ' #' + t.getAttribute('id') : ''),
                 '  elementFromPoint: ' + (pick && pick.tagName)
             ];
-            try {
-                console.log(lines.join('\n'));
-            } catch (e) {}
+            donkeycodePageLog(lines.join('\n'));
         };
         document.addEventListener('click', onToolbarClickDebug, true);
         try {
