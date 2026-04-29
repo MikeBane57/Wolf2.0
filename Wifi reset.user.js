@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.2.1
-// @description  Highlight allowlisted tails (color from preset list); double-click to mail Anuvu; skips flight pucks
+// @version      1.4.0
+// @description  Allowlisted tail highlight + dbl-click mail. Opt-in console debug: pref wifiResetDebugLog (diagnose React/worksheet issues).
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"wifiResetHighlightEnabled":{"type":"boolean","group":"Wifi reset highlight","label":"Highlight allowlisted tails","description":"Color aircraft registrations that are in the wifi email list.","default":true},"wifiResetHighlightColor":{"type":"select","group":"Wifi reset highlight","label":"Tail highlight color","description":"Normal weight — only the color changes.","default":"#87CEFA","options":[{"value":"#87CEFA","label":"Sky blue"},{"value":"#ADD8E6","label":"Light blue"},{"value":"#B0E0E6","label":"Powder blue"},{"value":"#AFEEEE","label":"Pale turquoise"},{"value":"#7EC8E3","label":"Carolina blue"},{"value":"#6BB6FF","label":"Soft sky"},{"value":"#5DADE2","label":"Soft cyan"},{"value":"#48CAE4","label":"Bright sky"},{"value":"#89CFF0","label":"Baby blue"},{"value":"#9DD9F3","label":"Light cyan blue"},{"value":"#00BFFF","label":"Deep sky blue"},{"value":"#40E0D0","label":"Turquoise"}]}}
+// @donkeycode-pref {"wifiResetDebugLog":{"type":"boolean","group":"Wifi reset debug","label":"Log to browser console","description":"When ON: prefix [Wifi reset] — init path, double-clicks, highlight/mail errors, window.onerror and unhandledrejection. Default OFF. Use to diagnose white-screen; turn OFF after.","default":false}}
 // @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
-// @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // ==/UserScript==
 
@@ -93,6 +93,48 @@
     var onDblClickCapture = null;
     var highlightMo = null;
     var highlightDebounce = null;
+    var wifiDebugGlobalHooksInstalled = false;
+
+    function wifiDebugEnabled() {
+        var v = getPref('wifiResetDebugLog', false);
+        return v === true || v === 'true';
+    }
+
+    function wifiDbg(msg, detail) {
+        if (!wifiDebugEnabled()) {
+            return;
+        }
+        try {
+            if (detail !== undefined) {
+                console.info('[Wifi reset]', msg, detail);
+            } else {
+                console.info('[Wifi reset]', msg);
+            }
+        } catch (e) {}
+    }
+
+    function installWifiDebugGlobalHooks() {
+        if (!wifiDebugEnabled() || wifiDebugGlobalHooksInstalled) {
+            return;
+        }
+        wifiDebugGlobalHooksInstalled = true;
+        var onErr = function (ev) {
+            wifiDbg('window error event', {
+                message: ev.message,
+                source: ev.filename,
+                line: ev.lineno,
+                col: ev.colno,
+                err: ev.error && ev.error.stack ? String(ev.error.stack) : ev.error
+            });
+        };
+        var onRej = function (ev) {
+            wifiDbg('unhandledrejection', ev.reason);
+        };
+        window.__wifiResetErrorHook = onErr;
+        window.__wifiResetRejectionHook = onRej;
+        window.addEventListener('error', onErr, true);
+        window.addEventListener('unhandledrejection', onRej);
+    }
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -159,96 +201,104 @@
      * Split text nodes so allowlisted N-numbers are wrapped in colored spans.
      */
     function highlightAllowlistedTailsInTextNode(textNode) {
-        if (!textNode || textNode.nodeType !== 3) {
-            return;
-        }
-        var parent = textNode.parentNode;
-        if (!parent) {
-            return;
-        }
-        if (parent.closest && parent.closest('.' + HIGHLIGHT_CLASS)) {
-            return;
-        }
-        var tag = parent.tagName;
-        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEXTAREA') {
-            return;
-        }
-
-        var text = textNode.nodeValue;
-        if (!text || (text.indexOf('N') === -1 && text.indexOf('n') === -1)) {
-            return;
-        }
-
-        TAIL_RE.lastIndex = 0;
-        var segments = [];
-        var lastIndex = 0;
-        var m;
-        var anyHit = false;
-        while ((m = TAIL_RE.exec(text)) !== null) {
-            if (m.index > lastIndex) {
-                segments.push({ kind: 'plain', value: text.slice(lastIndex, m.index) });
+        try {
+            if (!textNode || textNode.nodeType !== 3) {
+                return;
             }
-            var tail = String(m[1]).toUpperCase();
-            if (WIFI_RESET_ALLOWLIST[tail]) {
-                segments.push({ kind: 'hit', value: tail });
-                anyHit = true;
-            } else {
-                segments.push({ kind: 'plain', value: m[0] });
+            var parent = textNode.parentNode;
+            if (!parent) {
+                return;
             }
-            lastIndex = m.index + m[0].length;
-        }
-        if (lastIndex < text.length) {
-            segments.push({ kind: 'plain', value: text.slice(lastIndex) });
-        }
-        if (!anyHit) {
-            return;
-        }
+            if (parent.closest && parent.closest('.' + HIGHLIGHT_CLASS)) {
+                return;
+            }
+            var tag = parent.tagName;
+            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEXTAREA') {
+                return;
+            }
 
-        var frag = document.createDocumentFragment();
-        var col = highlightColor();
-        var si;
-        for (si = 0; si < segments.length; si++) {
-            var seg = segments[si];
-            if (seg.kind === 'plain') {
-                frag.appendChild(document.createTextNode(seg.value));
-            } else {
-                var span = document.createElement('span');
-                span.className = HIGHLIGHT_CLASS;
-                span.setAttribute('data-dc-wifi-tail', seg.value);
-                span.textContent = seg.value;
-                span.style.color = col;
-                frag.appendChild(span);
+            var text = textNode.nodeValue;
+            if (!text || (text.indexOf('N') === -1 && text.indexOf('n') === -1)) {
+                return;
             }
+
+            TAIL_RE.lastIndex = 0;
+            var segments = [];
+            var lastIndex = 0;
+            var m;
+            var anyHit = false;
+            while ((m = TAIL_RE.exec(text)) !== null) {
+                if (m.index > lastIndex) {
+                    segments.push({ kind: 'plain', value: text.slice(lastIndex, m.index) });
+                }
+                var tail = String(m[1]).toUpperCase();
+                if (WIFI_RESET_ALLOWLIST[tail]) {
+                    segments.push({ kind: 'hit', value: tail });
+                    anyHit = true;
+                } else {
+                    segments.push({ kind: 'plain', value: m[0] });
+                }
+                lastIndex = m.index + m[0].length;
+            }
+            if (lastIndex < text.length) {
+                segments.push({ kind: 'plain', value: text.slice(lastIndex) });
+            }
+            if (!anyHit) {
+                return;
+            }
+
+            var frag = document.createDocumentFragment();
+            var col = highlightColor();
+            var si;
+            for (si = 0; si < segments.length; si++) {
+                var seg = segments[si];
+                if (seg.kind === 'plain') {
+                    frag.appendChild(document.createTextNode(seg.value));
+                } else {
+                    var span = document.createElement('span');
+                    span.className = HIGHLIGHT_CLASS;
+                    span.setAttribute('data-dc-wifi-tail', seg.value);
+                    span.textContent = seg.value;
+                    span.style.color = col;
+                    frag.appendChild(span);
+                }
+            }
+            parent.replaceChild(frag, textNode);
+        } catch (err) {
+            wifiDbg('highlightAllowlistedTailsInTextNode threw', err && err.stack ? err.stack : String(err));
         }
-        parent.replaceChild(frag, textNode);
     }
 
     function walkForHighlight(node) {
-        if (!node) {
-            return;
-        }
-        if (node.nodeType === 3) {
-            highlightAllowlistedTailsInTextNode(node);
-            return;
-        }
-        if (node.nodeType !== 1) {
-            return;
-        }
-        if (node.classList && node.classList.contains(HIGHLIGHT_CLASS)) {
-            return;
-        }
-        var tn = node.tagName;
-        if (tn === 'SCRIPT' || tn === 'STYLE' || tn === 'NOSCRIPT' || tn === 'TEXTAREA') {
-            return;
-        }
+        try {
+            if (!node) {
+                return;
+            }
+            if (node.nodeType === 3) {
+                highlightAllowlistedTailsInTextNode(node);
+                return;
+            }
+            if (node.nodeType !== 1) {
+                return;
+            }
+            if (node.classList && node.classList.contains(HIGHLIGHT_CLASS)) {
+                return;
+            }
+            var tn = node.tagName;
+            if (tn === 'SCRIPT' || tn === 'STYLE' || tn === 'NOSCRIPT' || tn === 'TEXTAREA') {
+                return;
+            }
 
-        var snapshot = [];
-        var ci;
-        for (ci = 0; ci < node.childNodes.length; ci++) {
-            snapshot.push(node.childNodes[ci]);
-        }
-        for (ci = 0; ci < snapshot.length; ci++) {
-            walkForHighlight(snapshot[ci]);
+            var snapshot = [];
+            var ci;
+            for (ci = 0; ci < node.childNodes.length; ci++) {
+                snapshot.push(node.childNodes[ci]);
+            }
+            for (ci = 0; ci < snapshot.length; ci++) {
+                walkForHighlight(snapshot[ci]);
+            }
+        } catch (err) {
+            wifiDbg('walkForHighlight threw', err && err.stack ? err.stack : String(err));
         }
     }
 
@@ -284,54 +334,85 @@
     }
 
     function openMailtoForTail(tail) {
-        var to = String(getPref('wifiResetEmailTo', 'LOM>NOC@anuvu.com') || 'LOM>NOC@anuvu.com').trim();
-        var subject = applyTemplate(
-            getPref('wifiResetSubjectTemplate', 'Jet {tail} Wifi Reset'),
-            tail
-        );
-        var body = applyTemplate(
-            getPref('wifiResetBodyTemplate', 'Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines'),
-            tail
-        );
-        var href =
-            'mailto:' +
-            encodeURIComponent(to) +
-            '?subject=' +
-            encodeURIComponent(subject) +
-            '&body=' +
-            encodeURIComponent(body);
-        var a = document.createElement('a');
-        a.href = href;
-        a.style.cssText = 'position:fixed;left:-9999px;top:0;';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        try {
+            var to = String(getPref('wifiResetEmailTo', 'LOM>NOC@anuvu.com') || 'LOM>NOC@anuvu.com').trim();
+            var subject = applyTemplate(
+                getPref('wifiResetSubjectTemplate', 'Jet {tail} Wifi Reset'),
+                tail
+            );
+            var body = applyTemplate(
+                getPref('wifiResetBodyTemplate', 'Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines'),
+                tail
+            );
+            var href =
+                'mailto:' +
+                encodeURIComponent(to) +
+                '?subject=' +
+                encodeURIComponent(subject) +
+                '&body=' +
+                encodeURIComponent(body);
+            var a = document.createElement('a');
+            a.href = href;
+            a.style.cssText = 'position:fixed;left:-9999px;top:0;';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            wifiDbg('openMailtoForTail done', tail);
+        } catch (err) {
+            wifiDbg('openMailtoForTail threw', err && err.stack ? err.stack : String(err));
+        }
     }
 
     function init() {
+        installWifiDebugGlobalHooks();
+        wifiDbg('init', {
+            path: location.pathname,
+            href: location.href.split('?')[0],
+            highlight: highlightEnabled(),
+            debug: wifiDebugEnabled()
+        });
+
         scheduleHighlight();
-        highlightMo = new MutationObserver(function() {
+        highlightMo = new MutationObserver(function () {
             scheduleHighlight();
         });
         if (document.documentElement) {
             highlightMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
         }
 
-        onDblClickCapture = function(e) {
-            if (e.button !== 0) {
-                return;
+        onDblClickCapture = function (e) {
+            try {
+                if (e.button !== 0) {
+                    return;
+                }
+                var tgt = e.target;
+                var tag = tgt && tgt.nodeType === 1 ? tgt.tagName : '';
+                var sample =
+                    tgt && tgt.nodeType === 1 && typeof tgt.className === 'string'
+                        ? String(tgt.className).slice(0, 80)
+                        : '';
+                wifiDbg('dblclick (capture)', {
+                    path: location.pathname,
+                    tag: tag,
+                    class: sample,
+                    onPuck: !!(tgt && typeof tgt.closest === 'function' && tgt.closest(FLIGHT_PUCK_SELECTOR))
+                });
+                if (tgt && typeof tgt.closest === 'function' && tgt.closest(FLIGHT_PUCK_SELECTOR)) {
+                    return;
+                }
+                var tail = findAllowlistedTailFromEventTarget(tgt);
+                wifiDbg('resolved tail', tail || '(none)');
+                if (!tail) {
+                    return;
+                }
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                wifiDbg('opening mailto', tail);
+                openMailtoForTail(tail);
+            } catch (err) {
+                wifiDbg('dblclick handler threw', err && err.stack ? err.stack : String(err));
             }
-            if (e.target && typeof e.target.closest === 'function' && e.target.closest(FLIGHT_PUCK_SELECTOR)) {
-                return;
-            }
-            var tail = findAllowlistedTailFromEventTarget(e.target);
-            if (!tail) {
-                return;
-            }
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            openMailtoForTail(tail);
         };
         document.addEventListener('dblclick', onDblClickCapture, true);
     }
@@ -339,6 +420,18 @@
     init();
 
     window.__myScriptCleanup = function() {
+        if (window.__wifiResetErrorHook) {
+            try {
+                window.removeEventListener('error', window.__wifiResetErrorHook, true);
+            } catch (e) {}
+            window.__wifiResetErrorHook = null;
+        }
+        if (window.__wifiResetRejectionHook) {
+            try {
+                window.removeEventListener('unhandledrejection', window.__wifiResetRejectionHook);
+            } catch (e2) {}
+            window.__wifiResetRejectionHook = null;
+        }
         if (highlightDebounce) {
             clearTimeout(highlightDebounce);
             highlightDebounce = null;
