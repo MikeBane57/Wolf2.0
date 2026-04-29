@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.3.9
-// @description  Worksheet: auto filter per tab; watch row / divider / interval row; default actions pick a button.
+// @version      1.4.0
+// @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
 // @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto filter actions","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto filter actions","label":"Interval (seconds)","description":"Default seconds for interval clicks when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
@@ -792,7 +792,28 @@
             ' .dc-war-divider{border:none;border-top:1px solid rgba(93,173,226,.35);margin:6px 0;width:100%;}' +
             '#' +
             HOST_ID +
-            ' .dc-war-interval-row .dc-war-interval-left input[data-dc-interval-toggle]{flex-shrink:0;margin:0;accent-color:#5dade2;width:14px;height:14px;}' +
+            ' .dc-war-toggle{position:relative;display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-toggle input.dc-war-toggle-input{position:absolute;opacity:0;width:0;height:0;margin:0;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-toggle .dc-war-toggle-track{position:relative;flex-shrink:0;width:32px;height:18px;background:#3d4555;border-radius:9px;transition:background .18s ease;border:1px solid #555;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-toggle .dc-war-toggle-knob{position:absolute;top:2px;left:2px;width:12px;height:12px;background:#e8eef5;border-radius:50%;transition:transform .18s ease;box-shadow:0 1px 2px rgba(0,0,0,.35);}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-toggle input:checked + .dc-war-toggle-track{background:#2e7d9e;border-color:#5dade2;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-toggle input:checked + .dc-war-toggle-track .dc-war-toggle-knob{transform:translateX(14px);}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-toggle input:focus-visible + .dc-war-toggle-track{outline:2px solid #5dade2;outline-offset:2px;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-toggle-interval{margin-right:2px;}' +
             '#' +
             HOST_ID +
             ' .dc-war-interval-left{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;flex:1;min-width:0;}' +
@@ -1072,7 +1093,11 @@
         '<summary>Worksheet auto filter actions (this tab only)</summary>' +
         '<div class="dc-war-body">' +
         '<div class="dc-war-row dc-war-watch-row">' +
-        '<label><input type="checkbox" data-dc-watch-toggle /> Watch for change to…</label>' +
+        '<label class="dc-war-toggle">' +
+        '<input type="checkbox" class="dc-war-toggle-input" data-dc-watch-toggle />' +
+        '<span class="dc-war-toggle-track" aria-hidden="true"><span class="dc-war-toggle-knob"></span></span>' +
+        '<span>Watch for change to…</span>' +
+        '</label>' +
         '<label class="dc-war-metric"><input type="checkbox" data-dc-metric="tails" />AC</label>' +
         '<label class="dc-war-metric"><input type="checkbox" data-dc-metric="lines" />LN</label>' +
         '<label class="dc-war-metric"><input type="checkbox" data-dc-metric="flights" />FLT</label>' +
@@ -1084,7 +1109,10 @@
         '<hr class="dc-war-divider" />' +
         '<div class="dc-war-row dc-war-interval-row">' +
         '<div class="dc-war-interval-left">' +
-        '<input type="checkbox" data-dc-interval-toggle title="Interval clicks" />' +
+        '<label class="dc-war-toggle dc-war-toggle-interval" title="Interval toolbar clicks">' +
+        '<input type="checkbox" class="dc-war-toggle-input" data-dc-interval-toggle />' +
+        '<span class="dc-war-toggle-track" aria-hidden="true"><span class="dc-war-toggle-knob"></span></span>' +
+        '</label>' +
         '<select class="dc-war-sel" data-dc-action-interval title="Toolbar button on interval">' +
         '<option value="">Pick a button…</option>' +
         '<option value="replace">Replace</option><option value="append">Append</option><option value="remove">Remove</option>' +
