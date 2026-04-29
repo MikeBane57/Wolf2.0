@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         AC enroute count (schedule)
 // @namespace    Wolf 2.0
-// @version      1.0.0
-// @description  Ops map: count flights enroute to the selected station (non-faded legs); show next to A/C ON THE GROUND.
+// @version      1.0.1
+// @description  Ops map: count flights enroute (active bar colors #3390ef / #abcdf8); show next to A/C ON THE GROUND.
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
-// @donkeycode-pref {"acEnrouteEnabled":{"type":"boolean","group":"AC enroute","label":"Show enroute count","description":"When ON, insert AC enroute next to A/C ON THE GROUND and refresh as legs change.","default":true},"acEnrouteCompletedOpacityMax":{"type":"number","group":"AC enroute","label":"Treat as completed if bar opacity ≤","description":"Matches Completed flight opacity script (default 0.4). Legs at or below this opacity are not counted as enroute.","default":0.45,"min":0,"max":1,"step":0.05}}
+// @donkeycode-pref {"acEnrouteEnabled":{"type":"boolean","group":"AC enroute","label":"Show enroute count","description":"When ON, insert AC enroute next to A/C ON THE GROUND and refresh as legs change.","default":true},"acEnrouteActiveBarColors":{"type":"string","group":"AC enroute","label":"Active leg bar colors (hex)","description":"Comma-separated #RGB hex values for the schedule bar when the flight is still active/enroute. Default matches ops map blues.","default":"#3390ef,#abcdf8","placeholder":"#3390ef,#abcdf8"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/AC%20enroute%20count%20(schedule).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/AC%20enroute%20count%20(schedule).user.js
 // ==/UserScript==
@@ -17,7 +17,7 @@
     var LABEL_TEXT = 'AC enroute';
     var LEG_QE = '[data-qe-id="as-flight-leg"]';
     var PUCK_QE = '[data-qe-id="as-flight-leg-puck"]';
-    /** Same obfuscated class as Completed flight opacity.user.js — schedule bar behind completed legs */
+    /** Same obfuscated class as Completed flight opacity — schedule bar fill behind the leg */
     var SCHED_BAR_SEL = '.vVzbj3J5m70\\=';
     /** Station code cells on puck (dep / arr), same pattern as Pax late script */
     var STATION_CELL_SUBSEL = '[class*="tg9Iiv9oAOo="]';
@@ -43,12 +43,68 @@
         return v === true || v === 'true';
     }
 
-    function numPref(key, def, lo, hi) {
-        var n = Number(getPref(key, def));
-        if (!Number.isFinite(n)) {
-            return def;
+    function parseEnrouteBarColors() {
+        var raw = String(getPref('acEnrouteActiveBarColors', '#3390ef,#abcdf8') || '');
+        var parts = raw.split(',');
+        var set = Object.create(null);
+        var i;
+        for (i = 0; i < parts.length; i++) {
+            var h = String(parts[i] || '')
+                .trim()
+                .toLowerCase();
+            if (/^#[0-9a-f]{6}$/.test(h)) {
+                set[h] = true;
+            }
         }
-        return Math.min(hi, Math.max(lo, n));
+        if (!Object.keys(set).length) {
+            set['#3390ef'] = true;
+            set['#abcdf8'] = true;
+        }
+        return set;
+    }
+
+    function cssColorToHex(cssVal) {
+        if (!cssVal || typeof cssVal !== 'string') {
+            return '';
+        }
+        var s = cssVal.trim();
+        if (/^#[0-9a-f]{6}$/i.test(s)) {
+            return s.toLowerCase();
+        }
+        var m = s.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+        if (!m) {
+            return '';
+        }
+        var r = parseInt(m[1], 10);
+        var g = parseInt(m[2], 10);
+        var b = parseInt(m[3], 10);
+        if (![r, g, b].every(function (x) {
+            return x >= 0 && x <= 255;
+        })) {
+            return '';
+        }
+        return (
+            '#' +
+            ('0' + r.toString(16)).slice(-2) +
+            ('0' + g.toString(16)).slice(-2) +
+            ('0' + b.toString(16)).slice(-2)
+        );
+    }
+
+    function barMatchesActiveEnrouteColors(barEl, allowedHex) {
+        if (!barEl) {
+            return false;
+        }
+        var hex = '';
+        try {
+            hex = cssColorToHex(window.getComputedStyle(barEl).backgroundColor);
+        } catch (e) {}
+        if (!hex) {
+            try {
+                hex = cssColorToHex(barEl.style && barEl.style.backgroundColor);
+            } catch (e2) {}
+        }
+        return !!(hex && allowedHex[hex]);
     }
 
     function readSelectedStationCode() {
@@ -56,9 +112,9 @@
         if (!combo) {
             return '';
         }
-        var div = combo.querySelector('.divider.text');
-        if (div) {
-            var t = String(div.textContent || '').trim();
+        var dv = combo.querySelector('.divider.text');
+        if (dv) {
+            var t = String(dv.textContent || '').trim();
             if (/^[A-Z]{3}$/.test(t)) {
                 return t;
             }
@@ -71,27 +127,6 @@
             }
         }
         return '';
-    }
-
-    function barLooksCompleted(barEl, threshold) {
-        if (!barEl) {
-            return false;
-        }
-        var op = 1;
-        try {
-            op = parseFloat(window.getComputedStyle(barEl).opacity);
-        } catch (e) {
-            try {
-                var inline = barEl.style && barEl.style.opacity;
-                if (inline) {
-                    op = parseFloat(inline);
-                }
-            } catch (e2) {}
-        }
-        if (!Number.isFinite(op)) {
-            op = 1;
-        }
-        return op <= threshold;
     }
 
     function airportsFromPuck(puck) {
@@ -112,7 +147,7 @@
         return out;
     }
 
-    function countEnrouteToStation(station, completedOpacityMax) {
+    function countEnrouteToStation(station, allowedHex) {
         if (!station) {
             return 0;
         }
@@ -122,7 +157,7 @@
         for (li = 0; li < legs.length; li++) {
             var leg = legs[li];
             var bar = leg.querySelector(SCHED_BAR_SEL);
-            if (barLooksCompleted(bar, completedOpacityMax)) {
+            if (!barMatchesActiveEnrouteColors(bar, allowedHex)) {
                 continue;
             }
             var puck = leg.querySelector(PUCK_QE);
@@ -213,11 +248,13 @@
         }
 
         var st = readSelectedStationCode();
-        var maxOp = numPref('acEnrouteCompletedOpacityMax', 0.45, 0, 1);
-        var cnt = countEnrouteToStation(st, maxOp);
+        var colors = parseEnrouteBarColors();
+        var cnt = countEnrouteToStation(st, colors);
         valEl.textContent = String(cnt);
         valEl.title =
-            st ? 'Flights enroute to ' + st + ' (non-completed legs on map)' : 'Select a station to count enroute flights';
+            st
+                ? 'Flights enroute to ' + st + ' (leg bar color matches active blues)'
+                : 'Select a station to count enroute flights';
     }
 
     function scheduleUpdate() {
