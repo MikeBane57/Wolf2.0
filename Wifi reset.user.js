@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.2.5
-// @description  Schedule & worksheet: tail highlights; double-click mail only for unambiguous allowlisted tail at click
+// @version      1.2.6
+// @description  Schedule & worksheet: tail highlights (not on worksheet DOM — React-safe); dbl-click mail for allowlisted tail
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -18,6 +18,18 @@
     function isWifiResetPage() {
         var p = location.pathname || '';
         return p.indexOf('/schedule') === 0 || p.indexOf('/widgets/worksheet') === 0;
+    }
+
+    /**
+     * Splitting text nodes into spans breaks React reconciliation on the worksheet (clicks can white-screen the app).
+     * Double-click mail still works: tail is resolved from element text, no wrapper needed.
+     */
+    function allowWifiHighlightDomMutation() {
+        var p = location.pathname || '';
+        if (p.indexOf('/widgets/worksheet') === 0) {
+            return false;
+        }
+        return true;
     }
 
     var TAIL_RE = /\b(N[0-9A-Z]{4,6})\b/g;
@@ -180,6 +192,9 @@
      * Split text nodes so allowlisted N-numbers are wrapped in colored spans.
      */
     function highlightAllowlistedTailsInTextNode(textNode) {
+        if (!allowWifiHighlightDomMutation()) {
+            return;
+        }
         if (!textNode || textNode.nodeType !== 3) {
             return;
         }
@@ -249,7 +264,7 @@
      * not full document unwrap+rescan on every mutation (avoids scroll lag).
      */
     function scanWifiHighlights(root) {
-        if (!root || !highlightEnabled() || !isWifiResetPage()) {
+        if (!root || !highlightEnabled() || !isWifiResetPage() || !allowWifiHighlightDomMutation()) {
             return;
         }
         if (root.nodeType === 3) {
@@ -278,7 +293,7 @@
     }
 
     function onHighlightMutations(mutations) {
-        if (!highlightEnabled() || !isWifiResetPage()) {
+        if (!highlightEnabled() || !isWifiResetPage() || !allowWifiHighlightDomMutation()) {
             return;
         }
         var mi;
@@ -337,7 +352,7 @@
         var onNav = function() {
             if (!isWifiResetPage()) {
                 unwrapHighlights();
-            } else if (highlightEnabled() && document.body) {
+            } else if (highlightEnabled() && document.body && allowWifiHighlightDomMutation()) {
                 scanWifiHighlights(document.body);
             }
         };
@@ -345,7 +360,7 @@
         window.addEventListener('hashchange', onNav);
 
         function runInitialScan() {
-            if (!highlightEnabled() || !isWifiResetPage()) {
+            if (!highlightEnabled() || !isWifiResetPage() || !allowWifiHighlightDomMutation()) {
                 return;
             }
             if (document.body) {
@@ -360,6 +375,9 @@
         function startObserving() {
             if (!document.body) {
                 requestAnimationFrame(startObserving);
+                return;
+            }
+            if (!allowWifiHighlightDomMutation()) {
                 return;
             }
             highlightMo.observe(document.body, { childList: true, subtree: true, characterData: true });
