@@ -1,23 +1,18 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.3.0
-// @description  Schedule only: allowlisted tail highlights + double-click wifi-reset email. Worksheet URL disabled (React crashes if we attach handlers — use Schedule for mailto until a stable integration exists).
-// @match        https://opssuitemain.swacorp.com/schedule*
+// @version      1.2.1
+// @description  Highlight allowlisted tails (color from preset list); double-click to mail Anuvu; skips flight pucks
+// @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"wifiResetHighlightEnabled":{"type":"boolean","group":"Wifi reset highlight","label":"Highlight allowlisted tails","description":"Color aircraft registrations that are in the wifi email list.","default":true},"wifiResetHighlightColor":{"type":"select","group":"Wifi reset highlight","label":"Tail highlight color","description":"Normal weight — only the color changes.","default":"#87CEFA","options":[{"value":"#87CEFA","label":"Sky blue"},{"value":"#ADD8E6","label":"Light blue"},{"value":"#B0E0E6","label":"Powder blue"},{"value":"#AFEEEE","label":"Pale turquoise"},{"value":"#7EC8E3","label":"Carolina blue"},{"value":"#6BB6FF","label":"Soft sky"},{"value":"#5DADE2","label":"Soft cyan"},{"value":"#48CAE4","label":"Bright sky"},{"value":"#89CFF0","label":"Baby blue"},{"value":"#9DD9F3","label":"Light cyan blue"},{"value":"#00BFFF","label":"Deep sky blue"},{"value":"#40E0D0","label":"Turquoise"}]}}
-// @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address. Default: LOM.NOC@anuvu.com.","default":"LOM.NOC@anuvu.com","placeholder":"LOM.NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
+// @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // ==/UserScript==
 
 (function() {
     'use strict';
-
-    function isWifiResetPage() {
-        var p = location.pathname || '';
-        return p.indexOf('/schedule') === 0;
-    }
 
     var TAIL_RE = /\b(N[0-9A-Z]{4,6})\b/g;
 
@@ -97,6 +92,7 @@
 
     var onDblClickCapture = null;
     var highlightMo = null;
+    var highlightDebounce = null;
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -110,41 +106,25 @@
     }
 
     /**
-     * Resolve allowlisted tail from the clicked node upward (ancestor walk).
-     * If more than one allowlisted tail appears in an ancestor's full text, treat as ambiguous (no mail).
+     * First allowlisted N-number in this element's text (scan ancestors).
      */
     function findAllowlistedTailFromEventTarget(target) {
-        if (!target) {
+        if (!target || target.nodeType !== 1) {
             return null;
         }
-        var el = target.nodeType === 3 ? target.parentElement : target;
-        if (!el || el.nodeType !== 1) {
-            return null;
-        }
-        var maxDepth = 16;
-        var depth = 0;
-        while (el && depth < maxDepth) {
-            var tag = el.tagName;
-            if (tag !== 'SCRIPT' && tag !== 'STYLE' && tag !== 'NOSCRIPT') {
-                var text = el.textContent || '';
-                var hits = [];
-                TAIL_RE.lastIndex = 0;
-                var m;
-                while ((m = TAIL_RE.exec(text)) !== null) {
-                    var t = String(m[1]).toUpperCase();
-                    if (WIFI_RESET_ALLOWLIST[t] && hits.indexOf(t) === -1) {
-                        hits.push(t);
-                    }
-                }
-                if (hits.length === 1) {
-                    return hits[0];
-                }
-                if (hits.length > 1) {
-                    return null;
+        var el = target;
+        var hop;
+        for (hop = 0; hop < 14 && el; hop++) {
+            var text = el.textContent || '';
+            TAIL_RE.lastIndex = 0;
+            var m;
+            while ((m = TAIL_RE.exec(text)) !== null) {
+                var t = String(m[1]).toUpperCase();
+                if (WIFI_RESET_ALLOWLIST[t]) {
+                    return t;
                 }
             }
             el = el.parentElement;
-            depth++;
         }
         return null;
     }
@@ -243,55 +223,58 @@
         parent.replaceChild(frag, textNode);
     }
 
-    /**
-     * Incremental scan (like Highlight Mx station): only walk new/changed subtrees,
-     * not full document unwrap+rescan on every mutation (avoids scroll lag).
-     */
-    function scanWifiHighlights(root) {
-        if (!root || !highlightEnabled() || !isWifiResetPage()) {
+    function walkForHighlight(node) {
+        if (!node) {
             return;
         }
-        if (root.nodeType === 3) {
-            highlightAllowlistedTailsInTextNode(root);
+        if (node.nodeType === 3) {
+            highlightAllowlistedTailsInTextNode(node);
             return;
         }
-        if (root.nodeType !== 1) {
+        if (node.nodeType !== 1) {
             return;
         }
-        if (root.classList && root.classList.contains(HIGHLIGHT_CLASS)) {
+        if (node.classList && node.classList.contains(HIGHLIGHT_CLASS)) {
             return;
         }
-        var tn = root.tagName;
+        var tn = node.tagName;
         if (tn === 'SCRIPT' || tn === 'STYLE' || tn === 'NOSCRIPT' || tn === 'TEXTAREA') {
             return;
         }
 
         var snapshot = [];
         var ci;
-        for (ci = 0; ci < root.childNodes.length; ci++) {
-            snapshot.push(root.childNodes[ci]);
+        for (ci = 0; ci < node.childNodes.length; ci++) {
+            snapshot.push(node.childNodes[ci]);
         }
         for (ci = 0; ci < snapshot.length; ci++) {
-            scanWifiHighlights(snapshot[ci]);
+            walkForHighlight(snapshot[ci]);
         }
     }
 
-    function onHighlightMutations(mutations) {
-        if (!highlightEnabled() || !isWifiResetPage()) {
+    function applyTailHighlights() {
+        if (!highlightEnabled()) {
+            unwrapHighlights();
             return;
         }
-        var mi;
-        for (mi = 0; mi < mutations.length; mi++) {
-            var m = mutations[mi];
-            var j;
-            if (m.type === 'characterData' && m.target && m.target.nodeType === 3) {
-                highlightAllowlistedTailsInTextNode(m.target);
-                continue;
-            }
-            for (j = 0; j < m.addedNodes.length; j++) {
-                scanWifiHighlights(m.addedNodes[j]);
-            }
+        if (document.body) {
+            walkForHighlight(document.body);
         }
+    }
+
+    function scheduleHighlight() {
+        if (!highlightEnabled()) {
+            unwrapHighlights();
+            return;
+        }
+        if (highlightDebounce) {
+            clearTimeout(highlightDebounce);
+        }
+        highlightDebounce = setTimeout(function() {
+            highlightDebounce = null;
+            unwrapHighlights();
+            applyTailHighlights();
+        }, 280);
     }
 
     function applyTemplate(tpl, tail) {
@@ -301,7 +284,7 @@
     }
 
     function openMailtoForTail(tail) {
-        var to = String(getPref('wifiResetEmailTo', 'LOM.NOC@anuvu.com') || 'LOM.NOC@anuvu.com').trim();
+        var to = String(getPref('wifiResetEmailTo', 'LOM>NOC@anuvu.com') || 'LOM>NOC@anuvu.com').trim();
         var subject = applyTemplate(
             getPref('wifiResetSubjectTemplate', 'Jet {tail} Wifi Reset'),
             tail
@@ -326,49 +309,15 @@
     }
 
     function init() {
-        if (!isWifiResetPage()) {
-            window.__myScriptCleanup = function() {
-                window.__myScriptCleanup = undefined;
-            };
-            return;
+        scheduleHighlight();
+        highlightMo = new MutationObserver(function() {
+            scheduleHighlight();
+        });
+        if (document.documentElement) {
+            highlightMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
         }
-
-        var onNav = function() {
-            if (!isWifiResetPage()) {
-                unwrapHighlights();
-            } else if (highlightEnabled() && document.body) {
-                scanWifiHighlights(document.body);
-            }
-        };
-        window.addEventListener('popstate', onNav);
-        window.addEventListener('hashchange', onNav);
-
-        function runInitialScan() {
-            if (!highlightEnabled() || !isWifiResetPage()) {
-                return;
-            }
-            if (document.body) {
-                scanWifiHighlights(document.body);
-            } else {
-                requestAnimationFrame(runInitialScan);
-            }
-        }
-        runInitialScan();
-
-        highlightMo = new MutationObserver(onHighlightMutations);
-        function startObserving() {
-            if (!document.body) {
-                requestAnimationFrame(startObserving);
-                return;
-            }
-            highlightMo.observe(document.body, { childList: true, subtree: true, characterData: true });
-        }
-        startObserving();
 
         onDblClickCapture = function(e) {
-            if (!isWifiResetPage()) {
-                return;
-            }
             if (e.button !== 0) {
                 return;
             }
@@ -385,17 +334,14 @@
             openMailtoForTail(tail);
         };
         document.addEventListener('dblclick', onDblClickCapture, true);
-
-        window.__wifiResetOnNav = onNav;
     }
 
     init();
 
     window.__myScriptCleanup = function() {
-        if (window.__wifiResetOnNav) {
-            window.removeEventListener('popstate', window.__wifiResetOnNav);
-            window.removeEventListener('hashchange', window.__wifiResetOnNav);
-            window.__wifiResetOnNav = null;
+        if (highlightDebounce) {
+            clearTimeout(highlightDebounce);
+            highlightDebounce = null;
         }
         if (highlightMo) {
             highlightMo.disconnect();

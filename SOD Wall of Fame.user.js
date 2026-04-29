@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOD Wall of Fame
 // @namespace    Wolf 2.0
-// @version      2.8.2
-// @description  WoF: GitHub REST API only (no repository_dispatch). PUT with fresh SHA + 409 retry. WOFDATA path; optional team proxy.
+// @version      2.8.3
+// @description  WoF: GitHub REST API only; sync log in panel only (no browser console). PUT SHA + 409 retry. WOFDATA path.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
@@ -124,9 +124,6 @@
             new Date().toISOString().replace('T', ' ').slice(0, 23) +
             '] ' +
             msg;
-        try {
-            console.info('[Wall of Fame]', msg);
-        } catch (e) {}
         var el = panel
             ? panel.querySelector('#dc-wof-publish-log')
             : document.getElementById('dc-wof-publish-log');
@@ -374,12 +371,6 @@
             var arr = Array.isArray(data) ? data : (data.entries || []);
             return arr.map(normalizeEntry).filter(Boolean);
         } catch (e) {
-            try {
-                console.warn(
-                    '[Wall of Fame] Invalid JSON in wall-of-fame.json — fix the file in the repo (commas, trailing commas).',
-                    e && e.message ? e.message : e
-                );
-            } catch (ignore) {}
             return null;
         }
     }
@@ -1543,7 +1534,7 @@
                     alert(
                         'Publish failed: ' +
                             (err || 'unknown') +
-                            '\n\nSee the debug log at the bottom of this panel and the console [Wall of Fame].'
+                            '\n\nSee the debug log at the bottom of this panel.'
                     );
                 }
             }, panel);
@@ -1569,10 +1560,10 @@
                 if (remote === null) {
                     wofAppendPublishLog(
                         panel,
-                        'Fetch failed. Check log above, PAT, wallOfFameDataOwner/Repo/Branch, wallOfFameRepoPath, and console [Wall of Fame].'
+                        'Fetch failed. Check log above, PAT, wallOfFameDataOwner/Repo/Branch, wallOfFameRepoPath.'
                     );
                     alert(
-                        'Could not load. Expand the debug log under the cards (or open Edit) and check console [Wall of Fame].'
+                        'Could not load. Expand the debug log under the cards (or open Edit).'
                     );
                     return;
                 }
@@ -1918,7 +1909,7 @@
         var logCap = document.createElement('div');
         logCap.className = 'dc-wof-sync-log-cap';
         logCap.style.cssText = 'font-size:0.65rem;opacity:0.75;margin-top:8px;';
-        logCap.textContent = 'Sync / publish log (Fetch + Publish write here; also console [Wall of Fame])';
+        logCap.textContent = 'Sync / publish log (Fetch + Publish write here)';
         inner.appendChild(logCap);
         var pubLog = document.createElement('pre');
         pubLog.id = 'dc-wof-publish-log';
