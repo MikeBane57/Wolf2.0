@@ -1,14 +1,13 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.5.2
-// @description  Worksheet: mailto via window.open in user gesture (avoids double-fire + blank tab); iframe fallback. Schedule unchanged.
+// @version      1.6.0
+// @description  Wifi reset via AC right-click menu (schedule + worksheet). Mailto: window.open in user gesture; worksheet iframe fallback. No tail coloring.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"wifiResetHighlightEnabled":{"type":"boolean","group":"Wifi reset highlight","label":"Highlight allowlisted tails","description":"Color aircraft registrations that are in the wifi email list.","default":true},"wifiResetHighlightColor":{"type":"select","group":"Wifi reset highlight","label":"Tail highlight color","description":"Normal weight — only the color changes.","default":"#87CEFA","options":[{"value":"#87CEFA","label":"Sky blue"},{"value":"#ADD8E6","label":"Light blue"},{"value":"#B0E0E6","label":"Powder blue"},{"value":"#AFEEEE","label":"Pale turquoise"},{"value":"#7EC8E3","label":"Carolina blue"},{"value":"#6BB6FF","label":"Soft sky"},{"value":"#5DADE2","label":"Soft cyan"},{"value":"#48CAE4","label":"Bright sky"},{"value":"#89CFF0","label":"Baby blue"},{"value":"#9DD9F3","label":"Light cyan blue"},{"value":"#00BFFF","label":"Deep sky blue"},{"value":"#40E0D0","label":"Turquoise"}]}}
 // @donkeycode-pref {"wifiResetDebugLog":{"type":"boolean","group":"Wifi reset debug","label":"Log to browser console","description":"When ON: prefix [Wifi reset] — init, mailto path, errors. Default OFF.","default":false}}
 // @donkeycode-pref {"wifiResetMailtoIframeWorksheet":{"type":"boolean","group":"Wifi reset worksheet","label":"Worksheet: iframe mailto fallback","description":"When context-menu window.open is blocked, ON (default): open mailto in a hidden iframe after a short delay. OFF: use programmatic link click (may blank React).","default":true}}
-// @donkeycode-pref {"wifiResetContextMenuWorksheet":{"type":"boolean","group":"Wifi reset worksheet","label":"Right-click menu: Wifi reset","description":"On worksheet AC right-click (same targets as Send AC to WS), add menu item that opens wifi-reset mailto for allowlisted N-number. Default ON.","default":true},"wifiResetWorksheetDblclick":{"type":"boolean","group":"Wifi reset worksheet","label":"Worksheet: double-click mailto","description":"OFF by default — use right-click menu. When ON, bubble dblclick + mailto on allowlisted tail.","default":false}}
+// @donkeycode-pref {"wifiResetContextMenuSchedule":{"type":"boolean","group":"Wifi reset schedule","label":"Right-click menu: Wifi reset","description":"On schedule, when the AC/aircraft context menu opens, add “Wifi reset” for allowlisted tails. Default ON.","default":true},"wifiResetContextMenuWorksheet":{"type":"boolean","group":"Wifi reset worksheet","label":"Right-click menu: Wifi reset","description":"On worksheet AC right-click (same targets as Send AC to WS), add “Wifi reset” for allowlisted N-numbers. Default ON.","default":true},"wifiResetWorksheetDblclick":{"type":"boolean","group":"Wifi reset worksheet","label":"Worksheet: double-click mailto","description":"OFF by default — use right-click menu. When ON, bubble dblclick + mailto on allowlisted tail.","default":false}}
 // @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
@@ -91,24 +90,20 @@
     var FLIGHT_PUCK_SELECTOR =
         '[data-qe-id="as-flight-leg-puck"], [data-testid="puck-context-menu"], [class*="CScizp4RisE="]';
 
-    var HIGHLIGHT_CLASS = 'dc-wifi-reset-tail';
-
     var onDblClickCapture = null;
-    var highlightMo = null;
-    var highlightDebounce = null;
     var wifiDebugGlobalHooksInstalled = false;
     /** Same phase flag used for removeEventListener in cleanup. */
     var dblClickListenersUseCapture = true;
 
-    /** Worksheet: AC context menu “Wifi reset” (same discovery pattern as Send AC to WS). */
+    /** AC context menu “Wifi reset” (worksheet + schedule; same discovery as Send AC to WS on worksheet). */
     var wsCtxMenuObserver = null;
-    var wsOnCtx = null;
+    var acOnCtx = null;
     var wsLastContextRoot = null;
-    var wsLastExtractedTail = '';
+    var acLastExtractedTail = '';
 
-    /** Menu item used to fire both mousedown + click → two mailto launches; guard applies to worksheet path. */
-    var lastWorksheetMailtoKey = '';
-    var lastWorksheetMailtoAt = 0;
+    /** Context-menu mailto can fire twice in quick succession; debounce both schedule and worksheet. */
+    var lastCtxMailtoKey = '';
+    var lastCtxMailtoAt = 0;
 
     var RE_WS_N_NUMBER = /N\d{1,5}[A-Z]?/i;
     var RE_WS_TAIL_ALT = /\b([A-Z]{1,2}\d{1,5}[A-Z]{0,2})\b/;
@@ -170,8 +165,7 @@
         return (location.pathname || '').indexOf('/widgets/worksheet') === 0;
     }
 
-    /** Splitting text into spans breaks React on worksheet; mail still resolves from text without wrappers. */
-    function allowHighlightMutation() {
+    function isSchedulePath() {
         return !isWorksheetPath();
     }
 
@@ -331,20 +325,20 @@
         if (preferFromPopup) {
             var t0 = wsExtractTailFromIataTypeInRoot(popup) || wsExtractTailFromAcBlock(popup);
             if (t0) {
-                wsLastExtractedTail = t0;
-                wifiDbg('worksheet ctx tail (popup)', t0);
+                acLastExtractedTail = t0;
+                wifiDbg('ctx tail (popup)', t0);
                 return t0;
             }
         }
-        var t = String(wsLastExtractedTail || '').trim();
+        var t = String(acLastExtractedTail || '').trim();
         if (t) {
             return t;
         }
         t = wsExtractTailFromIataTypeInRoot(popup) || wsExtractTailFromAcBlock(popup);
         if (t) {
-            wsLastExtractedTail = t;
+            acLastExtractedTail = t;
         }
-        return String(wsLastExtractedTail || '').trim();
+        return String(acLastExtractedTail || '').trim();
     }
 
     function wsIsLikelyAcContextMenuPopup(popup) {
@@ -385,6 +379,12 @@
 
     function wireWifiResetContextMenuItem(popup, opts) {
         if (popup.getAttribute('data-dc-wifi-reset-wired') === '1') {
+            return;
+        }
+        if (isWorksheetPath() && getPref('wifiResetContextMenuWorksheet', true) === false) {
+            return;
+        }
+        if (isSchedulePath() && getPref('wifiResetContextMenuSchedule', true) === false) {
             return;
         }
         opts = opts || {};
@@ -476,10 +476,10 @@
     }
 
     function wsOnContextMenu(e) {
-        if (getPref('wifiResetContextMenuWorksheet', true) === false) {
+        if (!isWorksheetPath()) {
             return;
         }
-        if (!isWorksheetPath()) {
+        if (getPref('wifiResetContextMenuWorksheet', true) === false) {
             return;
         }
         var t = e.target;
@@ -507,23 +507,52 @@
         } else {
             return;
         }
-        wsLastExtractedTail =
+        var extracted =
             wsExtractTailFromIataTypeInRoot(wsLastContextRoot) || wsExtractTailFromAcBlock(wsLastContextRoot);
-        if (wsLastExtractedTail) {
-            wifiDbg('worksheet contextmenu tail', wsLastExtractedTail);
+        if (extracted) {
+            acLastExtractedTail = extracted;
+            wifiDbg('worksheet contextmenu tail', acLastExtractedTail);
         }
         wsScheduleRescanForPopups();
     }
 
-    function initWorksheetContextMenu() {
-        if (!isWorksheetPath()) {
+    function scheduleOnContextMenu(e) {
+        if (!isSchedulePath()) {
             return;
         }
-        if (getPref('wifiResetContextMenuWorksheet', true) === false) {
+        if (getPref('wifiResetContextMenuSchedule', true) === false) {
             return;
         }
-        wsOnCtx = wsOnContextMenu;
-        document.addEventListener('contextmenu', wsOnCtx, true);
+        var t = e.target;
+        if (!t) {
+            return;
+        }
+        var el = t.nodeType === 1 ? t : t.parentElement;
+        var tail = el ? findAllowlistedTailFromEventTarget(el) : null;
+        if (tail) {
+            acLastExtractedTail = tail;
+            wifiDbg('schedule contextmenu tail', tail);
+        }
+        wsScheduleRescanForPopups();
+    }
+
+    function acOnContextMenu(e) {
+        if (isWorksheetPath()) {
+            wsOnContextMenu(e);
+        } else {
+            scheduleOnContextMenu(e);
+        }
+    }
+
+    function initAcContextMenu() {
+        if (
+            getPref('wifiResetContextMenuWorksheet', true) === false &&
+            getPref('wifiResetContextMenuSchedule', true) === false
+        ) {
+            return;
+        }
+        acOnCtx = acOnContextMenu;
+        document.addEventListener('contextmenu', acOnCtx, true);
         wsCtxMenuObserver = new MutationObserver(function () {
             wsScanForContextMenus();
         });
@@ -532,166 +561,7 @@
         } catch (e) {
             wsCtxMenuObserver = null;
         }
-        wifiDbg('worksheet context menu listener installed');
-    }
-
-    function highlightEnabled() {
-        return getPref('wifiResetHighlightEnabled', true) !== false;
-    }
-
-    function highlightColor() {
-        var c = String(getPref('wifiResetHighlightColor', '#87CEFA') || '#87CEFA').trim();
-        if (/^#[0-9A-Fa-f]{3,8}$/.test(c)) {
-            return c;
-        }
-        return '#87CEFA';
-    }
-
-    function unwrapHighlights() {
-        var nodes = document.querySelectorAll('span.' + HIGHLIGHT_CLASS);
-        var i;
-        for (i = 0; i < nodes.length; i++) {
-            var sp = nodes[i];
-            var parent = sp.parentNode;
-            if (!parent) {
-                continue;
-            }
-            var txt = document.createTextNode(sp.textContent || '');
-            parent.replaceChild(txt, sp);
-        }
-    }
-
-    /**
-     * Split text nodes so allowlisted N-numbers are wrapped in colored spans.
-     */
-    function highlightAllowlistedTailsInTextNode(textNode) {
-        try {
-            if (!textNode || textNode.nodeType !== 3) {
-                return;
-            }
-            var parent = textNode.parentNode;
-            if (!parent) {
-                return;
-            }
-            if (parent.closest && parent.closest('.' + HIGHLIGHT_CLASS)) {
-                return;
-            }
-            var tag = parent.tagName;
-            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEXTAREA') {
-                return;
-            }
-
-            var text = textNode.nodeValue;
-            if (!text || (text.indexOf('N') === -1 && text.indexOf('n') === -1)) {
-                return;
-            }
-
-            TAIL_RE.lastIndex = 0;
-            var segments = [];
-            var lastIndex = 0;
-            var m;
-            var anyHit = false;
-            while ((m = TAIL_RE.exec(text)) !== null) {
-                if (m.index > lastIndex) {
-                    segments.push({ kind: 'plain', value: text.slice(lastIndex, m.index) });
-                }
-                var tail = String(m[1]).toUpperCase();
-                if (WIFI_RESET_ALLOWLIST[tail]) {
-                    segments.push({ kind: 'hit', value: tail });
-                    anyHit = true;
-                } else {
-                    segments.push({ kind: 'plain', value: m[0] });
-                }
-                lastIndex = m.index + m[0].length;
-            }
-            if (lastIndex < text.length) {
-                segments.push({ kind: 'plain', value: text.slice(lastIndex) });
-            }
-            if (!anyHit) {
-                return;
-            }
-
-            var frag = document.createDocumentFragment();
-            var col = highlightColor();
-            var si;
-            for (si = 0; si < segments.length; si++) {
-                var seg = segments[si];
-                if (seg.kind === 'plain') {
-                    frag.appendChild(document.createTextNode(seg.value));
-                } else {
-                    var span = document.createElement('span');
-                    span.className = HIGHLIGHT_CLASS;
-                    span.setAttribute('data-dc-wifi-tail', seg.value);
-                    span.textContent = seg.value;
-                    span.style.color = col;
-                    frag.appendChild(span);
-                }
-            }
-            parent.replaceChild(frag, textNode);
-        } catch (err) {
-            wifiDbg('highlightAllowlistedTailsInTextNode threw', err && err.stack ? err.stack : String(err));
-        }
-    }
-
-    function walkForHighlight(node) {
-        try {
-            if (!allowHighlightMutation()) {
-                return;
-            }
-            if (!node) {
-                return;
-            }
-            if (node.nodeType === 3) {
-                highlightAllowlistedTailsInTextNode(node);
-                return;
-            }
-            if (node.nodeType !== 1) {
-                return;
-            }
-            if (node.classList && node.classList.contains(HIGHLIGHT_CLASS)) {
-                return;
-            }
-            var tn = node.tagName;
-            if (tn === 'SCRIPT' || tn === 'STYLE' || tn === 'NOSCRIPT' || tn === 'TEXTAREA') {
-                return;
-            }
-
-            var snapshot = [];
-            var ci;
-            for (ci = 0; ci < node.childNodes.length; ci++) {
-                snapshot.push(node.childNodes[ci]);
-            }
-            for (ci = 0; ci < snapshot.length; ci++) {
-                walkForHighlight(snapshot[ci]);
-            }
-        } catch (err) {
-            wifiDbg('walkForHighlight threw', err && err.stack ? err.stack : String(err));
-        }
-    }
-
-    function applyTailHighlights() {
-        if (!highlightEnabled() || !allowHighlightMutation()) {
-            unwrapHighlights();
-            return;
-        }
-        if (document.body) {
-            walkForHighlight(document.body);
-        }
-    }
-
-    function scheduleHighlight() {
-        if (!highlightEnabled() || !allowHighlightMutation()) {
-            unwrapHighlights();
-            return;
-        }
-        if (highlightDebounce) {
-            clearTimeout(highlightDebounce);
-        }
-        highlightDebounce = setTimeout(function() {
-            highlightDebounce = null;
-            unwrapHighlights();
-            applyTailHighlights();
-        }, 280);
+        wifiDbg('AC context menu listener installed');
     }
 
     function applyTemplate(tpl, tail) {
@@ -767,35 +637,31 @@
         return true;
     }
 
-    function worksheetMailtoShouldDebounce(tail) {
+    function contextMenuMailtoShouldDebounce(tail) {
         var now = Date.now();
         var key = String(tail || '');
-        if (key === lastWorksheetMailtoKey && now - lastWorksheetMailtoAt < 900) {
-            wifiDbg('worksheet mailto debounced (duplicate)', tail);
+        if (key === lastCtxMailtoKey && now - lastCtxMailtoAt < 900) {
+            wifiDbg('mailto debounced (duplicate)', tail);
             return true;
         }
-        lastWorksheetMailtoKey = key;
-        lastWorksheetMailtoAt = now;
+        lastCtxMailtoKey = key;
+        lastCtxMailtoAt = now;
         return false;
     }
 
     /**
      * @param {string} tail
-     * @param {{ userGesture?: boolean }} [opts] — when true on worksheet, try window.open immediately (context menu).
+     * @param {{ userGesture?: boolean }} [opts] — when true (context menu), try window.open immediately.
      */
     function openMailtoForTail(tail, opts) {
         opts = opts || {};
         try {
             var href = mailtoHrefForTail(tail);
-            if (isWorksheetPath() && worksheetMailtoShouldDebounce(tail)) {
+            if (opts.userGesture && contextMenuMailtoShouldDebounce(tail)) {
                 return;
             }
-            if (
-                isWorksheetPath() &&
-                opts.userGesture &&
-                openMailtoViaBlankWindow(href)
-            ) {
-                wifiDbg('openMailto worksheet: window.open ok', tail);
+            if (opts.userGesture && openMailtoViaBlankWindow(href)) {
+                wifiDbg('openMailto: window.open ok', tail);
                 return;
             }
             if (
@@ -827,27 +693,25 @@
         wifiDbg('init', {
             path: location.pathname,
             href: location.href.split('?')[0],
-            highlight: highlightEnabled(),
-            worksheetSkipsDomHighlight: isWorksheetPath(),
-            contextMenuWorksheet: isWorksheetPath() && getPref('wifiResetContextMenuWorksheet', true) !== false,
-            worksheetDblclick: isWorksheetPath() && (getPref('wifiResetWorksheetDblclick', false) === true || getPref('wifiResetWorksheetDblclick', false) === 'true'),
+            contextMenuSchedule:
+                isSchedulePath() && getPref('wifiResetContextMenuSchedule', true) !== false,
+            contextMenuWorksheet:
+                isWorksheetPath() && getPref('wifiResetContextMenuWorksheet', true) !== false,
+            worksheetDblclick:
+                isWorksheetPath() &&
+                (getPref('wifiResetWorksheetDblclick', false) === true ||
+                    getPref('wifiResetWorksheetDblclick', false) === 'true'),
             debug: wifiDebugEnabled()
         });
 
-        scheduleHighlight();
-        if (allowHighlightMutation()) {
-            highlightMo = new MutationObserver(function () {
-                scheduleHighlight();
-            });
-            if (document.documentElement) {
-                highlightMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-            }
-        }
+        initAcContextMenu();
 
-        initWorksheetContextMenu();
-
-        if (!isWorksheetPath() || getPref('wifiResetWorksheetDblclick', false) === true || getPref('wifiResetWorksheetDblclick', false) === 'true') {
-            dblClickListenersUseCapture = !isWorksheetPath();
+        if (
+            isWorksheetPath() &&
+            (getPref('wifiResetWorksheetDblclick', false) === true ||
+                getPref('wifiResetWorksheetDblclick', false) === 'true')
+        ) {
+            dblClickListenersUseCapture = false;
             onDblClickCapture = function (e) {
                 try {
                     if (e.button !== 0) {
@@ -860,7 +724,7 @@
                             ? String(tgt.className).slice(0, 80)
                             : '';
                     wifiDbg('dblclick', {
-                        phase: isWorksheetPath() ? 'bubble-worksheet' : 'capture-schedule',
+                        phase: 'bubble-worksheet',
                         path: location.pathname,
                         tag: tag,
                         class: sample,
@@ -874,19 +738,11 @@
                     if (!tail) {
                         return;
                     }
-                    if (isWorksheetPath()) {
-                        var t = tail;
-                        setTimeout(function () {
-                            wifiDbg('opening mailto (deferred)', t);
-                            openMailtoForTail(t);
-                        }, 0);
-                        return;
-                    }
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.stopImmediatePropagation();
-                    wifiDbg('opening mailto', tail);
-                    openMailtoForTail(tail);
+                    var t = tail;
+                    setTimeout(function () {
+                        wifiDbg('opening mailto (deferred)', t);
+                        openMailtoForTail(t);
+                    }, 0);
                 } catch (err) {
                     wifiDbg('dblclick handler threw', err && err.stack ? err.stack : String(err));
                 }
@@ -910,11 +766,11 @@
             } catch (e2) {}
             window.__wifiResetRejectionHook = null;
         }
-        if (wsOnCtx) {
+        if (acOnCtx) {
             try {
-                document.removeEventListener('contextmenu', wsOnCtx, true);
+                document.removeEventListener('contextmenu', acOnCtx, true);
             } catch (ec) {}
-            wsOnCtx = null;
+            acOnCtx = null;
         }
         if (wsCtxMenuObserver) {
             try {
@@ -930,15 +786,6 @@
                 n.remove();
             });
         } catch (ec3) {}
-        if (highlightDebounce) {
-            clearTimeout(highlightDebounce);
-            highlightDebounce = null;
-        }
-        if (highlightMo) {
-            highlightMo.disconnect();
-            highlightMo = null;
-        }
-        unwrapHighlights();
         if (onDblClickCapture) {
             document.removeEventListener('dblclick', onDblClickCapture, dblClickListenersUseCapture);
             onDblClickCapture = null;
