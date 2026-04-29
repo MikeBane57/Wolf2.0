@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AC enroute count (schedule)
 // @namespace    Wolf 2.0
-// @version      1.0.1
-// @description  Ops map: count flights enroute (active bar colors #3390ef / #abcdf8); show next to A/C ON THE GROUND.
+// @version      1.0.3
+// @description  Arr station from puck cell (tg9Iiv9oAOo + Ziu3-r4LY1M); active bar colors #3390ef / #abcdf8.
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @donkeycode-pref {"acEnrouteEnabled":{"type":"boolean","group":"AC enroute","label":"Show enroute count","description":"When ON, insert AC enroute next to A/C ON THE GROUND and refresh as legs change.","default":true},"acEnrouteActiveBarColors":{"type":"string","group":"AC enroute","label":"Active leg bar colors (hex)","description":"Comma-separated #RGB hex values for the schedule bar when the flight is still active/enroute. Default matches ops map blues.","default":"#3390ef,#abcdf8","placeholder":"#3390ef,#abcdf8"}}
@@ -19,8 +19,10 @@
     var PUCK_QE = '[data-qe-id="as-flight-leg-puck"]';
     /** Same obfuscated class as Completed flight opacity — schedule bar fill behind the leg */
     var SCHED_BAR_SEL = '.vVzbj3J5m70\\=';
-    /** Station code cells on puck (dep / arr), same pattern as Pax late script */
+    /** Station code cells on puck — arrival uses distinct second class (see ops map markup). */
     var STATION_CELL_SUBSEL = '[class*="tg9Iiv9oAOo="]';
+    /** Arrival airport cell: same base as dep but paired with this class token */
+    var ARR_STATION_EXTRA_SUBSEL = '[class*="Ziu3-r4LY1M="]';
     var STATION_COMBO = 'div[name="station"][role="combobox"]';
 
     var mo = null;
@@ -147,6 +149,25 @@
         return out;
     }
 
+    function arrivalStationFromPuck(puck) {
+        if (!puck || !puck.querySelector) {
+            return '';
+        }
+        var arrEl =
+            puck.querySelector(STATION_CELL_SUBSEL + ARR_STATION_EXTRA_SUBSEL) ||
+            puck.querySelector(ARR_STATION_EXTRA_SUBSEL);
+        if (arrEl) {
+            var a = String(arrEl.textContent || '')
+                .replace(/\s+/g, ' ')
+                .trim();
+            if (/^[A-Z]{3}$/.test(a)) {
+                return a;
+            }
+        }
+        var ap = airportsFromPuck(puck);
+        return ap.length >= 2 ? ap[1] : '';
+    }
+
     function countEnrouteToStation(station, allowedHex) {
         if (!station) {
             return 0;
@@ -160,9 +181,8 @@
             if (!barMatchesActiveEnrouteColors(bar, allowedHex)) {
                 continue;
             }
-            var puck = leg.querySelector(PUCK_QE);
-            var ap = airportsFromPuck(puck);
-            var arr = ap.length >= 2 ? ap[1] : '';
+            var puckLeg = leg.querySelector(PUCK_QE);
+            var arr = arrivalStationFromPuck(puckLeg);
             if (arr && arr === station) {
                 n++;
             }
