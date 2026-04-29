@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         AC enroute count (schedule)
 // @namespace    Wolf 2.0
-// @version      1.2.1
-// @description  Bar color match by default (opacity filter optional OFF). Console logs each match when debug pref ON (default ON).
+// @version      1.3.0
+// @description  Always run scan (HUD fallback if ground row missing). Broad bar selector; tick + match console logs.
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
-// @donkeycode-pref {"acEnrouteEnabled":{"type":"boolean","group":"AC enroute","label":"Show enroute count","description":"When ON, insert AC enroute next to A/C ON THE GROUND and refresh as legs change.","default":true},"acEnrouteActiveBarColors":{"type":"string","group":"AC enroute","label":"Active leg bar colors (hex)","description":"Comma-separated target blues for the schedule bar. Matching uses RGB distance (computed color rarely equals hex exactly). Default #3390ef,#abcdf8.","default":"#3390ef,#abcdf8","placeholder":"#3390ef,#abcdf8"},"acEnrouteBarColorDistance":{"type":"number","group":"AC enroute","label":"Bar color match tolerance (0-255)","description":"Max Euclidean RGB distance from a target blue to count the leg bar as active. Raise if counts stay 0; lower if wrong legs match. Default 55.","default":55,"min":5,"max":120,"step":1},"acEnrouteExcludeLowOpacityBar":{"type":"boolean","group":"AC enroute","label":"Exclude low-opacity bars (optional)","description":"OFF by default — enroute legs often use the same opacity as completed (e.g. 0.4). Turn ON only if you want to hide faded bars using the threshold below.","default":false},"acEnrouteBarOpacityMin":{"type":"number","group":"AC enroute","label":"Minimum bar opacity if exclusion ON","description":"Counted only if bar opacity is strictly greater than this (example: 0.39 passes when threshold is 0.4). Default 0.4.","default":0.4,"min":0,"max":1,"step":0.05},"acEnrouteDebugMatchLog":{"type":"boolean","group":"AC enroute · debug","label":"Log matching flights to page console","description":"When ON, each counted leg logs dep→arr, flight # if found, bar RGB distance, and opacity. Turn OFF after tuning. Default ON for troubleshooting.","default":true}}
+// @donkeycode-pref {"acEnrouteEnabled":{"type":"boolean","group":"AC enroute","label":"Show enroute count","description":"When ON, show AC enroute (next to ground stats or fixed HUD) and refresh as legs change.","default":true},"acEnrouteActiveBarColors":{"type":"string","group":"AC enroute","label":"Active leg bar colors (hex)","description":"Comma-separated target blues for the schedule bar. Matching uses RGB distance (computed color rarely equals hex exactly). Default #3390ef,#abcdf8.","default":"#3390ef,#abcdf8","placeholder":"#3390ef,#abcdf8"},"acEnrouteBarColorDistance":{"type":"number","group":"AC enroute","label":"Bar color match tolerance (0-255)","description":"Max Euclidean RGB distance from a target blue to count the leg bar as active. Raise if counts stay 0; lower if wrong legs match. Default 55.","default":55,"min":5,"max":120,"step":1},"acEnrouteExcludeLowOpacityBar":{"type":"boolean","group":"AC enroute","label":"Exclude low-opacity bars (optional)","description":"OFF by default — enroute legs often use the same opacity as completed (e.g. 0.4). Turn ON only if you want to hide faded bars using the threshold below.","default":false},"acEnrouteBarOpacityMin":{"type":"number","group":"AC enroute","label":"Minimum bar opacity if exclusion ON","description":"Counted only if bar opacity is strictly greater than this (example: 0.39 passes when threshold is 0.4). Default 0.4.","default":0.4,"min":0,"max":1,"step":0.05},"acEnrouteDebugMatchLog":{"type":"boolean","group":"AC enroute · debug","label":"Log each MATCH to page console","description":"Logs every counted leg (dep/arr, flight #, bar distance). Default ON during tuning.","default":true},"acEnrouteDebugTickLog":{"type":"boolean","group":"AC enroute · debug","label":"Log periodic scan summary (tick)","description":"Every ~4s while the map updates: leg count, bar matches, station filter. Proves the script is scanning. Default ON; turn OFF to reduce noise.","default":true}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/AC%20enroute%20count%20(schedule).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/AC%20enroute%20count%20(schedule).user.js
 // ==/UserScript==
@@ -17,8 +17,9 @@
     var LABEL_TEXT = 'AC enroute';
     var LEG_QE = '[data-qe-id="as-flight-leg"]';
     var PUCK_QE = '[data-qe-id="as-flight-leg-puck"]';
-    /** Same obfuscated class as Completed flight opacity — schedule bar fill behind the leg */
-    var SCHED_BAR_SEL = '.vVzbj3J5m70\\=';
+    /** Schedule bar fill — base token survives SW UI churn; fallback to legacy exact class */
+    var SCHED_BAR_CLASS_TOKEN = 'vVzbj3J5m70';
+    var SCHED_BAR_SEL_LEGACY = '.vVzbj3J5m70\\=';
     /** Station code cells on puck — arrival uses distinct second class (see ops map markup). */
     var STATION_CELL_SUBSEL = '[class*="tg9Iiv9oAOo="]';
     /** Departure airport cell pairs base station class with this token (ops map) */
@@ -31,6 +32,19 @@
     var debounceTimer = null;
     var groundMo = null;
     var stationMo = null;
+    var FLOAT_HOST_ATTR = 'data-dc-ac-enroute-float';
+    var tickLogLastMs = 0;
+    var TICK_LOG_MS = 4000;
+
+    function findScheduleBarInLeg(leg) {
+        if (!leg || !leg.querySelector) {
+            return null;
+        }
+        var bar =
+            leg.querySelector('[class*="' + SCHED_BAR_CLASS_TOKEN + '"]') ||
+            leg.querySelector(SCHED_BAR_SEL_LEGACY);
+        return bar || null;
+    }
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -315,32 +329,46 @@
         return ap.length >= 2 ? ap[1] : '';
     }
 
-    function countEnrouteToStation(station, targetRgbs, maxDist, opacityGate, debugLog) {
+    function scanEnrouteToStation(station, targetRgbs, maxDist, opacityGate, debugMatch) {
+        var stats = {
+            legCount: 0,
+            barsFound: 0,
+            barColorPass: 0,
+            arrMatchStation: 0,
+            skippedOutboundSameStation: 0
+        };
         if (!station) {
-            return 0;
+            return { count: 0, stats: stats };
         }
         var legs = document.querySelectorAll(LEG_QE);
+        stats.legCount = legs.length;
         var n = 0;
         var li;
         for (li = 0; li < legs.length; li++) {
             var leg = legs[li];
-            var bar = leg.querySelector(SCHED_BAR_SEL);
+            var bar = findScheduleBarInLeg(leg);
+            if (bar) {
+                stats.barsFound++;
+            }
             var barInfo = analyzeScheduleBar(bar, targetRgbs, maxDist, opacityGate);
             if (!barInfo.passesOpacity || !barInfo.passesColor) {
                 continue;
             }
+            stats.barColorPass++;
             var puckLeg = leg.querySelector(PUCK_QE);
             var arr = arrivalStationFromPuck(puckLeg);
             var dep = departureStationFromPuck(puckLeg);
             if (!arr || arr !== station) {
                 continue;
             }
+            stats.arrMatchStation++;
             /** Inbound to map station only — exclude outbound from hub (e.g. DAL→DEN). */
             if (dep && dep === station) {
+                stats.skippedOutboundSameStation++;
                 continue;
             }
             n++;
-            if (debugLog) {
+            if (debugMatch) {
                 var rgb = barInfo.bgRgb;
                 var hex =
                     rgb
@@ -366,7 +394,7 @@
                 } catch (logErr) {}
             }
         }
-        return n;
+        return { count: n, stats: stats };
     }
 
     function findGroundStatRow() {
@@ -401,17 +429,132 @@
         return null;
     }
 
+    function removeFloatingHud() {
+        try {
+            var fh = document.querySelector('[' + FLOAT_HOST_ATTR + '="1"]');
+            if (fh) {
+                fh.remove();
+            }
+        } catch (e) {}
+    }
+
+    /**
+     * Fixed overlay when “A/C ON THE GROUND” row is missing so count + tick logs still run.
+     */
+    function ensureFloatingHud(cnt, stationCode, stats) {
+        var host = document.querySelector('[' + FLOAT_HOST_ATTR + '="1"]');
+        if (!host) {
+            host = document.createElement('div');
+            host.setAttribute(FLOAT_HOST_ATTR, '1');
+            host.style.cssText =
+                'position:fixed;top:12px;right:12px;z-index:2147483646;' +
+                'font:12px/1.35 system-ui,-apple-system,sans-serif;' +
+                'background:rgba(15,23,42,.94);color:#e2e8f0;padding:10px 14px;' +
+                'border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.4);' +
+                'pointer-events:none;max-width:min(420px,calc(100vw - 24px));';
+            try {
+                document.documentElement.appendChild(host);
+            } catch (e2) {
+                try {
+                    document.body.appendChild(host);
+                } catch (e3) {}
+            }
+        }
+        var line1 =
+            '<strong style="color:#93c5fd">AC enroute</strong>: ' +
+            String(cnt) +
+            (stationCode ? ' · <span style="opacity:.85">' + escapeHtml(stationCode) + '</span>' : '');
+        var line2 =
+            stats &&
+            '<span style="opacity:.75;font-size:11px">' +
+            'legs ' +
+            stats.legCount +
+            ' · bars ' +
+            stats.barsFound +
+            ' · color✓ ' +
+            stats.barColorPass +
+            ' · arr=' +
+            stationCode +
+            ': ' +
+            stats.arrMatchStation +
+            '</span>';
+        var hint =
+            !stationCode
+                ? '<div style="margin-top:6px;font-size:11px;opacity:.85">No station from dropdown — pick STATION on the map.</div>'
+                : stats && stats.legCount === 0
+                  ? '<div style="margin-top:6px;font-size:11px;opacity:.85">No flight legs in DOM — scroll/zoom map or wait for load.</div>'
+                  : '';
+        host.innerHTML =
+            '<div>' +
+            line1 +
+            '</div>' +
+            (line2 ? '<div style="margin-top:4px">' + line2 + '</div>' : '') +
+            hint +
+            '<div style="margin-top:6px;font-size:10px;opacity:.55">HUD: stats row not found</div>';
+    }
+
+    function escapeHtml(s) {
+        return String(s || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
     function ensureEnrouteRow() {
         var existing = document.querySelector('[' + HOST_ROW_ATTR + '="1"]');
         var groundRow = findGroundStatRow();
+
+        var st = readSelectedStationCode();
+        var rgbs = parseEnrouteBarTargetRgbs();
+        var tol = Number(getPref('acEnrouteBarColorDistance', 55));
+        if (!Number.isFinite(tol)) {
+            tol = 55;
+        }
+        tol = Math.min(120, Math.max(5, tol));
+        var exLow = boolPref('acEnrouteExcludeLowOpacityBar', false);
+        var opMin = Number(getPref('acEnrouteBarOpacityMin', 0.4));
+        if (!Number.isFinite(opMin)) {
+            opMin = 0.4;
+        }
+        opMin = Math.min(1, Math.max(0, opMin));
+        var opacityGate = exLow ? { enabled: true, minOpacity: opMin } : { enabled: false, minOpacity: 0 };
+        var dbgMatch = boolPref('acEnrouteDebugMatchLog', true);
+        var dbgTick = boolPref('acEnrouteDebugTickLog', true);
+
+        var scanned = scanEnrouteToStation(st, rgbs, tol, opacityGate, dbgMatch);
+        var cnt = scanned.count;
+        var stats = scanned.stats;
+
+        var now = Date.now();
+        if (dbgTick && now - tickLogLastMs >= TICK_LOG_MS) {
+            tickLogLastMs = now;
+            try {
+                console.log('[AC enroute] tick', {
+                    station: st || '(empty)',
+                    count: cnt,
+                    groundRowFound: !!groundRow,
+                    legs: stats.legCount,
+                    barsInLegs: stats.barsFound,
+                    barColorPass: stats.barColorPass,
+                    arrEqualsStation: stats.arrMatchStation,
+                    tol: tol,
+                    excludeOpacity: exLow
+                });
+            } catch (e0) {}
+        }
+
         if (!groundRow || !groundRow.parentNode) {
             if (existing) {
                 try {
                     existing.remove();
                 } catch (e) {}
             }
+            ensureFloatingHud(cnt, st, stats);
             return;
         }
+
+        removeFloatingHud();
 
         var row = existing;
         if (!row) {
@@ -446,22 +589,6 @@
             return;
         }
 
-        var st = readSelectedStationCode();
-        var rgbs = parseEnrouteBarTargetRgbs();
-        var tol = Number(getPref('acEnrouteBarColorDistance', 55));
-        if (!Number.isFinite(tol)) {
-            tol = 55;
-        }
-        tol = Math.min(120, Math.max(5, tol));
-        var exLow = boolPref('acEnrouteExcludeLowOpacityBar', false);
-        var opMin = Number(getPref('acEnrouteBarOpacityMin', 0.4));
-        if (!Number.isFinite(opMin)) {
-            opMin = 0.4;
-        }
-        opMin = Math.min(1, Math.max(0, opMin));
-        var opacityGate = exLow ? { enabled: true, minOpacity: opMin } : { enabled: false, minOpacity: 0 };
-        var dbg = boolPref('acEnrouteDebugMatchLog', true);
-        var cnt = countEnrouteToStation(st, rgbs, tol, opacityGate, dbg);
         valEl.textContent = String(cnt);
         valEl.title =
             st
@@ -483,6 +610,7 @@
                     ex.remove();
                 } catch (e) {}
             }
+            removeFloatingHud();
             return;
         }
         if (debounceTimer) {
@@ -591,6 +719,8 @@
                 r.remove();
             }
         } catch (e3) {}
+        removeFloatingHud();
+        tickLogLastMs = 0;
         window.__myScriptCleanup = undefined;
     };
 })();
