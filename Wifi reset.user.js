@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.2.7
-// @description  Worksheet: dbl-click mail uses bubble+defer (no stopPropagation — avoids React white screen). Schedule unchanged.
+// @version      1.2.8
+// @description  Tail resolve: walk ancestors so clicks on nested spans still find row tail (e.g. worksheet cell). Worksheet dblclick bubble+defer.
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -125,9 +125,9 @@
     }
 
     /**
-     * Resolve tail only from the clicked subtree (and one parent), not distant ancestors —
-     * otherwise a click on a non-listed tail still matched the first listed tail in the row.
-     * If more than one allowlisted tail appears in that text, treat as ambiguous (no mail).
+     * Resolve allowlisted tail from the clicked node upward (few ancestor levels).
+     * Worksheet cells nest tail in a sibling div (e.g. click on "175" or MEL span — parent alone has no N-number).
+     * If more than one allowlisted tail appears in an ancestor's full text, treat as ambiguous (no mail).
      */
     function findAllowlistedTailFromEventTarget(target) {
         if (!target) {
@@ -137,29 +137,30 @@
         if (!el || el.nodeType !== 1) {
             return null;
         }
-        var candidates = [el, el.parentElement];
-        var i;
-        for (i = 0; i < candidates.length; i++) {
-            var node = candidates[i];
-            if (!node) {
-                continue;
-            }
-            var text = node.textContent || '';
-            var hits = [];
-            TAIL_RE.lastIndex = 0;
-            var m;
-            while ((m = TAIL_RE.exec(text)) !== null) {
-                var t = String(m[1]).toUpperCase();
-                if (WIFI_RESET_ALLOWLIST[t] && hits.indexOf(t) === -1) {
-                    hits.push(t);
+        var maxDepth = 16;
+        var depth = 0;
+        while (el && depth < maxDepth) {
+            var tag = el.tagName;
+            if (tag !== 'SCRIPT' && tag !== 'STYLE' && tag !== 'NOSCRIPT') {
+                var text = el.textContent || '';
+                var hits = [];
+                TAIL_RE.lastIndex = 0;
+                var m;
+                while ((m = TAIL_RE.exec(text)) !== null) {
+                    var t = String(m[1]).toUpperCase();
+                    if (WIFI_RESET_ALLOWLIST[t] && hits.indexOf(t) === -1) {
+                        hits.push(t);
+                    }
+                }
+                if (hits.length === 1) {
+                    return hits[0];
+                }
+                if (hits.length > 1) {
+                    return null;
                 }
             }
-            if (hits.length === 1) {
-                return hits[0];
-            }
-            if (hits.length > 1) {
-                return null;
-            }
+            el = el.parentElement;
+            depth++;
         }
         return null;
     }
