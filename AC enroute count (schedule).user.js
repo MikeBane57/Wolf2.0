@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AC enroute count (schedule)
 // @namespace    Wolf 2.0
-// @version      1.1.0
-// @description  Inbound enroute only (dep≠station, arr=station); schedule bar blue via RGB distance + opacity gate. Arr cell Ziu3-r4LY1M.
+// @version      1.1.1
+// @description  Fix missing arrival selector constant (was breaking counts). Inbound-only; bar RGB match + opacity gate.
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @donkeycode-pref {"acEnrouteEnabled":{"type":"boolean","group":"AC enroute","label":"Show enroute count","description":"When ON, insert AC enroute next to A/C ON THE GROUND and refresh as legs change.","default":true},"acEnrouteActiveBarColors":{"type":"string","group":"AC enroute","label":"Active leg bar colors (hex)","description":"Comma-separated target blues for the schedule bar. Matching uses RGB distance (computed color rarely equals hex exactly). Default #3390ef,#abcdf8.","default":"#3390ef,#abcdf8","placeholder":"#3390ef,#abcdf8"},"acEnrouteBarColorDistance":{"type":"number","group":"AC enroute","label":"Bar color match tolerance (0-255)","description":"Max Euclidean RGB distance from a target blue to count the leg bar as active. Raise if counts stay 0; lower if wrong legs match. Default 55.","default":55,"min":5,"max":120,"step":1},"acEnrouteExcludeLowOpacityBar":{"type":"boolean","group":"AC enroute","label":"Exclude faded schedule bar","description":"When ON, skip legs whose schedule bar computed opacity is below the threshold (completed-flight styling). ON by default.","default":true},"acEnrouteBarOpacityMin":{"type":"number","group":"AC enroute","label":"Minimum bar opacity if exclusion ON","description":"Bar opacity must be strictly greater than this to count (e.g. 0.4 means skip ≤0.4). Default 0.4.","default":0.4,"min":0,"max":1,"step":0.05}}
@@ -23,6 +23,8 @@
     var STATION_CELL_SUBSEL = '[class*="tg9Iiv9oAOo="]';
     /** Departure airport cell pairs base station class with this token (ops map) */
     var DEP_STATION_EXTRA_SUBSEL = '[class*="zbA1EvKL1Bo="]';
+    /** Arrival airport cell — pairs tg9Iiv9oAOo with this token */
+    var ARR_STATION_EXTRA_SUBSEL = '[class*="Ziu3-r4LY1M="]';
     var STATION_COMBO = 'div[name="station"][role="combobox"]';
 
     var mo = null;
