@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.6.2
-// @description  Debug logs → DonkeyCODE extension inspector only (not page console). Flowsheet-safe mailto; context menu.
+// @version      1.6.3
+// @description  Default wifi-reset To: LOM.NOC@anuvu.com. Debug → extension only. Flowsheet/worksheet mailto; context menu.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"wifiResetDebugLog":{"type":"boolean","group":"Wifi reset debug","label":"Log to extension inspector","description":"When ON: debug lines post to DonkeyCODE service worker (DONKEYCODE_PAGE_LOG), not the page console. Default OFF.","default":false}}
 // @donkeycode-pref {"wifiResetMailtoIframeWorksheet":{"type":"boolean","group":"Wifi reset mailto","label":"Flowsheet/worksheet: avoid anchor mailto","description":"ON (default): if hidden iframe mailto fails, retry iframe (don’t use a main-document link — can blank React on flowsheet/worksheet). OFF: allow anchor fallback on worksheet.","default":true}}
 // @donkeycode-pref {"wifiResetContextMenuSchedule":{"type":"boolean","group":"Wifi reset schedule","label":"Right-click menu: Wifi reset","description":"On schedule, when the AC/aircraft context menu opens, add “Wifi reset” for allowlisted tails. Default ON.","default":true},"wifiResetContextMenuWorksheet":{"type":"boolean","group":"Wifi reset worksheet","label":"Right-click menu: Wifi reset","description":"On worksheet AC right-click (same targets as Send AC to WS), add “Wifi reset” for allowlisted N-numbers. Default ON.","default":true},"wifiResetWorksheetDblclick":{"type":"boolean","group":"Wifi reset worksheet","label":"Worksheet: double-click mailto","description":"OFF by default — use right-click menu. When ON, bubble dblclick + mailto on allowlisted tail.","default":false}}
-// @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
+// @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address.","default":"LOM.NOC@anuvu.com","placeholder":"LOM.NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
 // ==/UserScript==
@@ -618,7 +618,7 @@
     }
 
     function mailtoHrefForTail(tail) {
-        var to = String(getPref('wifiResetEmailTo', 'LOM>NOC@anuvu.com') || 'LOM>NOC@anuvu.com').trim();
+        var to = String(getPref('wifiResetEmailTo', 'LOM.NOC@anuvu.com') || 'LOM.NOC@anuvu.com').trim();
         var subject = applyTemplate(
             getPref('wifiResetSubjectTemplate', 'Jet {tail} Wifi Reset'),
             tail
