@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Wifi reset
 // @namespace    Wolf 2.0
-// @version      1.6.0
-// @description  Wifi reset via AC right-click menu (schedule + worksheet). Mailto: window.open in user gesture; worksheet iframe fallback. No tail coloring.
+// @version      1.6.1
+// @description  Wifi reset via AC right-click menu (schedule/flowsheet + worksheet). Context-menu mailto uses hidden iframe only (no window.open flicker; avoids blanking React). No tail coloring.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
 // @donkeycode-pref {"wifiResetDebugLog":{"type":"boolean","group":"Wifi reset debug","label":"Log to browser console","description":"When ON: prefix [Wifi reset] — init, mailto path, errors. Default OFF.","default":false}}
-// @donkeycode-pref {"wifiResetMailtoIframeWorksheet":{"type":"boolean","group":"Wifi reset worksheet","label":"Worksheet: iframe mailto fallback","description":"When context-menu window.open is blocked, ON (default): open mailto in a hidden iframe after a short delay. OFF: use programmatic link click (may blank React).","default":true}}
+// @donkeycode-pref {"wifiResetMailtoIframeWorksheet":{"type":"boolean","group":"Wifi reset mailto","label":"Flowsheet/worksheet: avoid anchor mailto","description":"ON (default): if hidden iframe mailto fails, retry iframe (don’t use a main-document link — can blank React on flowsheet/worksheet). OFF: allow anchor fallback on worksheet.","default":true}}
 // @donkeycode-pref {"wifiResetContextMenuSchedule":{"type":"boolean","group":"Wifi reset schedule","label":"Right-click menu: Wifi reset","description":"On schedule, when the AC/aircraft context menu opens, add “Wifi reset” for allowlisted tails. Default ON.","default":true},"wifiResetContextMenuWorksheet":{"type":"boolean","group":"Wifi reset worksheet","label":"Right-click menu: Wifi reset","description":"On worksheet AC right-click (same targets as Send AC to WS), add “Wifi reset” for allowlisted N-numbers. Default ON.","default":true},"wifiResetWorksheetDblclick":{"type":"boolean","group":"Wifi reset worksheet","label":"Worksheet: double-click mailto","description":"OFF by default — use right-click menu. When ON, bubble dblclick + mailto on allowlisted tail.","default":false}}
 // @donkeycode-pref {"wifiResetEmailTo":{"type":"string","group":"Wifi reset email","label":"To","description":"Full recipient address (include LOM> prefix if your mail uses it).","default":"LOM>NOC@anuvu.com","placeholder":"LOM>NOC@anuvu.com"},"wifiResetSubjectTemplate":{"type":"string","group":"Wifi reset email","label":"Subject template","description":"{tail} = registration. Only tails in the built-in allowlist trigger mail.","default":"Jet {tail} Wifi Reset","placeholder":"Jet {tail} Wifi Reset"},"wifiResetBodyTemplate":{"type":"string","group":"Wifi reset email","label":"Body template","description":"{tail} = aircraft registration.","default":"Hello Anuvu,\n\nPlease reset aircraft {tail}.\n\nThanks,\nDispatch, NOC\nSouthwest Airlines"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Wifi%20reset.user.js
@@ -165,8 +165,33 @@
         return (location.pathname || '').indexOf('/widgets/worksheet') === 0;
     }
 
+    function isFlowsheetPath() {
+        var p = (location.pathname || '').toLowerCase();
+        var q = (location.search || '').toLowerCase();
+        var h = (location.hash || '').toLowerCase();
+        return (
+            p.indexOf('flowsheet') >= 0 ||
+            q.indexOf('flowsheet') >= 0 ||
+            h.indexOf('flowsheet') >= 0
+        );
+    }
+
     function isSchedulePath() {
         return !isWorksheetPath();
+    }
+
+    /** Flowsheet + worksheet: never navigate mailto via anchor on main document (React white-screen). */
+    function mailtoAvoidAnchorOnMainDoc() {
+        if (isFlowsheetPath()) {
+            return true;
+        }
+        if (isWorksheetPath()) {
+            return (
+                getPref('wifiResetMailtoIframeWorksheet', true) !== false &&
+                getPref('wifiResetMailtoIframeWorksheet', true) !== 'false'
+            );
+        }
+        return false;
     }
 
     function findAllowlistedTailFromEventTarget(target) {
@@ -620,23 +645,6 @@
         }, 8000);
     }
 
-    /**
-     * Opens mailto in a separate browsing context. Must run synchronously inside a click/keydown user gesture
-     * or popup blockers may block; avoids navigating the React root when it succeeds.
-     */
-    function openMailtoViaBlankWindow(href) {
-        var w = window.open(href, '_blank', 'noopener,noreferrer');
-        if (!w) {
-            return false;
-        }
-        setTimeout(function () {
-            try {
-                w.close();
-            } catch (e) {}
-        }, 600);
-        return true;
-    }
-
     function contextMenuMailtoShouldDebounce(tail) {
         var now = Date.now();
         var key = String(tail || '');
@@ -651,7 +659,7 @@
 
     /**
      * @param {string} tail
-     * @param {{ userGesture?: boolean }} [opts] — when true (context menu), try window.open immediately.
+     * @param {{ userGesture?: boolean }} [opts] — context menu: hidden iframe only (no window.open — avoids tab flash; isolates mailto from React main frame).
      */
     function openMailtoForTail(tail, opts) {
         opts = opts || {};
@@ -660,29 +668,48 @@
             if (opts.userGesture && contextMenuMailtoShouldDebounce(tail)) {
                 return;
             }
-            if (opts.userGesture && openMailtoViaBlankWindow(href)) {
-                wifiDbg('openMailto: window.open ok', tail);
+            /** Right-click menu: always use hidden iframe synchronously (schedule/flowsheet + worksheet). */
+            if (opts.userGesture) {
+                try {
+                    openMailtoViaHiddenIframe(href);
+                    wifiDbg('openMailto: context menu iframe', tail);
+                } catch (errIframe) {
+                    wifiDbg('context menu iframe mailto failed', errIframe);
+                    if (mailtoAvoidAnchorOnMainDoc()) {
+                        setTimeout(function () {
+                            try {
+                                openMailtoViaHiddenIframe(href);
+                            } catch (e2) {
+                                wifiDbg('mailto iframe retry failed', e2);
+                            }
+                        }, 280);
+                    } else {
+                        openMailtoViaAnchorClick(href);
+                    }
+                }
                 return;
             }
             if (
-                isWorksheetPath() &&
-                getPref('wifiResetMailtoIframeWorksheet', true) !== false &&
-                getPref('wifiResetMailtoIframeWorksheet', true) !== 'false'
+                mailtoAvoidAnchorOnMainDoc()
             ) {
-                wifiDbg('openMailto worksheet: iframe path scheduled', tail);
+                wifiDbg('openMailto: deferred iframe (flowsheet/worksheet safe path)', tail);
                 setTimeout(function () {
                     try {
                         openMailtoViaHiddenIframe(href);
                         wifiDbg('openMailto worksheet: iframe src set', tail);
                     } catch (err2) {
                         wifiDbg('iframe mailto failed, anchor fallback', err2);
-                        openMailtoViaAnchorClick(href);
+                        if (!mailtoAvoidAnchorOnMainDoc()) {
+                            openMailtoViaAnchorClick(href);
+                        }
                     }
                 }, 280);
                 return;
             }
-            openMailtoViaAnchorClick(href);
-            wifiDbg('openMailtoForTail done', tail);
+            if (!mailtoAvoidAnchorOnMainDoc()) {
+                openMailtoViaAnchorClick(href);
+                wifiDbg('openMailtoForTail done', tail);
+            }
         } catch (err) {
             wifiDbg('openMailtoForTail threw', err && err.stack ? err.stack : String(err));
         }
@@ -693,6 +720,7 @@
         wifiDbg('init', {
             path: location.pathname,
             href: location.href.split('?')[0],
+            flowsheet: isFlowsheetPath(),
             contextMenuSchedule:
                 isSchedulePath() && getPref('wifiResetContextMenuSchedule', true) !== false,
             contextMenuWorksheet:
