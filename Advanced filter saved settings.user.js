@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced filter saved settings
 // @namespace    Wolf 2.0
-// @version      0.1.0
+// @version      0.1.1
 // @description  Save and recall named Advanced filter input presets.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -19,6 +19,7 @@
     var STORAGE_KEY = 'dc_advanced_filter_saved_settings_v1';
     var TITLE_RE = /^\s*advanced\s+filters?\s*$/i;
     var CONTROL_SELECTOR = 'input, select, textarea';
+    var SEMANTIC_DROPDOWN_SELECTOR = '.ui.dropdown[role="combobox"], [role="combobox"].ui.dropdown';
 
     var observer = null;
     var rescanTimer = 0;
@@ -141,9 +142,16 @@
         if (!root || !root.querySelectorAll) {
             return [];
         }
-        var raw = root.querySelectorAll(CONTROL_SELECTOR);
         var out = [];
-        for (var i = 0; i < raw.length; i++) {
+        var dropdowns = root.querySelectorAll(SEMANTIC_DROPDOWN_SELECTOR);
+        var i;
+        for (i = 0; i < dropdowns.length; i++) {
+            if (shouldTrackSemanticDropdown(dropdowns[i])) {
+                out.push(dropdowns[i]);
+            }
+        }
+        var raw = root.querySelectorAll(CONTROL_SELECTOR);
+        for (i = 0; i < raw.length; i++) {
             if (shouldTrackControl(raw[i])) {
                 out.push(raw[i]);
             }
@@ -188,6 +196,9 @@
         if (!control || control.disabled || control.closest('#' + PANEL_ID)) {
             return false;
         }
+        if (semanticDropdownRoot(control)) {
+            return false;
+        }
         if (!visible(control)) {
             return false;
         }
@@ -197,6 +208,30 @@
             return ['button', 'submit', 'reset', 'image', 'file', 'hidden', 'password'].indexOf(type) === -1;
         }
         return tag === 'select' || tag === 'textarea';
+    }
+
+    function semanticDropdownRoot(el) {
+        return el && el.closest ? el.closest(SEMANTIC_DROPDOWN_SELECTOR) : null;
+    }
+
+    function shouldTrackSemanticDropdown(dropdown) {
+        if (!dropdown || dropdown.closest('#' + PANEL_ID) || !visible(dropdown)) {
+            return false;
+        }
+        return !!(
+            dropdown.getAttribute('name') ||
+            dropdown.getAttribute('data-testid') ||
+            dropdown.querySelector('.menu [role="option"], .menu .item') ||
+            dropdown.querySelector(':scope > .ui.label, :scope > a.ui.label')
+        );
+    }
+
+    function isSemanticDropdown(control) {
+        return !!(
+            control &&
+            control.matches &&
+            control.matches(SEMANTIC_DROPDOWN_SELECTOR)
+        );
     }
 
     function findControlLabel(control) {
@@ -224,6 +259,9 @@
     }
 
     function controlIdentity(control, index) {
+        if (isSemanticDropdown(control)) {
+            return semanticDropdownIdentity(control, index);
+        }
         var type = (control.type || '').toLowerCase();
         var options = [];
         if ((control.tagName || '').toLowerCase() === 'select') {
@@ -245,7 +283,25 @@
         };
     }
 
+    function semanticDropdownIdentity(dropdown, index) {
+        return {
+            index: index,
+            tag: (dropdown.tagName || '').toLowerCase(),
+            type: 'semantic-dropdown',
+            id: dropdown.id || '',
+            name: dropdown.getAttribute('name') || '',
+            testId: dropdown.getAttribute('data-testid') || '',
+            aria: dropdown.getAttribute('aria-label') || '',
+            placeholder: semanticDropdownPlaceholder(dropdown),
+            label: findControlLabel(dropdown),
+            options: semanticDropdownOptions(dropdown).join('|')
+        };
+    }
+
     function readControlValue(control) {
+        if (isSemanticDropdown(control)) {
+            return readSemanticDropdownValue(control);
+        }
         var tag = (control.tagName || '').toLowerCase();
         var type = String(control.type || '').toLowerCase();
         if (tag === 'select' && control.multiple) {
@@ -261,6 +317,64 @@
             return !!control.checked;
         }
         return control.value;
+    }
+
+    function semanticDropdownPlaceholder(dropdown) {
+        var text =
+            dropdown.querySelector('.divider.default.text') ||
+            dropdown.querySelector('.divider.text');
+        return textOf(text);
+    }
+
+    function semanticDropdownOptions(dropdown) {
+        var list = dropdown.querySelectorAll('.menu [role="option"], .menu .item');
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            var txt = textOf(list[i].querySelector('.text') || list[i]);
+            if (txt) {
+                out.push(txt);
+            }
+        }
+        return out;
+    }
+
+    function directSemanticLabels(dropdown) {
+        var labels = [];
+        var children = dropdown ? dropdown.children || [] : [];
+        for (var i = 0; i < children.length; i++) {
+            var child = children[i];
+            if (
+                child &&
+                child.matches &&
+                child.matches('.ui.label, a.ui.label, [class~="label"]')
+            ) {
+                labels.push(child);
+            }
+        }
+        return labels;
+    }
+
+    function readSemanticDropdownValue(dropdown) {
+        var labels = directSemanticLabels(dropdown);
+        var values = [];
+        for (var i = 0; i < labels.length; i++) {
+            var label = labels[i];
+            var val = label.getAttribute('value') || label.getAttribute('data-value') || textOf(label);
+            val = String(val || '').replace(/\s+/g, ' ').trim();
+            if (val) {
+                values.push(val);
+            }
+        }
+        if (dropdown.classList && dropdown.classList.contains('multiple')) {
+            return values;
+        }
+        if (values.length) {
+            return values[0];
+        }
+        var selected =
+            dropdown.querySelector('.menu [role="option"][aria-selected="true"] .text') ||
+            dropdown.querySelector('.menu .selected.item .text');
+        return textOf(selected);
     }
 
     function snapshotArea(area) {
@@ -337,6 +451,10 @@
     }
 
     function applyControlValue(control, value) {
+        if (isSemanticDropdown(control)) {
+            applySemanticDropdownValue(control, value);
+            return;
+        }
         var tag = (control.tagName || '').toLowerCase();
         var type = String(control.type || '').toLowerCase();
         if (tag === 'select' && control.multiple && Array.isArray(value)) {
@@ -353,6 +471,69 @@
         }
         setNativeValue(control, 'value', value == null ? '' : String(value));
         dispatchControlEvents(control);
+    }
+
+    function clickLikeUser(el) {
+        if (!el) {
+            return;
+        }
+        var opts = { bubbles: true, cancelable: true, view: window };
+        try {
+            el.dispatchEvent(new MouseEvent('mousedown', opts));
+            el.dispatchEvent(new MouseEvent('mouseup', opts));
+            el.dispatchEvent(new MouseEvent('click', opts));
+        } catch (e) {
+            try {
+                el.click();
+            } catch (e2) {}
+        }
+    }
+
+    function clearSemanticDropdown(dropdown) {
+        var labels = directSemanticLabels(dropdown);
+        for (var i = labels.length - 1; i >= 0; i--) {
+            var del = labels[i].querySelector('.delete.icon, i.delete');
+            clickLikeUser(del || labels[i]);
+        }
+    }
+
+    function findSemanticDropdownOption(dropdown, value) {
+        var want = String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!want) {
+            return null;
+        }
+        var options = dropdown.querySelectorAll('.menu [role="option"], .menu .item');
+        for (var i = 0; i < options.length; i++) {
+            var txt = textOf(options[i].querySelector('.text') || options[i]).toLowerCase();
+            if (txt === want) {
+                return options[i];
+            }
+        }
+        return null;
+    }
+
+    function setSemanticSearchValue(dropdown, value) {
+        var input = dropdown.querySelector('input.search, input[aria-autocomplete="list"], input[type="text"]');
+        if (!input) {
+            return;
+        }
+        setNativeValue(input, 'value', String(value || ''));
+        dispatchControlEvents(input);
+    }
+
+    function applySemanticDropdownValue(dropdown, value) {
+        var values = Array.isArray(value) ? value : value ? [value] : [];
+        clearSemanticDropdown(dropdown);
+        clickLikeUser(dropdown);
+        for (var i = 0; i < values.length; i++) {
+            setSemanticSearchValue(dropdown, values[i]);
+            var option = findSemanticDropdownOption(dropdown, values[i]);
+            if (option) {
+                clickLikeUser(option);
+            }
+        }
+        setSemanticSearchValue(dropdown, '');
+        dispatchControlEvents(dropdown);
     }
 
     function applySnapshot(area, snapshot) {
