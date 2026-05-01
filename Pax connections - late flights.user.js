@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Send late flights to WS Pax Conx
 // @namespace    Wolf 2.0
-// @version      1.9.11
+// @version      1.9.12
 // @description  Pax connections: tight flights to worksheet; ws_apply_tail for AC script. Tail/flight input retry; ref-leg scope; PAX badges.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -1157,6 +1157,17 @@
         return th && th.textContent
             ? th.textContent.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '')
             : '';
+    }
+
+    function compactText(elOrText) {
+        return String(
+            elOrText && elOrText.textContent !== undefined
+                ? elOrText.textContent
+                : elOrText || ''
+        )
+            .replace(/[\r\n\u00a0]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .replace(/^\s+|\s+$/g, '');
     }
 
     /** Real column header row only — not <th> inside nested swap tooltips in a data cell. */
@@ -3699,6 +3710,141 @@
         });
     }
 
+    function findPaxDetailsBlock() {
+        if (!isLikelyPaxConnectionsPage()) {
+            return null;
+        }
+        const headings = document.querySelectorAll('h3');
+        for (var i = 0; i < headings.length; i++) {
+            if (compactText(headings[i]).toUpperCase() !== 'DETAILS') {
+                continue;
+            }
+            var block = headings[i].parentElement;
+            if (block && block.querySelector && block.querySelector('dl dt, dl dd')) {
+                return block;
+            }
+        }
+        return null;
+    }
+
+    function readPaxDetailsMetrics(detailsBlock) {
+        if (!detailsBlock || !detailsBlock.querySelectorAll) {
+            return [];
+        }
+        const rows = detailsBlock.querySelectorAll('dl > div');
+        const out = [];
+        for (var i = 0; i < rows.length; i++) {
+            const dt = rows[i].querySelector('dt');
+            const dds = rows[i].querySelectorAll('dd');
+            if (!dt || !dds.length) {
+                continue;
+            }
+            const value = compactText(dt);
+            const label = compactText(dds[0]);
+            if (!value || !label) {
+                continue;
+            }
+            out.push({
+                value: value,
+                label: label,
+                note: dds.length > 1 ? compactText(dds[1]) : ''
+            });
+        }
+        return out;
+    }
+
+    function findPaxFlightSummaryCard() {
+        if (!isLikelyPaxConnectionsPage()) {
+            return null;
+        }
+        const headings = document.querySelectorAll('h2');
+        for (var i = 0; i < headings.length; i++) {
+            if (!/^Flight\s+\d{1,4}$/i.test(compactText(headings[i]))) {
+                continue;
+            }
+            var card = headings[i].parentElement;
+            if (card && card.querySelector && card.querySelector('table')) {
+                return card;
+            }
+        }
+        return null;
+    }
+
+    function renderPaxDetailsMetrics(metrics) {
+        const wrap = document.createElement('div');
+        wrap.setAttribute('data-dc-pax-late-flight-details', '1');
+        wrap.style.cssText =
+            'box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:center!important;' +
+            'gap:14px!important;flex:1 1 auto!important;min-width:260px!important;text-align:center!important;font:12px/1.25 system-ui,Segoe UI,sans-serif!important;';
+        for (var i = 0; i < metrics.length; i++) {
+            const item = document.createElement('div');
+            item.style.cssText =
+                'box-sizing:border-box!important;min-width:86px!important;padding:2px 6px!important;';
+            if (metrics[i].note) {
+                item.setAttribute('title', metrics[i].note);
+            }
+            const val = document.createElement('div');
+            val.textContent = metrics[i].value;
+            val.style.cssText =
+                'font-size:18px!important;line-height:1.1!important;font-weight:700!important;';
+            const label = document.createElement('div');
+            label.textContent = metrics[i].label;
+            label.style.cssText =
+                'margin-top:2px!important;font-size:10px!important;line-height:1.15!important;text-transform:uppercase!important;opacity:.82!important;';
+            item.appendChild(val);
+            item.appendChild(label);
+            wrap.appendChild(item);
+        }
+        return wrap;
+    }
+
+    function syncPaxDetailsNextToFlight() {
+        const details = findPaxDetailsBlock();
+        const flightCard = findPaxFlightSummaryCard();
+        if (!details || !flightCard) {
+            return;
+        }
+        const metrics = readPaxDetailsMetrics(details);
+        if (!metrics.length) {
+            return;
+        }
+        const metricsKey = metrics
+            .map(function (m) {
+                return [m.value, m.label, m.note || ''].join('\u0001');
+            })
+            .join('\u0002');
+        if (flightCard.getAttribute('data-dc-pax-late-details-host') !== '1') {
+            flightCard.setAttribute('data-dc-pax-late-details-host', '1');
+            flightCard.style.setProperty('display', 'flex', 'important');
+            flightCard.style.setProperty('align-items', 'center', 'important');
+            flightCard.style.setProperty('justify-content', 'space-between', 'important');
+            flightCard.style.setProperty('gap', '18px', 'important');
+            flightCard.style.setProperty('flex-wrap', 'wrap', 'important');
+        }
+        var existing = flightCard.querySelector(
+            ':scope > [data-dc-pax-late-flight-details]'
+        );
+        if (
+            existing &&
+            existing.getAttribute('data-dc-pax-late-details-key') === metricsKey
+        ) {
+            details.style.setProperty('display', 'none', 'important');
+            return;
+        }
+        if (existing && existing.parentNode) {
+            existing.parentNode.removeChild(existing);
+        }
+        const rendered = renderPaxDetailsMetrics(metrics);
+        rendered.setAttribute('data-dc-pax-late-details-key', metricsKey);
+        const routeTable = flightCard.querySelector('table');
+        if (routeTable && routeTable.parentNode === flightCard) {
+            flightCard.insertBefore(rendered, routeTable);
+        } else {
+            flightCard.appendChild(rendered);
+        }
+        details.style.setProperty('display', 'none', 'important');
+    }
+
     function removePaxInlineControls() {
         if (paxBlockMo) {
             try {
@@ -3706,6 +3852,10 @@
             } catch (e) {}
             paxBlockMo = null;
         }
+        removePaxInlineSendDom();
+    }
+
+    function removePaxInlineSendDom() {
         try {
             document
                 .querySelectorAll('tr[data-dc-pax-late-inline]')
@@ -3733,12 +3883,38 @@
         } catch (e) {}
     }
 
+    function removePaxDetailsSummary() {
+        try {
+            document
+                .querySelectorAll('[data-dc-pax-late-flight-details]')
+                .forEach(function (n) {
+                    if (n.parentNode) {
+                        n.parentNode.removeChild(n);
+                    }
+                });
+            document
+                .querySelectorAll('[data-dc-pax-late-details-host]')
+                .forEach(function (n) {
+                    n.removeAttribute('data-dc-pax-late-details-host');
+                    n.style.removeProperty('display');
+                    n.style.removeProperty('align-items');
+                    n.style.removeProperty('justify-content');
+                    n.style.removeProperty('gap');
+                    n.style.removeProperty('flex-wrap');
+                });
+            const details = findPaxDetailsBlock();
+            if (details) {
+                details.style.removeProperty('display');
+            }
+        } catch (e) {}
+    }
+
     function mountPaxInlineSendByBlock() {
         if (!isLikelyPaxConnectionsPage()) {
             return;
         }
         if (getPref('paxLateToWsPaxInlineSend', true) === false) {
-            removePaxInlineControls();
+            removePaxInlineSendDom();
             return;
         }
         const key = paxPathKeyFromWindowLocation(document);
@@ -3836,11 +4012,10 @@
         if (!isLikelyPaxConnectionsPage() || paxBlockMo) {
             return;
         }
+        syncPaxDetailsNextToFlight();
         mountPaxInlineSendByBlock();
         paxBlockMo = new MutationObserver(function () {
-            if (getPref('paxLateToWsPaxInlineSend', true) === false) {
-                return;
-            }
+            syncPaxDetailsNextToFlight();
             mountPaxInlineSendByBlock();
         });
         paxBlockMo.observe(document.documentElement, {
@@ -3928,6 +4103,7 @@
         }
         pendingBcastById = Object.create(null);
         removePaxInlineControls();
+        removePaxDetailsSummary();
         if (__paxLateNotifyTimer) {
             try {
                 clearTimeout(__paxLateNotifyTimer);
