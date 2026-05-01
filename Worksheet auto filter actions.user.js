@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.3
+// @version      1.4.4
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -34,6 +34,7 @@
 
     var pollTimer = null;
     var intervalTimer = null;
+    var intervalRemainingById = Object.create(null);
     var relocateRetryTimer = null;
     var mo = null;
     var relocateRaf = 0;
@@ -931,9 +932,9 @@
         if (!anyIntervalRowOn(rows)) {
             return;
         }
-        var remainingById = Object.create(null);
+        intervalRemainingById = Object.create(null);
         for (var i = 0; i < rows.length; i++) {
-            remainingById[rows[i].id] = rows[i].sec;
+            intervalRemainingById[rows[i].id] = rows[i].sec;
             if (!rows[i].on) {
                 setIntervalCountdownText(rows[i].id, '');
             }
@@ -950,20 +951,20 @@
                     setIntervalCountdownText(row.id, '');
                     continue;
                 }
-                if (!Number.isFinite(remainingById[row.id])) {
-                    remainingById[row.id] = row.sec;
+                if (!Number.isFinite(intervalRemainingById[row.id])) {
+                    intervalRemainingById[row.id] = row.sec;
                 }
-                if (remainingById[row.id] <= 0) {
+                if (intervalRemainingById[row.id] <= 0) {
                     if (row.action) {
                         clickToolbarAction(row.action, 'interval ' + row.sec + 's');
                     }
-                    remainingById[row.id] = row.sec;
+                    intervalRemainingById[row.id] = row.sec;
                 }
                 setIntervalCountdownText(
                     row.id,
-                    formatCountdownSeconds(remainingById[row.id])
+                    formatCountdownSeconds(intervalRemainingById[row.id])
                 );
-                remainingById[row.id]--;
+                intervalRemainingById[row.id]--;
             }
         }
         tick();
@@ -1379,6 +1380,10 @@
         );
     }
 
+    function intervalRowCountdownText(row) {
+        return row && row.on ? formatCountdownSeconds(row.sec) : '';
+    }
+
     function intervalRowHtml(row, idx, count) {
         var id = String(row.id);
         return (
@@ -1401,7 +1406,9 @@
             '" />' +
             '<span>sec</span>' +
             '</div>' +
-            '<span class="dc-war-countdown" data-dc-interval-countdown></span>' +
+            '<span class="dc-war-countdown" data-dc-interval-countdown>' +
+            intervalRowCountdownText(row) +
+            '</span>' +
             '<button type="button" class="dc-war-icon-btn" data-dc-add-interval data-dc-interval-btn-row-id="' +
             htmlAttrEscape(id) +
             '" title="Add another interval row">+</button>' +
@@ -1412,6 +1419,20 @@
                 : '') +
             '</div>'
         );
+    }
+
+    function updateRenderedIntervalCountdowns(host) {
+        var h = host || document.getElementById(HOST_ID);
+        if (!h) {
+            return;
+        }
+        var rows = readIntervalRows();
+        for (var i = 0; i < rows.length; i++) {
+            setIntervalCountdownText(
+                rows[i].id,
+                rows[i].on ? formatCountdownSeconds(rows[i].sec) : ''
+            );
+        }
     }
 
     function renderIntervalRows(host) {
@@ -1425,6 +1446,7 @@
             html += intervalRowHtml(rows[i], i, rows.length);
         }
         list.innerHTML = html;
+        updateRenderedIntervalCountdowns(host);
     }
 
     function refreshIntervalRows(host) {
