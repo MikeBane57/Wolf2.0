@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Timeline transparent box
 // @namespace    Wolf 2.0
-// @version      0.3.0
+// @version      0.4.0
 // @description  Double-click the Ops Suite timeline to draw and adjust a transparent time-range box
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -17,7 +17,20 @@
     var HANDLE_CLASS = 'dc-timeline-transparent-box-handle';
     var STYLE_ID = 'dc-timeline-transparent-box-style';
     var STORAGE_KEY = 'dc.timelineTransparentBox.range';
-    var VISIBLE_KEY = 'dc.timelineTransparentBox.visible';
+    var PASS_THROUGH_SELECTOR = [
+        '[data-qe-id="as-flight-leg"]',
+        '[data-qe-id="as-flight-leg-puck"]',
+        '[data-linked-hover-id]',
+        '[data-mid-click-bound]',
+        'button',
+        'a',
+        'input',
+        'select',
+        'textarea',
+        '[role="button"]',
+        '[role="menuitem"]',
+        '[tabindex]'
+    ].join(',');
     var MONTHS = {
         Jan: 0,
         Feb: 1,
@@ -114,12 +127,11 @@
     }
 
     function readBoxVisible() {
-        return window.localStorage.getItem(VISIBLE_KEY) === '1';
+        return false;
     }
 
     function setBoxVisible(visible) {
         boxVisible = !!visible;
-        window.localStorage.setItem(VISIBLE_KEY, boxVisible ? '1' : '0');
     }
 
     function getElementText(el) {
@@ -206,7 +218,7 @@
         var style = document.createElement('style');
         style.id = STYLE_ID;
         style.textContent =
-            '.' + OVERLAY_CLASS + '{position:fixed;box-sizing:border-box;border-radius:4px;z-index:0;' +
+            '.' + OVERLAY_CLASS + '{position:fixed;box-sizing:border-box;border-radius:4px;z-index:auto;' +
             'pointer-events:none;touch-action:none;user-select:none;mix-blend-mode:normal;}' +
             '.' + HANDLE_CLASS + '{position:absolute;top:-2px;bottom:-2px;width:12px;z-index:1;pointer-events:none;}' +
             '.' + HANDLE_CLASS + '[data-side="left"]{left:-6px;cursor:ew-resize;}' +
@@ -399,8 +411,11 @@
         var start;
         var end;
 
-        if (storedRange) {
+        if (storedRange && isRangeVisible(markers, storedRange)) {
             return storedRange;
+        }
+        if (storedRange) {
+            clearStoredRange();
         }
 
         if (!startText && !endText) {
@@ -420,6 +435,11 @@
             start: start,
             end: end
         };
+    }
+
+    function isRangeVisible(markers, range) {
+        return getPositionForTime(markers, range.start) !== null &&
+            getPositionForTime(markers, range.end) !== null;
     }
 
     function getPositionForTime(markers, targetTime) {
@@ -639,11 +659,8 @@
         overlay.style.background = getBoxBackground();
         overlay.style.border = getBoxBorder();
 
-        overlay.appendChild(createHandle('left'));
-        overlay.appendChild(createHandle('right'));
-
         positionOverlay(overlay, content, left, width);
-        document.body.appendChild(overlay);
+        document.body.insertBefore(overlay, document.body.firstChild);
 
         currentBox = {
             overlay: overlay,
@@ -666,6 +683,10 @@
             event.clientX <= rect.right &&
             event.clientY >= rect.top &&
             event.clientY <= rect.bottom;
+    }
+
+    function shouldPassThroughTarget(target) {
+        return !!(target && target.closest && target.closest(PASS_THROUGH_SELECTOR));
     }
 
     function getDragModeForPoint(event) {
@@ -735,7 +756,7 @@
             return;
         }
 
-        if (isPointInCurrentBox(event)) {
+        if (isPointInCurrentBox(event) && !shouldPassThroughTarget(event.target)) {
             setBoxVisible(false);
             event.preventDefault();
             event.stopPropagation();
@@ -753,7 +774,7 @@
     }
 
     function onDocumentPointerDown(event) {
-        if (!isEnabled() || !boxVisible || !isPointInCurrentBox(event)) {
+        if (!isEnabled() || !boxVisible || !isPointInCurrentBox(event) || shouldPassThroughTarget(event.target)) {
             return;
         }
 
@@ -840,7 +861,7 @@
         return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
     }
 
-    boxVisible = readBoxVisible();
+    boxVisible = false;
     scheduleUpdate();
 
     observer = new MutationObserver(function(mutations) {
