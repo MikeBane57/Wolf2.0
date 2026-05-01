@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Timeline transparent box
 // @namespace    Wolf 2.0
-// @version      0.1.0
-// @description  Draw a configurable transparent time-range box on the Ops Suite timeline
+// @version      0.2.0
+// @description  Draw and adjust a transparent time-range box on the Ops Suite timeline
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"timelineBoxEnabled":{"type":"boolean","group":"Timeline box","label":"Show timeline box","default":true},"timelineBoxStart":{"type":"string","group":"Timeline box","label":"Start","description":"Accepted examples: May 1 09:00, May 1 2026 09:00, 2026-05-01 09:00, or 09:00 for the first visible timeline date.","default":"","placeholder":"May 1 09:00"},"timelineBoxEnd":{"type":"string","group":"Timeline box","label":"End","description":"Same format as Start. If Start/End are blank, the script highlights the current hour when visible.","default":"","placeholder":"May 1 12:00"},"timelineBoxTop":{"type":"number","group":"Timeline box","label":"Top offset (px)","description":"Vertical offset inside the wide timeline strip.","default":0,"min":-2000,"max":2000,"step":1},"timelineBoxHeight":{"type":"number","group":"Timeline box","label":"Height (px)","default":44,"min":1,"max":2000,"step":1},"timelineBoxFill":{"type":"string","group":"Timeline box","label":"Fill color","description":"CSS color; rgba() keeps the box transparent.","default":"rgba(255, 255, 255, 0.16)","placeholder":"rgba(255, 255, 255, 0.16)"},"timelineBoxBorder":{"type":"string","group":"Timeline box","label":"Border","description":"CSS border value.","default":"2px solid rgba(255, 255, 255, 0.75)","placeholder":"2px solid rgba(255, 255, 255, 0.75)"}}
+// @donkeycode-pref {"timelineBoxEnabled":{"type":"boolean","group":"Timeline box","label":"Show timeline box","default":true},"timelineBoxStart":{"type":"string","group":"Timeline box","label":"Start","description":"Accepted examples: May 1 09:00, May 1 2026 09:00, 2026-05-01 09:00, or 09:00 for the first visible timeline date.","default":"","placeholder":"May 1 09:00"},"timelineBoxEnd":{"type":"string","group":"Timeline box","label":"End","description":"Same format as Start. If Start/End are blank, the script highlights the current hour when visible. Dragging/resizing the box saves an adjusted range in this browser.","default":"","placeholder":"May 1 12:00"},"timelineBoxTop":{"type":"number","group":"Timeline box","label":"Top offset (px)","description":"Vertical offset from the top of the timeline before the box extends to the bottom of the browser window.","default":0,"min":-2000,"max":2000,"step":1},"timelineBoxHeight":{"type":"number","group":"Timeline box","label":"Minimum height (px)","description":"The box normally extends to the bottom of the browser window; this is only a minimum height.","default":44,"min":1,"max":2000,"step":1},"timelineBoxFill":{"type":"string","group":"Timeline box","label":"Fill color","description":"CSS color; rgba() keeps the box transparent.","default":"rgba(255, 255, 255, 0.16)","placeholder":"rgba(255, 255, 255, 0.16)"},"timelineBoxBorder":{"type":"string","group":"Timeline box","label":"Border","description":"CSS border value.","default":"2px solid rgba(255, 255, 255, 0.75)","placeholder":"2px solid rgba(255, 255, 255, 0.75)"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Timeline%20transparent%20box.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Timeline%20transparent%20box.user.js
 // ==/UserScript==
@@ -14,7 +14,9 @@
     'use strict';
 
     var OVERLAY_CLASS = 'dc-timeline-transparent-box';
-    var HOST_DATA_ATTR = 'dcTimelineBoxPosition';
+    var HANDLE_CLASS = 'dc-timeline-transparent-box-handle';
+    var STYLE_ID = 'dc-timeline-transparent-box-style';
+    var STORAGE_KEY = 'dc.timelineTransparentBox.range';
     var MONTHS = {
         Jan: 0,
         Feb: 1,
@@ -32,6 +34,8 @@
 
     var observer = null;
     var rafId = 0;
+    var dragState = null;
+    var scrollParents = [];
 
     function getPref(key, defaultValue) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -115,7 +119,6 @@
         }
 
         return {
-            monthName: m[1],
             month: MONTHS[m[1]],
             day: day
         };
@@ -137,6 +140,24 @@
         }
 
         return col.offsetWidth || 75;
+    }
+
+    function injectStyle() {
+        if (document.getElementById(STYLE_ID)) {
+            return;
+        }
+
+        var style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent =
+            '.' + OVERLAY_CLASS + '{position:fixed;box-sizing:border-box;border-radius:4px;z-index:2147483646;' +
+            'cursor:move;touch-action:none;user-select:none;mix-blend-mode:normal;}' +
+            '.' + HANDLE_CLASS + '{position:absolute;top:-2px;bottom:-2px;width:12px;z-index:1;touch-action:none;}' +
+            '.' + HANDLE_CLASS + '[data-side="left"]{left:-6px;cursor:ew-resize;}' +
+            '.' + HANDLE_CLASS + '[data-side="right"]{right:-6px;cursor:ew-resize;}' +
+            '.' + OVERLAY_CLASS + '::after{content:"";position:absolute;inset:0;pointer-events:none;' +
+            'box-shadow:inset 0 0 0 1px rgba(0,0,0,.25);}';
+        document.head.appendChild(style);
     }
 
     function findTimelineContents(root) {
@@ -275,7 +296,36 @@
         return fallbackYear;
     }
 
-    function getDefaultRange(markers) {
+    function readStoredRange() {
+        var parsed;
+        try {
+            parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || 'null');
+        } catch (e) {
+            return null;
+        }
+
+        if (!parsed || !Number.isFinite(parsed.start) || !Number.isFinite(parsed.end) || parsed.end <= parsed.start) {
+            return null;
+        }
+
+        return {
+            start: parsed.start,
+            end: parsed.end
+        };
+    }
+
+    function saveStoredRange(start, end) {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            start: Math.round(start),
+            end: Math.round(end)
+        }));
+    }
+
+    function clearStoredRange() {
+        window.localStorage.removeItem(STORAGE_KEY);
+    }
+
+    function getDefaultRange() {
         var now = new Date();
         now.setMinutes(0, 0, 0);
 
@@ -286,14 +336,19 @@
     }
 
     function getTimeRange(markers) {
+        var storedRange = readStoredRange();
         var startText = getStringPref('timelineBoxStart', '');
         var endText = getStringPref('timelineBoxEnd', '');
         var range;
         var start;
         var end;
 
+        if (storedRange) {
+            return storedRange;
+        }
+
         if (!startText && !endText) {
-            range = getDefaultRange(markers);
+            range = getDefaultRange();
             start = range.start;
             end = range.end;
         } else {
@@ -342,12 +397,41 @@
         return null;
     }
 
-    function ensureHostPosition(content) {
-        var position = window.getComputedStyle(content).position;
-        if (position === 'static') {
-            content.dataset[HOST_DATA_ATTR] = 'static';
-            content.style.position = 'relative';
+    function getTimeForPosition(markers, targetX) {
+        var last;
+
+        if (!markers.length) {
+            return null;
         }
+
+        for (var i = 0; i < markers.length - 1; i++) {
+            var a = markers[i];
+            var b = markers[i + 1];
+
+            if (targetX >= a.x && targetX <= b.x) {
+                var spanX = b.x - a.x;
+                var spanTime = b.time - a.time;
+                if (spanX <= 0 || spanTime <= 0) {
+                    return a.time;
+                }
+                return a.time + spanTime * ((targetX - a.x) / spanX);
+            }
+        }
+
+        last = markers[markers.length - 1];
+        if (targetX >= last.x && targetX <= last.x + last.width) {
+            return last.time + 60 * 60 * 1000 * ((targetX - last.x) / last.width);
+        }
+
+        return null;
+    }
+
+    function getTimelineBounds(markers) {
+        var last = markers[markers.length - 1];
+        return {
+            minX: markers[0].x,
+            maxX: last.x + last.width
+        };
     }
 
     function removeOverlays(root) {
@@ -357,9 +441,120 @@
         }
     }
 
-    function drawBox(content) {
-        removeOverlays(content);
+    function positionOverlay(overlay, content, left, width) {
+        var contentRect = content.getBoundingClientRect();
+        var top = contentRect.top + getNumberPref('timelineBoxTop', 0);
+        var minHeight = Math.max(1, getNumberPref('timelineBoxHeight', 44));
+        var height = Math.max(minHeight, window.innerHeight - top);
 
+        overlay.style.left = Math.round(contentRect.left + left) + 'px';
+        overlay.style.top = Math.round(top) + 'px';
+        overlay.style.width = Math.max(1, Math.round(width)) + 'px';
+        overlay.style.height = Math.max(1, Math.round(height)) + 'px';
+    }
+
+    function createHandle(side) {
+        var handle = document.createElement('div');
+        handle.className = HANDLE_CLASS;
+        handle.setAttribute('data-side', side);
+        return handle;
+    }
+
+    function beginDrag(event, overlay, content, markers, left, width) {
+        var handle = event.target.closest ? event.target.closest('.' + HANDLE_CLASS) : null;
+        var bounds = getTimelineBounds(markers);
+
+        if (event.button !== 0 || !bounds) {
+            return;
+        }
+
+        dragState = {
+            mode: handle ? handle.getAttribute('data-side') : 'move',
+            overlay: overlay,
+            content: content,
+            markers: markers,
+            startClientX: event.clientX,
+            startLeft: left,
+            startWidth: width,
+            minX: bounds.minX,
+            maxX: bounds.maxX
+        };
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (overlay.setPointerCapture) {
+            overlay.setPointerCapture(event.pointerId);
+        }
+
+        window.addEventListener('pointermove', onPointerMove, true);
+        window.addEventListener('pointerup', endDrag, true);
+        window.addEventListener('pointercancel', endDrag, true);
+    }
+
+    function getAdjustedDragRect(event) {
+        var dx = event.clientX - dragState.startClientX;
+        var left = dragState.startLeft;
+        var width = dragState.startWidth;
+        var minWidth = 6;
+
+        if (dragState.mode === 'left') {
+            left = clamp(dragState.startLeft + dx, dragState.minX, dragState.startLeft + dragState.startWidth - minWidth);
+            width = dragState.startWidth + (dragState.startLeft - left);
+        } else if (dragState.mode === 'right') {
+            width = clamp(dragState.startWidth + dx, minWidth, dragState.maxX - dragState.startLeft);
+        } else {
+            left = clamp(dragState.startLeft + dx, dragState.minX, dragState.maxX - dragState.startWidth);
+        }
+
+        return {
+            left: left,
+            width: width
+        };
+    }
+
+    function onPointerMove(event) {
+        var rect;
+
+        if (!dragState) {
+            return;
+        }
+
+        rect = getAdjustedDragRect(event);
+        positionOverlay(dragState.overlay, dragState.content, rect.left, rect.width);
+
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    function endDrag(event) {
+        var rect;
+        var startTime;
+        var endTime;
+
+        if (!dragState) {
+            return;
+        }
+
+        rect = getAdjustedDragRect(event);
+        startTime = getTimeForPosition(dragState.markers, rect.left);
+        endTime = getTimeForPosition(dragState.markers, rect.left + rect.width);
+
+        if (startTime !== null && endTime !== null && endTime > startTime) {
+            saveStoredRange(startTime, endTime);
+        }
+
+        dragState = null;
+        window.removeEventListener('pointermove', onPointerMove, true);
+        window.removeEventListener('pointerup', endDrag, true);
+        window.removeEventListener('pointercancel', endDrag, true);
+        scheduleUpdate();
+
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    function drawBox(content) {
         if (!isEnabled()) {
             return;
         }
@@ -372,7 +567,7 @@
         var left;
         var width;
 
-        if (!range) {
+        if (!markers.length || !range) {
             return;
         }
 
@@ -386,30 +581,63 @@
         left = Math.round(startX);
         width = Math.max(1, Math.round(endX - startX));
 
-        ensureHostPosition(content);
-
         overlay = document.createElement('div');
         overlay.className = OVERLAY_CLASS;
-        overlay.setAttribute('aria-hidden', 'true');
-        overlay.style.position = 'absolute';
-        overlay.style.left = left + 'px';
-        overlay.style.top = getNumberPref('timelineBoxTop', 0) + 'px';
-        overlay.style.width = width + 'px';
-        overlay.style.height = Math.max(1, getNumberPref('timelineBoxHeight', 44)) + 'px';
-        overlay.style.boxSizing = 'border-box';
+        overlay.setAttribute('title', 'Drag to move. Drag left/right edge to resize. Double-click to reset saved range.');
         overlay.style.background = getStringPref('timelineBoxFill', 'rgba(255, 255, 255, 0.16)');
         overlay.style.border = getStringPref('timelineBoxBorder', '2px solid rgba(255, 255, 255, 0.75)');
-        overlay.style.borderRadius = '4px';
-        overlay.style.pointerEvents = 'none';
-        overlay.style.zIndex = '9999';
-        overlay.style.mixBlendMode = 'normal';
 
-        content.appendChild(overlay);
+        overlay.appendChild(createHandle('left'));
+        overlay.appendChild(createHandle('right'));
+        overlay.addEventListener('pointerdown', function(event) {
+            beginDrag(event, overlay, content, markers, left, width);
+        });
+        overlay.addEventListener('dblclick', function(event) {
+            clearStoredRange();
+            event.preventDefault();
+            event.stopPropagation();
+            scheduleUpdate();
+        });
+
+        positionOverlay(overlay, content, left, width);
+        document.body.appendChild(overlay);
+    }
+
+    function updateScrollParents(contents) {
+        var seen = [];
+
+        for (var i = 0; i < scrollParents.length; i++) {
+            scrollParents[i].removeEventListener('scroll', scheduleUpdate, true);
+        }
+        scrollParents = [];
+
+        for (var j = 0; j < contents.length; j++) {
+            var node = contents[j].parentElement;
+            while (node && node !== document.body) {
+                var style = window.getComputedStyle(node);
+                if (/(auto|scroll|hidden)/.test(style.overflow + style.overflowX + style.overflowY) && seen.indexOf(node) === -1) {
+                    seen.push(node);
+                    node.addEventListener('scroll', scheduleUpdate, true);
+                    scrollParents.push(node);
+                }
+                node = node.parentElement;
+            }
+        }
     }
 
     function updateAll() {
         rafId = 0;
+
+        if (dragState) {
+            return;
+        }
+
+        injectStyle();
+        removeOverlays(document);
+
         var contents = findTimelineContents(document);
+        updateScrollParents(contents);
+
         for (var i = 0; i < contents.length; i++) {
             drawBox(contents[i]);
         }
@@ -445,19 +673,6 @@
         return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
     }
 
-    function cleanupHostPositions() {
-        var hosts = document.querySelectorAll('[data-' + HOST_DATA_ATTR.replace(/[A-Z]/g, function(ch) {
-            return '-' + ch.toLowerCase();
-        }) + ']');
-
-        for (var i = 0; i < hosts.length; i++) {
-            if (hosts[i].dataset[HOST_DATA_ATTR] === 'static') {
-                hosts[i].style.position = '';
-            }
-            delete hosts[i].dataset[HOST_DATA_ATTR];
-        }
-    }
-
     scheduleUpdate();
 
     observer = new MutationObserver(function(mutations) {
@@ -478,6 +693,7 @@
     });
 
     window.addEventListener('resize', scheduleUpdate);
+    window.addEventListener('scroll', scheduleUpdate, true);
 
     window.__myScriptCleanup = function() {
         if (observer) {
@@ -487,8 +703,22 @@
             window.cancelAnimationFrame(rafId);
             rafId = 0;
         }
+        if (dragState) {
+            window.removeEventListener('pointermove', onPointerMove, true);
+            window.removeEventListener('pointerup', endDrag, true);
+            window.removeEventListener('pointercancel', endDrag, true);
+            dragState = null;
+        }
+        for (var i = 0; i < scrollParents.length; i++) {
+            scrollParents[i].removeEventListener('scroll', scheduleUpdate, true);
+        }
+        scrollParents = [];
         window.removeEventListener('resize', scheduleUpdate);
+        window.removeEventListener('scroll', scheduleUpdate, true);
         removeOverlays(document);
-        cleanupHostPositions();
+        var style = document.getElementById(STYLE_ID);
+        if (style) {
+            style.remove();
+        }
     };
 })();
