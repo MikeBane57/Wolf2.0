@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Timeline transparent box
 // @namespace    Wolf 2.0
-// @version      0.4.0
+// @version      0.5.0
 // @description  Double-click the Ops Suite timeline to draw and adjust a transparent time-range box
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"timelineBoxEnabled":{"type":"boolean","group":"Timeline box","label":"Enable timeline box","description":"When enabled, double-click the timeline to show the box and double-click the box to dismiss it.","default":true},"timelineBoxStart":{"type":"string","group":"Timeline box","label":"Start","description":"Accepted examples: May 1 09:00, May 1 2026 09:00, 2026-05-01 09:00, or 09:00 for the first visible timeline date.","default":"","placeholder":"May 1 09:00"},"timelineBoxEnd":{"type":"string","group":"Timeline box","label":"End","description":"Same format as Start. Dragging/resizing the box saves an adjusted range in this browser.","default":"","placeholder":"May 1 12:00"},"timelineBoxTop":{"type":"number","group":"Timeline box","label":"Top offset (px)","description":"Vertical offset from the top of the timeline before the box extends to the bottom of the browser window.","default":0,"min":-2000,"max":2000,"step":1},"timelineBoxHeight":{"type":"number","group":"Timeline box","label":"Minimum height (px)","description":"The box normally extends to the bottom of the browser window; this is only a minimum height.","default":44,"min":1,"max":2000,"step":1},"timelineBoxFillColor":{"type":"color","group":"Timeline box","label":"Fill color","default":"#ffffff"},"timelineBoxFillOpacity":{"type":"number","group":"Timeline box","label":"Fill opacity","description":"0 = invisible, 1 = solid.","default":0.16,"min":0,"max":1,"step":0.01},"timelineBoxBorderColor":{"type":"color","group":"Timeline box","label":"Border color","default":"#ffffff"},"timelineBoxBorderOpacity":{"type":"number","group":"Timeline box","label":"Border opacity","description":"0 = invisible, 1 = solid.","default":0.75,"min":0,"max":1,"step":0.01},"timelineBoxBorderWidth":{"type":"number","group":"Timeline box","label":"Border width (px)","default":2,"min":0,"max":20,"step":1}}
+// @donkeycode-pref {"timelineBoxEnabled":{"type":"boolean","group":"Timeline box","label":"Enable timeline box","description":"When enabled, double-click the timeline to show the box and double-click the box to dismiss it.","default":true},"timelineBoxStart":{"type":"string","group":"Timeline box","label":"Start","description":"Accepted examples: May 1 09:00, May 1 2026 09:00, 2026-05-01 09:00, or 09:00 for the first visible timeline date.","default":"","placeholder":"May 1 09:00"},"timelineBoxEnd":{"type":"string","group":"Timeline box","label":"End","description":"Same format as Start. Dragging/resizing the box saves an adjusted range in this browser.","default":"","placeholder":"May 1 12:00"},"timelineBoxTop":{"type":"number","group":"Timeline box","label":"Top offset (px)","description":"Vertical offset from the top of the timeline before the box extends to the bottom of the browser window.","default":0,"min":-2000,"max":2000,"step":1},"timelineBoxHeight":{"type":"number","group":"Timeline box","label":"Minimum height (px)","description":"The box normally extends to the bottom of the browser window; this is only a minimum height.","default":44,"min":1,"max":2000,"step":1},"timelineBoxLayer":{"type":"number","group":"Timeline box","label":"Layer / z-index","description":"Raise or lower the box in the page stack. Try 0, 10, 100, 1000, or 10000 to find the best balance between visibility and page elements staying on top.","default":0,"min":-10,"max":2147483647,"step":1},"timelineBoxFillColor":{"type":"color","group":"Timeline box","label":"Fill color","description":"Use the browser color picker; no CSS or RGBA code needed.","default":"#ffffff"},"timelineBoxFillOpacity":{"type":"number","group":"Timeline box","label":"Fill opacity","description":"0 = invisible, 1 = solid.","default":0.16,"min":0,"max":1,"step":0.01},"timelineBoxBorderColor":{"type":"color","group":"Timeline box","label":"Border color","description":"Use the browser color picker; no CSS or RGBA code needed.","default":"#ffffff"},"timelineBoxBorderOpacity":{"type":"number","group":"Timeline box","label":"Border opacity","description":"0 = invisible, 1 = solid.","default":0.75,"min":0,"max":1,"step":0.01},"timelineBoxBorderWidth":{"type":"number","group":"Timeline box","label":"Border width (px)","default":2,"min":0,"max":20,"step":1}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Timeline%20transparent%20box.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Timeline%20transparent%20box.user.js
 // ==/UserScript==
@@ -126,6 +126,10 @@
         );
     }
 
+    function getBoxLayer() {
+        return Math.round(clamp(getNumberPref('timelineBoxLayer', 0), -2147483648, 2147483647));
+    }
+
     function readBoxVisible() {
         return false;
     }
@@ -218,7 +222,7 @@
         var style = document.createElement('style');
         style.id = STYLE_ID;
         style.textContent =
-            '.' + OVERLAY_CLASS + '{position:fixed;box-sizing:border-box;border-radius:4px;z-index:auto;' +
+            '.' + OVERLAY_CLASS + '{position:fixed;box-sizing:border-box;border-radius:4px;' +
             'pointer-events:none;touch-action:none;user-select:none;mix-blend-mode:normal;}' +
             '.' + HANDLE_CLASS + '{position:absolute;top:-2px;bottom:-2px;width:12px;z-index:1;pointer-events:none;}' +
             '.' + HANDLE_CLASS + '[data-side="left"]{left:-6px;cursor:ew-resize;}' +
@@ -658,6 +662,7 @@
         overlay.setAttribute('aria-hidden', 'true');
         overlay.style.background = getBoxBackground();
         overlay.style.border = getBoxBorder();
+        overlay.style.zIndex = String(getBoxLayer());
 
         positionOverlay(overlay, content, left, width);
         document.body.insertBefore(overlay, document.body.firstChild);
