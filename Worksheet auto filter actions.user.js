@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.0
-// @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
+// @version      1.5.1
+// @description  Watch & interval toggles; Pick a button defaults. Multi-click interval lines (prefs): extra actions + auto-add rows.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
-// @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto filter actions","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto filter actions","label":"Interval (seconds)","description":"Default seconds for interval clicks when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1}}
+// @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto filter actions","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto filter actions","label":"Interval (seconds)","description":"Default seconds for interval clicks when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1},"worksheetAutoMultiClickEnabled":{"type":"boolean","group":"Auto filter actions · multi-click","label":"Allow multi click lines","description":"When ON, you can stack extra Replace/Append/Remove choices below the interval row. While enabled, a new row is added automatically every “Add line every” seconds (up to max lines). Each interval tick fires the primary action then each extra line in order.","default":false},"worksheetAutoMultiClickLineEverySec":{"type":"number","group":"Auto filter actions · multi-click","label":"Add line every (seconds)","description":"While multi-click is enabled, append another action dropdown this often until max lines is reached. Default 30.","default":30,"min":5,"max":3600,"step":1},"worksheetAutoMultiClickMaxLines":{"type":"number","group":"Auto filter actions · multi-click","label":"Max extra lines","description":"Cap on automatically added rows (you can delete rows in the panel). Default 6.","default":6,"min":1,"max":20,"step":1},"worksheetAutoMultiClickClickGapMs":{"type":"number","group":"Auto filter actions · multi-click","label":"Delay between clicks (ms)","description":"Pause between firing the primary interval click and each extra line (and between extras). Default 80.","default":80,"min":0,"max":2000,"step":20}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20auto%20filter%20actions.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20auto%20filter%20actions.user.js
 // ==/UserScript==
@@ -41,6 +41,7 @@
     var hostEl = null;
     var toggleInput = null;
     var opTimeTid = null;
+    var multiClickAddTimer = null;
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -98,6 +99,35 @@
         return Math.min(3600, Math.max(5, Math.floor(n)));
     }
 
+    function multiClickEnabledPref() {
+        var v = getPref('worksheetAutoMultiClickEnabled', false);
+        return v === true || v === 'true';
+    }
+
+    function multiClickLineEverySecPref() {
+        var n = Number(getPref('worksheetAutoMultiClickLineEverySec', 30));
+        if (!Number.isFinite(n)) {
+            return 30;
+        }
+        return Math.min(3600, Math.max(5, Math.floor(n)));
+    }
+
+    function multiClickMaxLinesPref() {
+        var n = Number(getPref('worksheetAutoMultiClickMaxLines', 6));
+        if (!Number.isFinite(n)) {
+            return 6;
+        }
+        return Math.min(20, Math.max(1, Math.floor(n)));
+    }
+
+    function multiClickGapMsPref() {
+        var n = Number(getPref('worksheetAutoMultiClickClickGapMs', 80));
+        if (!Number.isFinite(n)) {
+            return 80;
+        }
+        return Math.min(2000, Math.max(0, Math.floor(n)));
+    }
+
     function defaultTabState() {
         return {
             watchOn: false,
@@ -107,11 +137,10 @@
             actionInterval: '',
             metrics: { tails: true, lines: true, flights: true },
             collapsed: false,
-            opTimeAuto: false
+            opTimeAuto: false,
+            intervalExtraActions: []
         };
-    }
-
-    var LS_LEGACY_MIGRATED = 'dc_worksheet_auto_replace_legacy_to_tab_v1';
+    } = 'dc_worksheet_auto_replace_legacy_to_tab_v1';
 
     function hasLegacyLocalStorageKeys() {
         try {
@@ -283,6 +312,16 @@
             }
             o.collapsed = !!s.collapsed;
             o.opTimeAuto = !!s.opTimeAuto;
+            var extras = s.intervalExtraActions;
+            if (Array.isArray(extras)) {
+                o.intervalExtraActions = extras
+                    .map(function (x) {
+                        return x === 'append' || x === 'remove' ? x : 'replace';
+                    })
+                    .slice(0, multiClickMaxLinesPref());
+            } else {
+                o.intervalExtraActions = [];
+            }
             return o;
         }
         return defaultTabState();
@@ -370,10 +409,20 @@
         return readTabState().collapsed;
     }
 
-    function writeCollapsed(collapsed) {
+    function writeIntervalExtraActions(arr) {
+        var max = multiClickMaxLinesPref();
         var s = readTabState();
-        s.collapsed = !!collapsed;
+        var a = Array.isArray(arr) ? arr : [];
+        s.intervalExtraActions = a
+            .map(function (x) {
+                return x === 'append' || x === 'remove' ? x : 'replace';
+            })
+            .slice(0, max);
         writeTabState(s);
+    }
+
+    function readIntervalExtraActions() {
+        return readTabState().intervalExtraActions || [];
     }
 
     /**
@@ -692,6 +741,14 @@
         }
     }
 
+    function stopIntervalReplace() {
+        if (intervalTimer) {
+            clearInterval(intervalTimer);
+            intervalTimer = null;
+        }
+        setIntervalCountdownText('—');
+    }
+
     function intervalCountdownEl() {
         var h = document.getElementById(HOST_ID);
         return h ? h.querySelector('[data-dc-interval-countdown]') : null;
@@ -726,12 +783,165 @@
         return String(n) + 's';
     }
 
-    function stopIntervalReplace() {
-        if (intervalTimer) {
-            clearInterval(intervalTimer);
-            intervalTimer = null;
+    function stopMultiClickAddTimer() {
+        if (multiClickAddTimer) {
+            clearInterval(multiClickAddTimer);
+            multiClickAddTimer = null;
         }
-        setIntervalCountdownText('—');
+    }
+
+    function getMultiExtrasContainer(host) {
+        return host ? host.querySelector('[data-dc-war-multi-extras]') : null;
+    }
+
+    function readExtraActionsFromDom(host) {
+        var cnt = getMultiExtrasContainer(host);
+        if (!cnt) {
+            return [];
+        }
+        var sels = cnt.querySelectorAll('select[data-dc-action-interval-extra]');
+        var out = [];
+        var i;
+        for (i = 0; i < sels.length; i++) {
+            var v = sels[i].value;
+            out.push(v === 'append' || v === 'remove' ? v : 'replace');
+        }
+        return out;
+    }
+
+    function buildMultiClickRow(index, action) {
+        var row = document.createElement('div');
+        row.className = 'dc-war-row dc-war-multi-row';
+        row.setAttribute('data-dc-war-multi-row', '1');
+        row.setAttribute('data-dc-war-multi-idx', String(index));
+        var lab = document.createElement('span');
+        lab.className = 'dc-war-multi-label';
+        lab.textContent = 'Also click';
+        var sel = document.createElement('select');
+        sel.className = 'dc-war-sel';
+        sel.setAttribute('data-dc-action-interval-extra', '1');
+        sel.title = 'Extra toolbar action on each interval tick';
+        var opts = [
+            ['replace', 'Replace'],
+            ['append', 'Append'],
+            ['remove', 'Remove']
+        ];
+        var oi;
+        for (oi = 0; oi < opts.length; oi++) {
+            var opt = document.createElement('option');
+            opt.value = opts[oi][0];
+            opt.textContent = opts[oi][1];
+            sel.appendChild(opt);
+        }
+        sel.value = action === 'append' || action === 'remove' ? action : 'replace';
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'dc-war-multi-remove';
+        btn.setAttribute('data-dc-war-multi-remove', '1');
+        btn.title = 'Remove this line';
+        btn.textContent = '\u00d7';
+        row.appendChild(lab);
+        row.appendChild(sel);
+        row.appendChild(btn);
+        return row;
+    }
+
+    function syncMultiClickRows(host) {
+        if (!host) {
+            return;
+        }
+        var block = host.querySelector('[data-dc-war-multi-block]');
+        var cnt = getMultiExtrasContainer(host);
+        if (!block || !cnt) {
+            return;
+        }
+        if (!multiClickEnabledPref()) {
+            stopMultiClickAddTimer();
+            cnt.innerHTML = '';
+            block.style.display = 'none';
+            return;
+        }
+        block.style.display = '';
+        var max = multiClickMaxLinesPref();
+        var extras = readIntervalExtraActions();
+        if (extras.length > max) {
+            writeIntervalExtraActions(extras.slice(0, max));
+            extras = readIntervalExtraActions();
+        }
+        cnt.innerHTML = '';
+        var i;
+        for (i = 0; i < extras.length; i++) {
+            cnt.appendChild(buildMultiClickRow(i, extras[i]));
+        }
+        if (cnt.getAttribute('data-dc-multi-delegation') !== '1') {
+            cnt.setAttribute('data-dc-multi-delegation', '1');
+            cnt.addEventListener('change', function (ev) {
+                var t = ev.target;
+                if (t && t.matches && t.matches('select[data-dc-action-interval-extra]')) {
+                    var h = document.getElementById(HOST_ID);
+                    writeIntervalExtraActions(readExtraActionsFromDom(h));
+                }
+            });
+            cnt.addEventListener('click', function (ev) {
+                var t = ev.target;
+                if (!t || !t.closest) {
+                    return;
+                }
+                var rm = t.closest('[data-dc-war-multi-remove]');
+                if (!rm) {
+                    return;
+                }
+                var row = rm.closest('[data-dc-war-multi-row]');
+                var ix = row ? parseInt(row.getAttribute('data-dc-war-multi-idx') || '-1', 10) : -1;
+                var arr = readIntervalExtraActions();
+                if (ix >= 0 && ix < arr.length) {
+                    arr.splice(ix, 1);
+                    writeIntervalExtraActions(arr);
+                    syncMultiClickRows(document.getElementById(HOST_ID));
+                }
+            });
+        }
+        ensureMultiClickAddTimer();
+    }
+
+    function tryAppendMultiClickLine() {
+        var host = document.getElementById(HOST_ID);
+        if (!host || !multiClickEnabledPref()) {
+            stopMultiClickAddTimer();
+            return;
+        }
+        var max = multiClickMaxLinesPref();
+        var arr = readIntervalExtraActions();
+        if (arr.length >= max) {
+            return;
+        }
+        arr.push('replace');
+        writeIntervalExtraActions(arr);
+        syncMultiClickRows(host);
+    }
+
+    function ensureMultiClickAddTimer() {
+        stopMultiClickAddTimer();
+        if (!multiClickEnabledPref()) {
+            return;
+        }
+        var sec = multiClickLineEverySecPref();
+        multiClickAddTimer = setInterval(tryAppendMultiClickLine, Math.max(5000, sec * 1000));
+    }
+
+    function runChainedIntervalClicks(actions, idx) {
+        if (!actions || !actions.length || idx >= actions.length) {
+            return;
+        }
+        var act = actions[idx];
+        clickToolbarAction(act, idx === 0 ? 'interval' : 'interval+' + idx);
+        if (idx + 1 >= actions.length) {
+            return;
+        }
+        var gap = multiClickGapMsPref();
+        setTimeout(function () {
+            runChainedIntervalClicks(actions, idx + 1);
+        }, gap);
     }
 
     /**
@@ -750,7 +960,22 @@
             }
             if (remaining <= 0) {
                 var ia = readActionInterval();
-                if (ia) {
+                var extras = readIntervalExtraActions();
+                var useMulti =
+                    multiClickEnabledPref() && extras && extras.length > 0;
+                if (useMulti) {
+                    var chain = [];
+                    if (ia) {
+                        chain.push(ia);
+                    }
+                    var ei;
+                    for (ei = 0; ei < extras.length; ei++) {
+                        chain.push(extras[ei]);
+                    }
+                    if (chain.length) {
+                        runChainedIntervalClicks(chain, 0);
+                    }
+                } else if (ia) {
                     clickToolbarAction(ia, 'interval');
                 }
                 remaining = intervalSecEffective();
@@ -832,6 +1057,15 @@
             '#' +
             HOST_ID +
             ' .dc-war-num{width:44px;padding:2px;border-radius:4px;border:1px solid #555;background:#1a1f28;color:#e8eef5;font-size:11px;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-multi-label{opacity:.85;font-size:11px;}' +
+            '#' +
+            HOST_ID +
+            ' button.dc-war-multi-remove{padding:0 6px;min-width:22px;border-radius:4px;border:1px solid #555;background:#2a3140;color:#e8eef5;font-size:14px;line-height:1;cursor:pointer;}' +
+            '#' +
+            HOST_ID +
+            ' button.dc-war-multi-remove:hover{background:#3d4a5c;}' +
             '#' +
             HOST_ID +
             '[data-dc-war-placed="0"]{visibility:hidden!important;opacity:0!important;pointer-events:none!important;}' +
@@ -1123,6 +1357,11 @@
         '</div>' +
         '<span class="dc-war-countdown" data-dc-interval-countdown>—</span>' +
         '</div>' +
+        '<div class="dc-war-multi-block" data-dc-war-multi-block style="display:none">' +
+        '<div class="dc-war-row" style="font-size:10px;color:#95a5a6;line-height:1.35;">' +
+        'Multi-click (DonkeyCODE prefs): rows auto-add every “Add line every” sec until max. All fire each interval tick.</div>' +
+        '<div data-dc-war-multi-extras></div>' +
+        '</div>' +
         '</div>' +
         '</details>';
 
@@ -1192,6 +1431,7 @@
             if (detR) {
                 detR.open = !readCollapsed();
             }
+            syncMultiClickRows(wrap);
             return;
         }
         wrap.setAttribute('data-dc-war-bound', '1');
@@ -1288,6 +1528,7 @@
                 writeCollapsed(!det.open);
             });
         }
+        syncMultiClickRows(wrap);
     }
 
     function startRelocateRetries() {
@@ -1321,6 +1562,7 @@
                 existing.removeAttribute('data-dc-war-bound');
             }
             bindHostControls(existing);
+            syncMultiClickRows(existing);
             relocateHost();
             if (hostEl.getAttribute('data-dc-war-placed') !== '1') {
                 setHostPlaced(hostEl, findToolbarAnchor() !== null);
@@ -1349,6 +1591,7 @@
             document.body.appendChild(wrap);
         }
         bindHostControls(wrap);
+        syncMultiClickRows(wrap);
         if (readWatchOn()) {
             startPoll();
         }
@@ -1390,6 +1633,7 @@
         unmountOpTime();
         stopPoll();
         stopIntervalReplace();
+        stopMultiClickAddTimer();
         if (relocateRetryTimer) {
             clearInterval(relocateRetryTimer);
             relocateRetryTimer = null;
