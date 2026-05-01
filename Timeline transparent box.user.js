@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Timeline transparent box
 // @namespace    Wolf 2.0
-// @version      0.2.0
-// @description  Draw and adjust a transparent time-range box on the Ops Suite timeline
+// @version      0.3.0
+// @description  Double-click the Ops Suite timeline to draw and adjust a transparent time-range box
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
-// @donkeycode-pref {"timelineBoxEnabled":{"type":"boolean","group":"Timeline box","label":"Show timeline box","default":true},"timelineBoxStart":{"type":"string","group":"Timeline box","label":"Start","description":"Accepted examples: May 1 09:00, May 1 2026 09:00, 2026-05-01 09:00, or 09:00 for the first visible timeline date.","default":"","placeholder":"May 1 09:00"},"timelineBoxEnd":{"type":"string","group":"Timeline box","label":"End","description":"Same format as Start. If Start/End are blank, the script highlights the current hour when visible. Dragging/resizing the box saves an adjusted range in this browser.","default":"","placeholder":"May 1 12:00"},"timelineBoxTop":{"type":"number","group":"Timeline box","label":"Top offset (px)","description":"Vertical offset from the top of the timeline before the box extends to the bottom of the browser window.","default":0,"min":-2000,"max":2000,"step":1},"timelineBoxHeight":{"type":"number","group":"Timeline box","label":"Minimum height (px)","description":"The box normally extends to the bottom of the browser window; this is only a minimum height.","default":44,"min":1,"max":2000,"step":1},"timelineBoxFill":{"type":"string","group":"Timeline box","label":"Fill color","description":"CSS color; rgba() keeps the box transparent.","default":"rgba(255, 255, 255, 0.16)","placeholder":"rgba(255, 255, 255, 0.16)"},"timelineBoxBorder":{"type":"string","group":"Timeline box","label":"Border","description":"CSS border value.","default":"2px solid rgba(255, 255, 255, 0.75)","placeholder":"2px solid rgba(255, 255, 255, 0.75)"}}
+// @donkeycode-pref {"timelineBoxEnabled":{"type":"boolean","group":"Timeline box","label":"Enable timeline box","description":"When enabled, double-click the timeline to show the box and double-click the box to dismiss it.","default":true},"timelineBoxStart":{"type":"string","group":"Timeline box","label":"Start","description":"Accepted examples: May 1 09:00, May 1 2026 09:00, 2026-05-01 09:00, or 09:00 for the first visible timeline date.","default":"","placeholder":"May 1 09:00"},"timelineBoxEnd":{"type":"string","group":"Timeline box","label":"End","description":"Same format as Start. Dragging/resizing the box saves an adjusted range in this browser.","default":"","placeholder":"May 1 12:00"},"timelineBoxTop":{"type":"number","group":"Timeline box","label":"Top offset (px)","description":"Vertical offset from the top of the timeline before the box extends to the bottom of the browser window.","default":0,"min":-2000,"max":2000,"step":1},"timelineBoxHeight":{"type":"number","group":"Timeline box","label":"Minimum height (px)","description":"The box normally extends to the bottom of the browser window; this is only a minimum height.","default":44,"min":1,"max":2000,"step":1},"timelineBoxFillColor":{"type":"color","group":"Timeline box","label":"Fill color","default":"#ffffff"},"timelineBoxFillOpacity":{"type":"number","group":"Timeline box","label":"Fill opacity","description":"0 = invisible, 1 = solid.","default":0.16,"min":0,"max":1,"step":0.01},"timelineBoxBorderColor":{"type":"color","group":"Timeline box","label":"Border color","default":"#ffffff"},"timelineBoxBorderOpacity":{"type":"number","group":"Timeline box","label":"Border opacity","description":"0 = invisible, 1 = solid.","default":0.75,"min":0,"max":1,"step":0.01},"timelineBoxBorderWidth":{"type":"number","group":"Timeline box","label":"Border width (px)","default":2,"min":0,"max":20,"step":1}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Timeline%20transparent%20box.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Timeline%20transparent%20box.user.js
 // ==/UserScript==
@@ -17,6 +17,7 @@
     var HANDLE_CLASS = 'dc-timeline-transparent-box-handle';
     var STYLE_ID = 'dc-timeline-transparent-box-style';
     var STORAGE_KEY = 'dc.timelineTransparentBox.range';
+    var VISIBLE_KEY = 'dc.timelineTransparentBox.visible';
     var MONTHS = {
         Jan: 0,
         Feb: 1,
@@ -36,6 +37,8 @@
     var rafId = 0;
     var dragState = null;
     var scrollParents = [];
+    var boxVisible = false;
+    var currentBox = null;
 
     function getPref(key, defaultValue) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -58,12 +61,65 @@
         return Number.isFinite(n) ? n : defaultValue;
     }
 
+    function getOpacityPref(key, defaultValue) {
+        return clamp(getNumberPref(key, defaultValue), 0, 1);
+    }
+
     function isEnabled() {
         return getPref('timelineBoxEnabled', true) !== false;
     }
 
     function clamp(n, min, max) {
         return Math.min(max, Math.max(min, n));
+    }
+
+    function normalizeHexColor(value, fallback) {
+        var text = String(value || '').trim();
+        if (/^#[0-9a-f]{6}$/i.test(text)) {
+            return text;
+        }
+        if (/^#[0-9a-f]{3}$/i.test(text)) {
+            return '#' + text[1] + text[1] + text[2] + text[2] + text[3] + text[3];
+        }
+        return fallback;
+    }
+
+    function hexToRgb(hex) {
+        var normalized = normalizeHexColor(hex, '#ffffff').slice(1);
+        return {
+            r: parseInt(normalized.slice(0, 2), 16),
+            g: parseInt(normalized.slice(2, 4), 16),
+            b: parseInt(normalized.slice(4, 6), 16)
+        };
+    }
+
+    function rgbaFromHex(hex, opacity) {
+        var rgb = hexToRgb(hex);
+        return 'rgba(' + rgb.r + ', ' + rgb.g + ', ' + rgb.b + ', ' + opacity + ')';
+    }
+
+    function getBoxBackground() {
+        return rgbaFromHex(
+            normalizeHexColor(getStringPref('timelineBoxFillColor', '#ffffff'), '#ffffff'),
+            getOpacityPref('timelineBoxFillOpacity', 0.16)
+        );
+    }
+
+    function getBoxBorder() {
+        var width = Math.max(0, getNumberPref('timelineBoxBorderWidth', 2));
+        return width + 'px solid ' + rgbaFromHex(
+            normalizeHexColor(getStringPref('timelineBoxBorderColor', '#ffffff'), '#ffffff'),
+            getOpacityPref('timelineBoxBorderOpacity', 0.75)
+        );
+    }
+
+    function readBoxVisible() {
+        return window.localStorage.getItem(VISIBLE_KEY) === '1';
+    }
+
+    function setBoxVisible(visible) {
+        boxVisible = !!visible;
+        window.localStorage.setItem(VISIBLE_KEY, boxVisible ? '1' : '0');
     }
 
     function getElementText(el) {
@@ -150,9 +206,9 @@
         var style = document.createElement('style');
         style.id = STYLE_ID;
         style.textContent =
-            '.' + OVERLAY_CLASS + '{position:fixed;box-sizing:border-box;border-radius:4px;z-index:2147483646;' +
-            'cursor:move;touch-action:none;user-select:none;mix-blend-mode:normal;}' +
-            '.' + HANDLE_CLASS + '{position:absolute;top:-2px;bottom:-2px;width:12px;z-index:1;touch-action:none;}' +
+            '.' + OVERLAY_CLASS + '{position:fixed;box-sizing:border-box;border-radius:4px;z-index:0;' +
+            'pointer-events:none;touch-action:none;user-select:none;mix-blend-mode:normal;}' +
+            '.' + HANDLE_CLASS + '{position:absolute;top:-2px;bottom:-2px;width:12px;z-index:1;pointer-events:none;}' +
             '.' + HANDLE_CLASS + '[data-side="left"]{left:-6px;cursor:ew-resize;}' +
             '.' + HANDLE_CLASS + '[data-side="right"]{right:-6px;cursor:ew-resize;}' +
             '.' + OVERLAY_CLASS + '::after{content:"";position:absolute;inset:0;pointer-events:none;' +
@@ -439,6 +495,7 @@
         for (var i = 0; i < overlays.length; i++) {
             overlays[i].remove();
         }
+        currentBox = null;
     }
 
     function positionOverlay(overlay, content, left, width) {
@@ -460,8 +517,7 @@
         return handle;
     }
 
-    function beginDrag(event, overlay, content, markers, left, width) {
-        var handle = event.target.closest ? event.target.closest('.' + HANDLE_CLASS) : null;
+    function beginDrag(event, overlay, content, markers, left, width, mode) {
         var bounds = getTimelineBounds(markers);
 
         if (event.button !== 0 || !bounds) {
@@ -469,7 +525,7 @@
         }
 
         dragState = {
-            mode: handle ? handle.getAttribute('data-side') : 'move',
+            mode: mode || 'move',
             overlay: overlay,
             content: content,
             markers: markers,
@@ -482,10 +538,6 @@
 
         event.preventDefault();
         event.stopPropagation();
-
-        if (overlay.setPointerCapture) {
-            overlay.setPointerCapture(event.pointerId);
-        }
 
         window.addEventListener('pointermove', onPointerMove, true);
         window.addEventListener('pointerup', endDrag, true);
@@ -583,24 +635,137 @@
 
         overlay = document.createElement('div');
         overlay.className = OVERLAY_CLASS;
-        overlay.setAttribute('title', 'Drag to move. Drag left/right edge to resize. Double-click to reset saved range.');
-        overlay.style.background = getStringPref('timelineBoxFill', 'rgba(255, 255, 255, 0.16)');
-        overlay.style.border = getStringPref('timelineBoxBorder', '2px solid rgba(255, 255, 255, 0.75)');
+        overlay.setAttribute('aria-hidden', 'true');
+        overlay.style.background = getBoxBackground();
+        overlay.style.border = getBoxBorder();
 
         overlay.appendChild(createHandle('left'));
         overlay.appendChild(createHandle('right'));
-        overlay.addEventListener('pointerdown', function(event) {
-            beginDrag(event, overlay, content, markers, left, width);
-        });
-        overlay.addEventListener('dblclick', function(event) {
-            clearStoredRange();
-            event.preventDefault();
-            event.stopPropagation();
-            scheduleUpdate();
-        });
 
         positionOverlay(overlay, content, left, width);
         document.body.appendChild(overlay);
+
+        currentBox = {
+            overlay: overlay,
+            content: content,
+            markers: markers,
+            left: left,
+            width: width
+        };
+    }
+
+    function isPointInCurrentBox(event) {
+        var rect;
+
+        if (!currentBox || !currentBox.overlay) {
+            return false;
+        }
+
+        rect = currentBox.overlay.getBoundingClientRect();
+        return event.clientX >= rect.left &&
+            event.clientX <= rect.right &&
+            event.clientY >= rect.top &&
+            event.clientY <= rect.bottom;
+    }
+
+    function getDragModeForPoint(event) {
+        var rect = currentBox.overlay.getBoundingClientRect();
+        var edgeSlop = 12;
+
+        if (event.clientX <= rect.left + edgeSlop) {
+            return 'left';
+        }
+        if (event.clientX >= rect.right - edgeSlop) {
+            return 'right';
+        }
+        return 'move';
+    }
+
+    function isTimelineContent(content) {
+        var hourColumns = 0;
+        var children = content && content.children ? content.children : [];
+
+        for (var i = 0; i < children.length; i++) {
+            if (getHourTextFromColumn(children[i])) {
+                hourColumns++;
+                if (hourColumns >= 6) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    function findTimelineContentForEvent(event) {
+        var node = event.target && event.target.nodeType === 1 ? event.target : null;
+        var container;
+        var contents;
+        var rect;
+
+        if (node && node.closest) {
+            container = node.closest('[data-dragscroll]');
+            if (container && container.firstElementChild && isTimelineContent(container.firstElementChild)) {
+                return container.firstElementChild;
+            }
+        }
+
+        contents = findTimelineContents(document);
+        for (var i = 0; i < contents.length; i++) {
+            container = contents[i].parentElement;
+            if (!container) {
+                continue;
+            }
+            rect = container.getBoundingClientRect();
+            if (event.clientX >= rect.left &&
+                event.clientX <= rect.right &&
+                event.clientY >= rect.top &&
+                event.clientY <= rect.bottom) {
+                return contents[i];
+            }
+        }
+
+        return null;
+    }
+
+    function onDocumentDblClick(event) {
+        var content;
+
+        if (!isEnabled()) {
+            return;
+        }
+
+        if (isPointInCurrentBox(event)) {
+            setBoxVisible(false);
+            event.preventDefault();
+            event.stopPropagation();
+            scheduleUpdate();
+            return;
+        }
+
+        content = findTimelineContentForEvent(event);
+        if (content) {
+            setBoxVisible(true);
+            event.preventDefault();
+            event.stopPropagation();
+            scheduleUpdate();
+        }
+    }
+
+    function onDocumentPointerDown(event) {
+        if (!isEnabled() || !boxVisible || !isPointInCurrentBox(event)) {
+            return;
+        }
+
+        beginDrag(
+            event,
+            currentBox.overlay,
+            currentBox.content,
+            currentBox.markers,
+            currentBox.left,
+            currentBox.width,
+            getDragModeForPoint(event)
+        );
     }
 
     function updateScrollParents(contents) {
@@ -638,8 +803,10 @@
         var contents = findTimelineContents(document);
         updateScrollParents(contents);
 
-        for (var i = 0; i < contents.length; i++) {
-            drawBox(contents[i]);
+        if (boxVisible) {
+            for (var i = 0; i < contents.length; i++) {
+                drawBox(contents[i]);
+            }
         }
     }
 
@@ -673,6 +840,7 @@
         return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
     }
 
+    boxVisible = readBoxVisible();
     scheduleUpdate();
 
     observer = new MutationObserver(function(mutations) {
@@ -694,6 +862,8 @@
 
     window.addEventListener('resize', scheduleUpdate);
     window.addEventListener('scroll', scheduleUpdate, true);
+    document.addEventListener('dblclick', onDocumentDblClick, true);
+    document.addEventListener('pointerdown', onDocumentPointerDown, true);
 
     window.__myScriptCleanup = function() {
         if (observer) {
@@ -715,6 +885,8 @@
         scrollParents = [];
         window.removeEventListener('resize', scheduleUpdate);
         window.removeEventListener('scroll', scheduleUpdate, true);
+        document.removeEventListener('dblclick', onDocumentDblClick, true);
+        document.removeEventListener('pointerdown', onDocumentPointerDown, true);
         removeOverlays(document);
         var style = document.getElementById(STYLE_ID);
         if (style) {
