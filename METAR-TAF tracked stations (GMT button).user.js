@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         METAR/TAF tracked stations (GMT button)
 // @namespace    Wolf 2.0
-// @version      2.0.56
+// @version      2.0.57
 // @description  Run on worksheet widget only (no schedule/other Ops Suite tabs). Toolbar debug → inspector only.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
@@ -14,6 +14,7 @@
 // @connect      api.open-meteo.com
 // @connect      weather.cod.edu
 // @donkeycode-pref {"metarWatchToolbarClickDebug":{"type":"boolean","group":"METAR watch · debug","label":"Log worksheet toolbar clicks (extension inspector)","description":"When ON, helper-row click diagnostics go to the DonkeyCODE service worker (DONKEYCODE_PAGE_LOG), not the page console. Default OFF.","default":false}}
+// @donkeycode-pref {"metarWatchFetchDatisInBackground":{"type":"boolean","group":"METAR watch · panels","label":"Fetch D-ATIS during background refresh","description":"When off, D-ATIS loads only for the station open in the modal or when you click Refresh D-ATIS. Reduces atis.info traffic and avoids repeated missing-station lookups.","default":false}}
 // @donkeycode-pref {"metarWatchPollMinutes":{"type":"number","group":"METAR watch","label":"Poll every (minutes)","description":"How often to refresh METAR/TAF in the background.","default":5,"min":1,"max":120,"step":1},"metarWatchConcurrentStations":{"type":"number","group":"METAR watch","label":"Parallel station fetches","description":"How many airports to load at the same time (higher = faster refresh, more concurrent requests).","default":10,"min":1,"max":20,"step":1},"metarWatchNotify":{"type":"boolean","group":"METAR watch","label":"Browser notifications","description":"Notify when METAR/TAF changes for a tracked station since you last opened the modal.","default":true},"metarWatchNotifyRulesMode":{"type":"select","group":"METAR watch · notify rules","label":"Notify only when rules match","description":"Off: notify on any METAR/TAF change. Global: JSON rules apply to every station. Per IATA: global rules plus optional per-airport JSON overrides.","default":"off","options":[{"value":"off","label":"Off (any change)"},{"value":"global","label":"Global rules only"},{"value":"per_iata","label":"Global + per-IATA overrides"}]},"metarWatchNotifyRulesGlobal":{"type":"string","group":"METAR watch · notify rules","label":"Global rules (JSON, optional)","description":"Use the modal 'Alert rules' form instead. If you save the form, it overrides this string. Array of rules, OR empty. Example: [{\"metar\":{\"ceilingFtMax\":1000}},{\"taf\":{\"visibilitySmMax\":0.5}}].","default":""},"metarWatchNotifyRulesPerIata":{"type":"string","group":"METAR watch · notify rules","label":"Per-IATA rules (JSON, optional)","description":"Form overrides when saved. Example: {\"ATL\":[{\"metar\":{\"ceilingFtMax\":500}}]}.","default":""},"metarWatchDefaultStations":{"type":"string","group":"METAR watch","label":"Default stations (IATA)","description":"Comma-separated list used until you customize the list (same region as SW tooltip defaults).","default":"ATL,MDW,BWI,OAK,TPA,MCO,DAL,MKE,LAS,PHX,DEN,LAX,SAN,FLL,HOU"},"metarWatchShowRvr":{"type":"boolean","group":"METAR watch · panels","label":"Show FAA RVR","description":"Runway visual range. Turn off to hide the panel and stop FAA RVR requests.","default":true},"metarWatchFetchRvrInPoll":{"type":"boolean","group":"METAR watch · panels","label":"Fetch RVR during background poll","description":"When off (recommended if rvr.data.faa.gov blocks you), RVR loads only when the modal is open or you tap Refresh RVR.","default":false},"metarWatchShowDatis":{"type":"boolean","group":"METAR watch · panels","label":"Show Digital ATIS","description":"D-ATIS block (atis.info).","default":true},"metarWatchShowRadar":{"type":"boolean","group":"METAR watch · panels","label":"Show NWS radar loop","description":"Radar GIF from the nearest NWS site.","default":true},"metarWatchShowHrrr":{"type":"boolean","group":"METAR watch · panels","label":"Show hourly chart","description":"Temperature + PoP bars (source chosen below).","default":true},"metarWatchHrrrHourlySource":{"type":"select","group":"METAR watch · panels","label":"Hourly chart data source","description":"NOAA uses api.weather.gov grid hourly forecast at the airport. Open-Meteo uses a GFS blend (not pure HRRR).","default":"noaa","options":[{"value":"noaa","label":"NOAA (weather.gov hourly)"},{"value":"openmeteo","label":"Open-Meteo (GFS blend)"}]},"metarWatchShowAfd":{"type":"boolean","group":"METAR watch · panels","label":"Show Area Forecast Discussion","description":"AFD text from weather.gov for the airport WFO.","default":true},"metarWatchShowCodModelLoop":{"type":"boolean","group":"METAR watch · panels","label":"College of DuPage model loop","description":"Animated PNG loop from weather.cod.edu NEXLAB (public API). Default parms = RAP CONUS simulated reflectivity.","default":true},"metarWatchCodAutoSector":{"type":"boolean","group":"METAR watch · panels","label":"COD loop: auto region","description":"Pick nearest NEXLAB sector from airport lat/lon (HRRR). Turn off to use manual parms below.","default":true},"metarWatchCodLoopModel":{"type":"select","group":"METAR watch · panels","label":"COD loop model","description":"Used with auto region.","default":"HRRR","options":[{"value":"HRRR","label":"HRRR"},{"value":"RAP","label":"RAP"}]},"metarWatchCodModelParms":{"type":"string","group":"METAR watch · panels","label":"COD loop parms (manual)","description":"When auto region is off: full dash parms for get-files.php, e.g. current-HRRR-MW-prec-radar-1-0-100","default":"current-HRRR-MW-prec-radar-1-0-100"},"metarWatchCodLoopLoadTrigger":{"type":"select","group":"METAR watch · panels","label":"COD loop: when to load","description":"On station: fetch frames when you select an airport (no reload on 15s list refresh). Manual: only after you click Load (fastest modal).","default":"on_station","options":[{"value":"on_station","label":"When viewing a station"},{"value":"manual","label":"Manual (Load button)"}]},"metarWatchCodCachePollMinutes":{"type":"number","group":"METAR watch · panels","label":"COD cache: check new run (min)","description":"0 = only when you load the loop. Otherwise periodic JSON check; images re-download only when COD serves a new run.","default":3,"min":0,"max":60,"step":1},"metarWatchCodPrefetchSectors":{"type":"boolean","group":"METAR watch · panels","label":"COD: prefetch tracked sectors","description":"After each METAR poll, background-download COD frames once per NEXLAB sector covering your station list (same cache for all airports in that sector). Turn off to save bandwidth.","default":true},"metarWatchSharedPoll":{"type":"boolean","group":"METAR watch","label":"Sync alerts across tabs","description":"One tab leads background METAR/TAF polls; other tabs receive the same fetches and can share the leader’s alert/notification state. Reduces duplicate traffic. Best with the same station list.","default":true},"metarWatchTextHighlightSwStyle":{"type":"boolean","group":"METAR watch · text colors","label":"SW-style token colors in METAR/TAF","description":"In the detail panel, color tokens like the SW Airport tooltip (IFR red, MVFR orange, etc.). Optional notify-rule highlights still take priority.","default":true},"metarHighlightIFR":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight IFR (ceiling/vis)","default":true},"metarHighlightMVFR":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight MVFR","default":true},"metarHighlightCrosswind":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight crosswind","default":true},"metarHighlightLLWS":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight LLWS / WS","default":true},"metarHighlightIcing":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight icing","default":true},"metarHighlightTS":{"type":"boolean","group":"METAR watch · text colors","label":"·· Highlight thunderstorms","default":true},"metarWatchModalStateJson":{"type":"string","group":"METAR watch · saved from modal","label":"Alert modal bundle (auto)","description":"Written when you save Notification alert conditions. Syncs via DonkeyCODE session storage.","default":""}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/METAR-TAF%20tracked%20stations%20(GMT%20button).user.js
@@ -40,11 +41,14 @@
     var LS_NOTIFY_RULES_UI = 'dc-metar-watch-notify-rules-ui-v1';
     /** In-modal notify + timing (overrides DonkeyCODE defaults for this browser when set). */
     var LS_METAR_UI_SETTINGS = 'dc-metar-watch-ui-settings-v1';
+    var LS_DATIS_MISSING = 'dc-metar-watch-datis-missing-v1';
     /** One-time: apply bundled DonkeyCODE modal snapshot if local storage was empty. */
     var LS_METAR_MODAL_BUNDLE_APPLIED = 'dc-metar-modal-bundle-pref-v1';
     var METAR_MODAL_BUNDLE_VERSION = 1;
     var lastAppliedPollResultsTs = 0;
     var SHARED_METAR_TAF_TTL_MS = 8 * 60 * 1000;
+    var DATIS_MISSING_TTL_MS = 12 * 60 * 60 * 1000;
+    var datisMissingCache = null;
     var metarTafSharedChannel = null;
     var viewedSyncChannel = null;
     var onStorageMetarTaf = null;
@@ -144,6 +148,14 @@
             return ui.metarWatchSharedPoll;
         }
         return boolPref('metarWatchSharedPoll', true);
+    }
+
+    function metarFetchDatisInBackground() {
+        var ui = readMetarWatchUi();
+        if (ui && typeof ui.metarWatchFetchDatisInBackground === 'boolean') {
+            return ui.metarWatchFetchDatisInBackground;
+        }
+        return boolPref('metarWatchFetchDatisInBackground', false);
     }
 
     var DEFAULT_FRESH_MINUTES = 5;
@@ -1668,6 +1680,9 @@
             }
             if (ui.metarWatchSharedPoll != null) {
                 tryDonkeycodeSetScriptPref('metarWatchSharedPoll', !!ui.metarWatchSharedPoll);
+            }
+            if (ui.metarWatchFetchDatisInBackground != null) {
+                tryDonkeycodeSetScriptPref('metarWatchFetchDatisInBackground', !!ui.metarWatchFetchDatisInBackground);
             }
         }
         tryDonkeycodeRequestPreferenceSync();
@@ -3491,6 +3506,7 @@
     var alertMetarSettingsPoll = null;
     var alertMetarSettingsConc = null;
     var alertMetarSettingsShared = null;
+    var alertMetarSettingsDatisBackground = null;
     var alertMetarSettingsFresh = null;
     var alertMetarSettingsHiRules = null;
     var alertMetarSettingsSw = {};
@@ -4166,10 +4182,15 @@
 
     function fetchText(url, cb, opts) {
         var headers = opts && opts.headers ? opts.headers : null;
-        function finish(txt) {
-            cb(typeof txt === 'string' ? txt : '');
+        var disableFallback = opts && opts.disableFallback === true;
+        function finish(txt, meta) {
+            cb(typeof txt === 'string' ? txt : '', meta || null);
         }
         function fallback() {
+            if (disableFallback) {
+                finish('', { skippedFallback: true });
+                return;
+            }
             if (isTgftpNoaaUrl(url)) {
                 finish('');
                 return;
@@ -4184,13 +4205,12 @@
             }
             fetch(url, init)
                 .then(function (res) {
-                    return res.text();
-                })
-                .then(function (t) {
-                    finish(typeof t === 'string' ? t : '');
+                    return res.text().then(function (t) {
+                        finish(typeof t === 'string' ? t : '', { status: res.status, ok: !!res.ok });
+                    });
                 })
                 .catch(function () {
-                    finish('');
+                    finish('', { error: true });
                 });
         }
         if (typeof GM_xmlhttpRequest === 'function') {
@@ -4200,11 +4220,15 @@
                 onload: function (resp) {
                     var txt = xhrResponseText(resp);
                     if (txt && xhrStatusOk(resp)) {
-                        finish(txt);
+                        finish(txt, { status: resp.status, ok: true });
                         return;
                     }
                     if (isTgftpNoaaUrl(url)) {
-                        finish(typeof txt === 'string' ? txt : '');
+                        finish(typeof txt === 'string' ? txt : '', { status: resp.status, ok: xhrStatusOk(resp) });
+                        return;
+                    }
+                    if (disableFallback) {
+                        finish(typeof txt === 'string' ? txt : '', { status: resp.status, ok: xhrStatusOk(resp) });
                         return;
                     }
                     fallback();
@@ -4260,15 +4284,96 @@
     }
 
     /** Third-party D-ATIS JSON (ICAO), e.g. https://atis.info/api/KDEN */
-    function fetchDatisForIcao(icao, cb) {
-        fetchText('https://atis.info/api/' + encodeURIComponent(String(icao || '').toUpperCase()), function (txt) {
+    function readDatisMissingCache() {
+        var now = Date.now();
+        if (!datisMissingCache) {
+            try {
+                datisMissingCache = JSON.parse(localStorage.getItem(LS_DATIS_MISSING) || '{}') || {};
+            } catch (e) {
+                datisMissingCache = {};
+            }
+        }
+        var changed = false;
+        var k;
+        for (k in datisMissingCache) {
+            if (Object.prototype.hasOwnProperty.call(datisMissingCache, k) && now - Number(datisMissingCache[k] || 0) > DATIS_MISSING_TTL_MS) {
+                delete datisMissingCache[k];
+                changed = true;
+            }
+        }
+        if (changed) {
+            writeDatisMissingCache();
+        }
+        return datisMissingCache;
+    }
+
+    function writeDatisMissingCache() {
+        try {
+            localStorage.setItem(LS_DATIS_MISSING, JSON.stringify(datisMissingCache || {}));
+        } catch (e) {}
+    }
+
+    function datisMarkedMissing(icao) {
+        var key = String(icao || '').toUpperCase();
+        var cache = readDatisMissingCache();
+        return !!(key && cache[key] && Date.now() - Number(cache[key]) <= DATIS_MISSING_TTL_MS);
+    }
+
+    function markDatisMissing(icao, missing) {
+        var key = String(icao || '').toUpperCase();
+        if (!key) {
+            return;
+        }
+        var cache = readDatisMissingCache();
+        if (missing) {
+            cache[key] = Date.now();
+        } else if (cache[key]) {
+            delete cache[key];
+        } else {
+            return;
+        }
+        writeDatisMissingCache();
+    }
+
+    function shouldFetchDatisForIcao(icao, force) {
+        if (!showDatisPanel()) {
+            return false;
+        }
+        if (force) {
+            return true;
+        }
+        return !datisMarkedMissing(icao);
+    }
+
+    function shouldFetchDatisDuringEnrichment(icao, iata) {
+        if (!shouldFetchDatisForIcao(icao, false)) {
+            return false;
+        }
+        if (modal && modal.style.display === 'flex' && selectedIata === iata) {
+            return true;
+        }
+        return metarFetchDatisInBackground();
+    }
+
+    function fetchDatisForIcao(icao, cb, opts) {
+        var code = String(icao || '').toUpperCase();
+        var force = opts && opts.force === true;
+        if (!shouldFetchDatisForIcao(code, force)) {
+            cb(null);
+            return;
+        }
+        fetchText('https://atis.info/api/' + encodeURIComponent(code), function (txt, meta) {
             if (!txt || txt.charAt(0) !== '[') {
+                if (meta && Number(meta.status) === 404) {
+                    markDatisMissing(code, true);
+                }
                 cb(null);
                 return;
             }
             try {
                 var arr = JSON.parse(txt);
                 if (!Array.isArray(arr) || !arr.length) {
+                    markDatisMissing(code, true);
                     cb(null);
                     return;
                 }
@@ -4289,11 +4394,12 @@
                         });
                     }
                 }
+                markDatisMissing(code, !out.length);
                 cb(out.length ? out : null);
             } catch (e) {
                 cb(null);
             }
-        });
+        }, { disableFallback: true });
     }
 
     /** Open-Meteo GFS blend (optional; not official NWS grid). */
@@ -4455,7 +4561,7 @@
             if (selectedIata === iata) {
                 setStatusBar('D-ATIS updated · ' + stationListLabel(iata) + ' · ' + new Date().toLocaleTimeString());
             }
-        });
+        }, { force: true });
     }
 
     function patchDetailExtras(icao, iata) {
@@ -4488,12 +4594,12 @@
                     mergeDetailExtras(icao, iata, dArg, hrrr);
                 });
             }
-            if (showDatisPanel()) {
+            if (shouldFetchDatisDuringEnrichment(icao, iata)) {
                 fetchDatisForIcao(icao, function (datis) {
                     maybeHrrrAfterDatis(datis);
                 });
             } else {
-                maybeHrrrAfterDatis(null);
+                maybeHrrrAfterDatis(undefined);
             }
         });
     }
@@ -6418,6 +6524,9 @@
         if (alertMetarSettingsShared) {
             alertMetarSettingsShared.checked = metarSharedPollEnabled();
         }
+        if (alertMetarSettingsDatisBackground) {
+            alertMetarSettingsDatisBackground.checked = metarFetchDatisInBackground();
+        }
         if (alertMetarSettingsFresh) {
             alertMetarSettingsFresh.value = String(metarWatchAlertFreshMinutes());
         }
@@ -6459,6 +6568,9 @@
         }
         if (alertMetarSettingsShared) {
             o.metarWatchSharedPoll = !!alertMetarSettingsShared.checked;
+        }
+        if (alertMetarSettingsDatisBackground) {
+            o.metarWatchFetchDatisInBackground = !!alertMetarSettingsDatisBackground.checked;
         }
         if (alertMetarSettingsFresh) {
             var fwm = Math.floor(Number(alertMetarSettingsFresh.value));
@@ -6870,10 +6982,30 @@
         rowS.appendChild(labS);
         cell4.appendChild(rowS);
 
+        var cell5 = document.createElement('div');
+        cell5.style.minWidth = '220px';
+        cell5.style.flex = '1 1 220px';
+        cell5.appendChild(
+            mkLabel('D-ATIS background lookups', 'When off, atis.info is queried only for the open station or Refresh D-ATIS. Missing stations are cached for 12 hours.')
+        );
+        var rowD = document.createElement('div');
+        rowD.style.display = 'flex';
+        rowD.style.alignItems = 'center';
+        rowD.style.gap = '6px';
+        alertMetarSettingsDatisBackground = document.createElement('input');
+        alertMetarSettingsDatisBackground.type = 'checkbox';
+        var labD = document.createElement('span');
+        labD.textContent = 'Fetch during refresh';
+        labD.style.fontSize = '12px';
+        rowD.appendChild(alertMetarSettingsDatisBackground);
+        rowD.appendChild(labD);
+        cell5.appendChild(rowD);
+
         setGrid.appendChild(cell1);
         setGrid.appendChild(cell2);
         setGrid.appendChild(cell3);
         setGrid.appendChild(cell4);
+        setGrid.appendChild(cell5);
         settingsWrap.appendChild(setTitle);
         settingsWrap.appendChild(setGrid);
 
@@ -8001,6 +8133,7 @@
         alertRulesBackdrop = null;
         alertRulesModal = null;
         metarSettingsApplySwTokenMaster = null;
+        alertMetarSettingsDatisBackground = null;
         alertMetarSettingsNotifyColored = null;
         alertMetarSettingsNotifySpecial = null;
         alertRulesGlobalBlock = null;
