@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.5
+// @version      1.4.6
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -34,7 +34,7 @@
 
     var pollTimer = null;
     var intervalTimer = null;
-    var intervalRemainingById = Object.create(null);
+    var intervalNextDueById = Object.create(null);
     var relocateRetryTimer = null;
     var mo = null;
     var relocateRaf = 0;
@@ -911,7 +911,7 @@
             clearInterval(intervalTimer);
             intervalTimer = null;
         }
-        intervalRemainingById = Object.create(null);
+        intervalNextDueById = Object.create(null);
         resetIntervalCountdowns();
     }
 
@@ -924,44 +924,11 @@
         return false;
     }
 
-    /**
-     * One 1s timer drives all interval rows so each row can keep its own cadence.
-     */
-    function tickIntervalRows() {
-        var current = readIntervalRows();
-        if (!anyIntervalRowOn(current)) {
-            stopIntervalReplace();
-            return;
-        }
-        for (var j = 0; j < current.length; j++) {
-            var row = current[j];
-            if (!row.on) {
-                delete intervalRemainingById[row.id];
-                setIntervalCountdownText(row.id, '');
-                continue;
-            }
-            if (!Number.isFinite(intervalRemainingById[row.id])) {
-                intervalRemainingById[row.id] = row.sec;
-            }
-            setIntervalCountdownText(
-                row.id,
-                formatCountdownSeconds(intervalRemainingById[row.id])
-            );
-            intervalRemainingById[row.id]--;
-            if (intervalRemainingById[row.id] <= 0) {
-                if (row.action) {
-                    if (!clickToolbarAction(row.action, 'interval ' + row.sec + 's')) {
-                        setTimeout(function (act, sec) {
-                            clickToolbarAction(act, 'interval retry ' + sec + 's');
-                        }, 250, row.action, row.sec);
-                    }
-                }
-                intervalRemainingById[row.id] = row.sec;
-            }
-        }
+    function intervalNextDueFromNow(row, nowMs) {
+        return nowMs + normalizeIntervalSec(row && row.sec) * 1000;
     }
 
-    function resetIntervalRowCountdown(rowId, sec) {
+    function resetIntervalRowClock(rowId, sec) {
         var n = sec !== undefined ? normalizeIntervalSec(sec) : null;
         if (n == null) {
             var rows = readIntervalRows();
@@ -975,23 +942,83 @@
         if (n == null) {
             return;
         }
-        intervalRemainingById[rowId] = n;
+        intervalNextDueById[rowId] = Date.now() + n * 1000;
         setIntervalCountdownText(rowId, formatCountdownSeconds(n));
+    }
+
+    function intervalCountdownLabel(row, nowMs) {
+        if (!row || !row.on) {
+            return '';
+        }
+        var due = intervalNextDueById[row.id];
+        if (!Number.isFinite(due)) {
+            return formatCountdownSeconds(row.sec);
+        }
+        return formatCountdownSeconds(
+            Math.max(0, Math.ceil((due - nowMs) / 1000))
+        );
+    }
+
+    function clickIntervalRowAction(row) {
+        if (!row || !row.action) {
+            return;
+        }
+        if (!clickToolbarAction(row.action, 'interval ' + row.sec + 's')) {
+            setTimeout(function (act, sec) {
+                clickToolbarAction(act, 'interval retry ' + sec + 's');
+            }, 250, row.action, row.sec);
+        }
+    }
+
+    /**
+     * One shared 1s clock drives all interval rows. Each row stores its next due
+     * timestamp, so rows stay synced to the same clock without relying on drift-prone
+     * per-row counters.
+     */
+    function tickIntervalRows() {
+        var current = readIntervalRows();
+        var now = Date.now();
+        if (!anyIntervalRowOn(current)) {
+            stopIntervalReplace();
+            return;
+        }
+        for (var j = 0; j < current.length; j++) {
+            var row = current[j];
+            if (!row.on) {
+                delete intervalNextDueById[row.id];
+                setIntervalCountdownText(row.id, '');
+                continue;
+            }
+            if (!Number.isFinite(intervalNextDueById[row.id])) {
+                intervalNextDueById[row.id] = intervalNextDueFromNow(row, now);
+            }
+            while (now >= intervalNextDueById[row.id]) {
+                clickIntervalRowAction(row);
+                intervalNextDueById[row.id] += normalizeIntervalSec(row.sec) * 1000;
+            }
+            setIntervalCountdownText(
+                row.id,
+                formatCountdownSeconds(
+                    Math.max(0, Math.ceil((intervalNextDueById[row.id] - now) / 1000))
+                )
+            );
+        }
     }
 
     function startIntervalReplace() {
         var rows = readIntervalRows();
+        var now = Date.now();
         if (!anyIntervalRowOn(rows)) {
             stopIntervalReplace();
             return;
         }
         for (var i = 0; i < rows.length; i++) {
-            if (rows[i].on && !Number.isFinite(intervalRemainingById[rows[i].id])) {
-                intervalRemainingById[rows[i].id] = rows[i].sec;
+            if (rows[i].on && !Number.isFinite(intervalNextDueById[rows[i].id])) {
+                intervalNextDueById[rows[i].id] = intervalNextDueFromNow(rows[i], now);
             }
         }
+        tickIntervalRows();
         if (!intervalTimer) {
-            tickIntervalRows();
             intervalTimer = setInterval(tickIntervalRows, 1000);
         }
     }
@@ -1459,7 +1486,7 @@
         for (var i = 0; i < rows.length; i++) {
             setIntervalCountdownText(
                 rows[i].id,
-                rows[i].on ? formatCountdownSeconds(rows[i].sec) : ''
+                rows[i].on ? intervalCountdownLabel(rows[i], Date.now()) : ''
             );
         }
     }
@@ -1519,15 +1546,16 @@
                 v = normalizeIntervalSec(v);
                 ev.target.value = String(v);
                 updateIntervalRow(rowId, { sec: v });
-                resetIntervalRowCountdown(rowId, v);
+                resetIntervalRowClock(rowId, v);
                 ensureIntervalReplaceRunning();
                 return;
             }
             if (ev.target.matches && ev.target.matches('input[data-dc-interval-toggle]')) {
                 updateIntervalRow(rowId, { on: ev.target.checked });
                 if (ev.target.checked) {
-                    resetIntervalRowCountdown(rowId);
+                    resetIntervalRowClock(rowId);
                 } else {
+                    delete intervalNextDueById[rowId];
                     setIntervalCountdownText(rowId, '');
                 }
                 ensureIntervalReplaceRunning();
@@ -1694,7 +1722,7 @@
             startPoll();
         }
         if (anyIntervalRowOn(readIntervalRows())) {
-            startIntervalReplace();
+            ensureIntervalReplaceRunning();
         }
         startRelocateRetries();
     }
