@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.1
+// @version      1.4.2
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -497,10 +497,14 @@
     }
 
     function removeIntervalRow(rowId) {
-        var rows = readIntervalRows().filter(function (row) {
-            return row.id !== rowId;
+        var rows = readIntervalRows();
+        if (!rows.length || rows[0].id === rowId) {
+            return;
+        }
+        rows = rows.filter(function (row, idx) {
+            return idx === 0 || row.id !== rowId;
         });
-        writeIntervalRows(rows.length ? rows : defaultIntervalRows());
+        writeIntervalRows(rows);
     }
 
     function readMetricsSet() {
@@ -897,7 +901,7 @@
         }
         var list = h.querySelectorAll('[data-dc-interval-countdown]');
         for (var i = 0; i < list.length; i++) {
-            list[i].textContent = '—';
+            list[i].textContent = '';
         }
     }
 
@@ -931,7 +935,7 @@
         for (var i = 0; i < rows.length; i++) {
             remainingById[rows[i].id] = rows[i].sec;
             if (!rows[i].on) {
-                setIntervalCountdownText(rows[i].id, '—');
+                setIntervalCountdownText(rows[i].id, '');
             }
         }
         function tick() {
@@ -943,7 +947,7 @@
             for (var j = 0; j < current.length; j++) {
                 var row = current[j];
                 if (!row.on) {
-                    setIntervalCountdownText(row.id, '—');
+                    setIntervalCountdownText(row.id, '');
                     continue;
                 }
                 if (!Number.isFinite(remainingById[row.id])) {
@@ -1397,9 +1401,9 @@
             '" />' +
             '<span>sec</span>' +
             '</div>' +
-            '<span class="dc-war-countdown" data-dc-interval-countdown>—</span>' +
+            '<span class="dc-war-countdown" data-dc-interval-countdown></span>' +
             '<button type="button" class="dc-war-icon-btn" data-dc-add-interval title="Add another interval row">+</button>' +
-            (count > 1
+            (idx > 0
                 ? '<button type="button" class="dc-war-icon-btn" data-dc-remove-interval title="Remove this interval row">-</button>'
                 : '') +
             '</div>'
@@ -1428,6 +1432,55 @@
         }
     }
 
+    function bindIntervalListControls(wrap) {
+        var intervalList = wrap.querySelector('[data-dc-interval-list]');
+        if (!intervalList || intervalList.getAttribute('data-dc-interval-bound') === '1') {
+            return;
+        }
+        intervalList.setAttribute('data-dc-interval-bound', '1');
+        intervalList.addEventListener('change', function (ev) {
+            var rowId = intervalRowIdFromControl(ev.target);
+            if (!rowId) {
+                return;
+            }
+            if (ev.target.matches && ev.target.matches('select[data-dc-action-interval]')) {
+                updateIntervalRow(rowId, { action: ev.target.value });
+                startIntervalReplace();
+                return;
+            }
+            if (ev.target.matches && ev.target.matches('input[data-dc-interval-sec]')) {
+                var v = parseInt(ev.target.value, 10);
+                if (!Number.isFinite(v)) {
+                    renderIntervalRows(wrap);
+                    return;
+                }
+                v = normalizeIntervalSec(v);
+                ev.target.value = String(v);
+                updateIntervalRow(rowId, { sec: v });
+                startIntervalReplace();
+                return;
+            }
+            if (ev.target.matches && ev.target.matches('input[data-dc-interval-toggle]')) {
+                updateIntervalRow(rowId, { on: ev.target.checked });
+                startIntervalReplace();
+            }
+        });
+        intervalList.addEventListener('click', function (ev) {
+            if (ev.target.matches && ev.target.matches('[data-dc-add-interval]')) {
+                addIntervalRow();
+                refreshIntervalRows(wrap);
+                return;
+            }
+            if (ev.target.matches && ev.target.matches('[data-dc-remove-interval]')) {
+                var rowId = intervalRowIdFromControl(ev.target);
+                if (rowId) {
+                    removeIntervalRow(rowId);
+                    refreshIntervalRows(wrap);
+                }
+            }
+        });
+    }
+
     function bindHostControls(wrap) {
         if (wrap.getAttribute('data-dc-war-bound') === '1') {
             applyMetricsToCheckboxes(wrap);
@@ -1437,6 +1490,7 @@
                 sw.value = readActionWatch();
             }
             renderIntervalRows(wrap);
+            bindIntervalListControls(wrap);
             if (wt) {
                 wt.checked = readWatchOn();
             }
@@ -1457,6 +1511,7 @@
             selWatch.value = readActionWatch();
         }
         renderIntervalRows(wrap);
+        bindIntervalListControls(wrap);
         if (toggleInput) {
             toggleInput.checked = readWatchOn();
         }
@@ -1477,50 +1532,6 @@
                 lastSig = '';
                 if (readWatchOn()) {
                     tick();
-                }
-            });
-        }
-        var intervalList = wrap.querySelector('[data-dc-interval-list]');
-        if (intervalList) {
-            intervalList.addEventListener('change', function (ev) {
-                var rowId = intervalRowIdFromControl(ev.target);
-                if (!rowId) {
-                    return;
-                }
-                if (ev.target.matches && ev.target.matches('select[data-dc-action-interval]')) {
-                    updateIntervalRow(rowId, { action: ev.target.value });
-                    startIntervalReplace();
-                    return;
-                }
-                if (ev.target.matches && ev.target.matches('input[data-dc-interval-sec]')) {
-                    var v = parseInt(ev.target.value, 10);
-                    if (!Number.isFinite(v)) {
-                        renderIntervalRows(wrap);
-                        return;
-                    }
-                    v = normalizeIntervalSec(v);
-                    ev.target.value = String(v);
-                    updateIntervalRow(rowId, { sec: v });
-                    startIntervalReplace();
-                    return;
-                }
-                if (ev.target.matches && ev.target.matches('input[data-dc-interval-toggle]')) {
-                    updateIntervalRow(rowId, { on: ev.target.checked });
-                    startIntervalReplace();
-                }
-            });
-            intervalList.addEventListener('click', function (ev) {
-                if (ev.target.matches && ev.target.matches('[data-dc-add-interval]')) {
-                    addIntervalRow();
-                    refreshIntervalRows(wrap);
-                    return;
-                }
-                if (ev.target.matches && ev.target.matches('[data-dc-remove-interval]')) {
-                    var rowId = intervalRowIdFromControl(ev.target);
-                    if (rowId) {
-                        removeIntervalRow(rowId);
-                        refreshIntervalRows(wrap);
-                    }
                 }
             });
         }
