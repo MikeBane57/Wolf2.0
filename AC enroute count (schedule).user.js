@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AC enroute count (schedule)
 // @namespace    Wolf 2.0
-// @version      1.3.0
-// @description  Always run scan (HUD fallback if ground row missing). Broad bar selector; tick + match console logs.
+// @version      1.3.1
+// @description  Count inbound enroute aircraft only when the station filter has a displayed value.
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @donkeycode-pref {"acEnrouteEnabled":{"type":"boolean","group":"AC enroute","label":"Show enroute count","description":"When ON, show AC enroute (next to ground stats or fixed HUD) and refresh as legs change.","default":true},"acEnrouteActiveBarColors":{"type":"string","group":"AC enroute","label":"Active leg bar colors (hex)","description":"Comma-separated target blues for the schedule bar. Matching uses RGB distance (computed color rarely equals hex exactly). Default #3390ef,#abcdf8.","default":"#3390ef,#abcdf8","placeholder":"#3390ef,#abcdf8"},"acEnrouteBarColorDistance":{"type":"number","group":"AC enroute","label":"Bar color match tolerance (0-255)","description":"Max Euclidean RGB distance from a target blue to count the leg bar as active. Raise if counts stay 0; lower if wrong legs match. Default 55.","default":55,"min":5,"max":120,"step":1},"acEnrouteExcludeLowOpacityBar":{"type":"boolean","group":"AC enroute","label":"Exclude low-opacity bars (optional)","description":"OFF by default — enroute legs often use the same opacity as completed (e.g. 0.4). Turn ON only if you want to hide faded bars using the threshold below.","default":false},"acEnrouteBarOpacityMin":{"type":"number","group":"AC enroute","label":"Minimum bar opacity if exclusion ON","description":"Counted only if bar opacity is strictly greater than this (example: 0.39 passes when threshold is 0.4). Default 0.4.","default":0.4,"min":0,"max":1,"step":0.05},"acEnrouteDebugMatchLog":{"type":"boolean","group":"AC enroute · debug","label":"Log each MATCH to page console","description":"Logs every counted leg (dep/arr, flight #, bar distance). Default ON during tuning.","default":true},"acEnrouteDebugTickLog":{"type":"boolean","group":"AC enroute · debug","label":"Log periodic scan summary (tick)","description":"Every ~4s while the map updates: leg count, bar matches, station filter. Proves the script is scanning. Default ON; turn OFF to reduce noise.","default":true}}
@@ -256,18 +256,14 @@
         if (!combo) {
             return '';
         }
-        var dv = combo.querySelector('.divider.text');
+        var dv = combo.querySelector('.divider.text, .text.divider');
         if (dv) {
+            if (dv.classList && dv.classList.contains('default')) {
+                return '';
+            }
             var t = String(dv.textContent || '').trim();
             if (/^[A-Z]{3}$/.test(t)) {
                 return t;
-            }
-        }
-        var sel = combo.querySelector('.item.active.selected .text, [aria-selected="true"] .text');
-        if (sel) {
-            var t2 = String(sel.textContent || '').trim();
-            if (/^[A-Z]{3}$/.test(t2)) {
-                return t2;
             }
         }
         return '';
@@ -506,6 +502,15 @@
         var groundRow = findGroundStatRow();
 
         var st = readSelectedStationCode();
+        if (!st) {
+            if (existing) {
+                try {
+                    existing.remove();
+                } catch (e) {}
+            }
+            removeFloatingHud();
+            return;
+        }
         var rgbs = parseEnrouteBarTargetRgbs();
         var tol = Number(getPref('acEnrouteBarColorDistance', 55));
         if (!Number.isFinite(tol)) {
