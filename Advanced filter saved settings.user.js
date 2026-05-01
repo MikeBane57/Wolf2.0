@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced filter saved settings
 // @namespace    Wolf 2.0
-// @version      0.1.1
+// @version      0.1.2
 // @description  Save and recall named Advanced filter input presets.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -138,7 +138,7 @@
         return best;
     }
 
-    function controlsIn(root) {
+    function controlsIn(root, includeHidden) {
         if (!root || !root.querySelectorAll) {
             return [];
         }
@@ -146,13 +146,13 @@
         var dropdowns = root.querySelectorAll(SEMANTIC_DROPDOWN_SELECTOR);
         var i;
         for (i = 0; i < dropdowns.length; i++) {
-            if (shouldTrackSemanticDropdown(dropdowns[i])) {
+            if (shouldTrackSemanticDropdown(dropdowns[i], includeHidden)) {
                 out.push(dropdowns[i]);
             }
         }
         var raw = root.querySelectorAll(CONTROL_SELECTOR);
         for (i = 0; i < raw.length; i++) {
-            if (shouldTrackControl(raw[i])) {
+            if (shouldTrackControl(raw[i], includeHidden)) {
                 out.push(raw[i]);
             }
         }
@@ -174,7 +174,7 @@
                 }
             }
             for (var j = start + 1; j >= 1 && j < siblings.length && j <= start + 3; j++) {
-                if (controlsIn(siblings[j]).length) {
+                if (controlsIn(siblings[j], true).length) {
                     return siblings[j];
                 }
             }
@@ -182,7 +182,7 @@
         var el = title;
         var depth = 0;
         while (el && el !== document.body && depth < 8) {
-            var controls = controlsIn(el);
+            var controls = controlsIn(el, true);
             if (controls.length) {
                 return el;
             }
@@ -192,14 +192,14 @@
         return null;
     }
 
-    function shouldTrackControl(control) {
+    function shouldTrackControl(control, includeHidden) {
         if (!control || control.disabled || control.closest('#' + PANEL_ID)) {
             return false;
         }
         if (semanticDropdownRoot(control)) {
             return false;
         }
-        if (!visible(control)) {
+        if (!includeHidden && !visible(control)) {
             return false;
         }
         var tag = (control.tagName || '').toLowerCase();
@@ -214,8 +214,8 @@
         return el && el.closest ? el.closest(SEMANTIC_DROPDOWN_SELECTOR) : null;
     }
 
-    function shouldTrackSemanticDropdown(dropdown) {
-        if (!dropdown || dropdown.closest('#' + PANEL_ID) || !visible(dropdown)) {
+    function shouldTrackSemanticDropdown(dropdown, includeHidden) {
+        if (!dropdown || dropdown.closest('#' + PANEL_ID) || (!includeHidden && !visible(dropdown))) {
             return false;
         }
         return !!(
@@ -378,7 +378,7 @@
     }
 
     function snapshotArea(area) {
-        var controls = controlsIn(area);
+        var controls = controlsIn(area, true);
         var items = [];
         for (var i = 0; i < controls.length; i++) {
             items.push({
@@ -537,7 +537,7 @@
     }
 
     function applySnapshot(area, snapshot) {
-        var current = controlsIn(area);
+        var current = controlsIn(area, true);
         var identities = [];
         var used = [];
         var applied = 0;
@@ -567,6 +567,39 @@
             }
         }
         return applied;
+    }
+
+    function closestExpandableTitle(title) {
+        if (!title) {
+            return null;
+        }
+        if (title.matches && title.matches('summary,button,[role="button"],[aria-expanded]')) {
+            return title;
+        }
+        return title.closest ? title.closest('summary,button,[role="button"],[aria-expanded]') : null;
+    }
+
+    function expandAdvancedFilter(title, area, cb) {
+        var clicked = false;
+        var details =
+            (title && title.closest && title.closest('details')) ||
+            (area && area.closest && area.closest('details'));
+        if (details && !details.open) {
+            details.open = true;
+        }
+        var trigger = closestExpandableTitle(title);
+        if (trigger && trigger.getAttribute('aria-expanded') === 'false') {
+            clickLikeUser(trigger);
+            clicked = true;
+        } else if (area && !visible(area) && trigger && trigger.tagName && trigger.tagName.toLowerCase() === 'summary') {
+            clickLikeUser(trigger);
+            clicked = true;
+        }
+        if (clicked || (area && !visible(area))) {
+            setTimeout(cb, 180);
+        } else {
+            cb();
+        }
     }
 
     function presetByName(list, name) {
@@ -769,8 +802,11 @@
                     setStatus(panel, 'Choose a saved setting to recall.');
                     return;
                 }
-                var count = applySnapshot(area, found.item.snapshot);
-                setStatus(panel, 'Recalled "' + found.item.name + '" to ' + count + ' inputs.');
+                expandAdvancedFilter(title, area, function () {
+                    var freshArea = findFilterArea(title) || area;
+                    var count = applySnapshot(freshArea, found.item.snapshot);
+                    setStatus(panel, 'Recalled "' + found.item.name + '" to ' + count + ' inputs.');
+                });
             });
         }
         if (deleteBtn) {
