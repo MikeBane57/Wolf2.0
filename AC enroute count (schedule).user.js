@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AC enroute count (schedule)
 // @namespace    Wolf 2.0
-// @version      1.3.1
-// @description  Count inbound enroute aircraft only when the station filter has a displayed value.
+// @version      1.4.0
+// @description  Count inbound enroute aircraft by station filter, arrival station, and active puck background color.
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @donkeycode-pref {"acEnrouteEnabled":{"type":"boolean","group":"AC enroute","label":"Show enroute count","description":"When ON, show AC enroute (next to ground stats or fixed HUD) and refresh as legs change.","default":true},"acEnrouteActiveBarColors":{"type":"string","group":"AC enroute","label":"Active leg bar colors (hex)","description":"Comma-separated target blues for the schedule bar. Matching uses RGB distance (computed color rarely equals hex exactly). Default #3390ef,#abcdf8.","default":"#3390ef,#abcdf8","placeholder":"#3390ef,#abcdf8"},"acEnrouteBarColorDistance":{"type":"number","group":"AC enroute","label":"Bar color match tolerance (0-255)","description":"Max Euclidean RGB distance from a target blue to count the leg bar as active. Raise if counts stay 0; lower if wrong legs match. Default 55.","default":55,"min":5,"max":120,"step":1},"acEnrouteExcludeLowOpacityBar":{"type":"boolean","group":"AC enroute","label":"Exclude low-opacity bars (optional)","description":"OFF by default — enroute legs often use the same opacity as completed (e.g. 0.4). Turn ON only if you want to hide faded bars using the threshold below.","default":false},"acEnrouteBarOpacityMin":{"type":"number","group":"AC enroute","label":"Minimum bar opacity if exclusion ON","description":"Counted only if bar opacity is strictly greater than this (example: 0.39 passes when threshold is 0.4). Default 0.4.","default":0.4,"min":0,"max":1,"step":0.05},"acEnrouteDebugMatchLog":{"type":"boolean","group":"AC enroute · debug","label":"Log each MATCH to page console","description":"Logs every counted leg (dep/arr, flight #, bar distance). Default ON during tuning.","default":true},"acEnrouteDebugTickLog":{"type":"boolean","group":"AC enroute · debug","label":"Log periodic scan summary (tick)","description":"Every ~4s while the map updates: leg count, bar matches, station filter. Proves the script is scanning. Default ON; turn OFF to reduce noise.","default":true}}
@@ -17,6 +17,11 @@
     var LABEL_TEXT = 'AC enroute';
     var LEG_QE = '[data-qe-id="as-flight-leg"]';
     var PUCK_QE = '[data-qe-id="as-flight-leg-puck"]';
+    var PUCK_CLASS_TOKEN = 'CScizp4RisE';
+    var ACTIVE_PUCK_PARENT_TOKENS = ['Jn6rvhVag-w', 'xPQOsm8XFgk'];
+    var ACTIVE_PUCK_TARGET_SEL =
+        '[class*="Jn6rvhVag-w="] [class*="CScizp4RisE="], ' +
+        '[class*="xPQOsm8XFgk="] [class*="CScizp4RisE="]';
     /** Schedule bar fill — base token survives SW UI churn; fallback to legacy exact class */
     var SCHED_BAR_CLASS_TOKEN = 'vVzbj3J5m70';
     var SCHED_BAR_SEL_LEGACY = '.vVzbj3J5m70\\=';
@@ -44,6 +49,45 @@
             leg.querySelector('[class*="' + SCHED_BAR_CLASS_TOKEN + '"]') ||
             leg.querySelector(SCHED_BAR_SEL_LEGACY);
         return bar || null;
+    }
+
+    function elementHasClassToken(el, token) {
+        if (!el || !token) {
+            return false;
+        }
+        return String(el.className || '').indexOf(token) !== -1;
+    }
+
+    function isActivePuckBackgroundTarget(puck) {
+        if (!puck || !elementHasClassToken(puck, PUCK_CLASS_TOKEN)) {
+            return false;
+        }
+        var cur = puck.parentElement;
+        var hop = 0;
+        while (cur && hop < 8) {
+            for (var i = 0; i < ACTIVE_PUCK_PARENT_TOKENS.length; i++) {
+                if (elementHasClassToken(cur, ACTIVE_PUCK_PARENT_TOKENS[i])) {
+                    return true;
+                }
+            }
+            cur = cur.parentElement;
+            hop++;
+        }
+        return false;
+    }
+
+    function findPuckBackgroundTargetInLeg(leg, puck) {
+        if (isActivePuckBackgroundTarget(puck)) {
+            return puck;
+        }
+        if (!leg || !leg.querySelector) {
+            return null;
+        }
+        return leg.querySelector(ACTIVE_PUCK_TARGET_SEL);
+    }
+
+    function findEnrouteColorTargetInLeg(leg, puck) {
+        return findPuckBackgroundTargetInLeg(leg, puck) || findScheduleBarInLeg(leg);
     }
 
     function getPref(key, def) {
@@ -178,13 +222,13 @@
         return null;
     }
 
-    /** Inline opacity from bar element (falls back to computed). */
-    function barOpacityFromEl(barEl) {
-        if (!barEl) {
+    /** Inline opacity from the active color target (falls back to computed). */
+    function colorTargetOpacityFromEl(colorTargetEl) {
+        if (!colorTargetEl) {
             return 1;
         }
         try {
-            var st = barEl.getAttribute('style') || '';
+            var st = colorTargetEl.getAttribute('style') || '';
             var om = st.match(/opacity\s*:\s*([\d.]+)/i);
             if (om) {
                 var o = parseFloat(om[1]);
@@ -195,12 +239,12 @@
         } catch (e) {}
         var op = 1;
         try {
-            op = parseFloat(window.getComputedStyle(barEl).opacity);
+            op = parseFloat(window.getComputedStyle(colorTargetEl).opacity);
         } catch (e2) {}
         return Number.isFinite(op) ? op : 1;
     }
 
-    function analyzeScheduleBar(barEl, targetRgbs, maxDist, opacityGate) {
+    function analyzeColorTarget(colorTargetEl, targetRgbs, maxDist, opacityGate) {
         var out = {
             passesOpacity: true,
             passesColor: false,
@@ -208,14 +252,14 @@
             opacity: 1,
             bgRgb: null
         };
-        if (!barEl) {
+        if (!colorTargetEl) {
             return out;
         }
-        out.opacity = barOpacityFromEl(barEl);
+        out.opacity = colorTargetOpacityFromEl(colorTargetEl);
         if (opacityGate && opacityGate.enabled) {
             out.passesOpacity = out.opacity > opacityGate.minOpacity + 1e-6;
         }
-        var px = effectiveBackgroundRgb(barEl);
+        var px = effectiveBackgroundRgb(colorTargetEl);
         out.bgRgb = px;
         if (!px) {
             return out;
@@ -233,12 +277,28 @@
         return out;
     }
 
-    /** Best-effort flight number from leg DOM (sibling of bar before puck). */
-    function flightNumberFromLeg(leg, bar, puck) {
-        if (!leg || !bar) {
+    function flightNumberFromPuck(puck) {
+        if (!puck || !puck.querySelector) {
             return '';
         }
-        var n = bar.nextElementSibling;
+        var inPuck = puck.querySelector('[class*="tw9pR6Lavy8="]');
+        if (inPuck) {
+            var txt = String(inPuck.textContent || '')
+                .replace(/\s+/g, '')
+                .trim();
+            if (/^\d{1,4}$/.test(txt)) {
+                return txt;
+            }
+        }
+        return '';
+    }
+
+    /** Best-effort fallback flight number from leg DOM (sibling of color target before puck). */
+    function flightNumberFromLeg(leg, colorTarget, puck) {
+        if (!leg || !colorTarget) {
+            return '';
+        }
+        var n = colorTarget.nextElementSibling;
         while (n && puck && n !== puck) {
             var t = String(n.textContent || '')
                 .replace(/\s+/g, '')
@@ -328,8 +388,8 @@
     function scanEnrouteToStation(station, targetRgbs, maxDist, opacityGate, debugMatch) {
         var stats = {
             legCount: 0,
-            barsFound: 0,
-            barColorPass: 0,
+            colorTargetsFound: 0,
+            colorPass: 0,
             arrMatchStation: 0,
             skippedOutboundSameStation: 0
         };
@@ -342,16 +402,16 @@
         var li;
         for (li = 0; li < legs.length; li++) {
             var leg = legs[li];
-            var bar = findScheduleBarInLeg(leg);
-            if (bar) {
-                stats.barsFound++;
+            var puckLeg = leg.querySelector(PUCK_QE);
+            var colorTarget = findEnrouteColorTargetInLeg(leg, puckLeg);
+            if (colorTarget) {
+                stats.colorTargetsFound++;
             }
-            var barInfo = analyzeScheduleBar(bar, targetRgbs, maxDist, opacityGate);
-            if (!barInfo.passesOpacity || !barInfo.passesColor) {
+            var colorInfo = analyzeColorTarget(colorTarget, targetRgbs, maxDist, opacityGate);
+            if (!colorInfo.passesOpacity || !colorInfo.passesColor) {
                 continue;
             }
-            stats.barColorPass++;
-            var puckLeg = leg.querySelector(PUCK_QE);
+            stats.colorPass++;
             var arr = arrivalStationFromPuck(puckLeg);
             var dep = departureStationFromPuck(puckLeg);
             if (!arr || arr !== station) {
@@ -365,7 +425,7 @@
             }
             n++;
             if (debugMatch) {
-                var rgb = barInfo.bgRgb;
+                var rgb = colorInfo.bgRgb;
                 var hex =
                     rgb
                         ? '#' +
@@ -378,10 +438,17 @@
                         mapStation: station,
                         dep: dep || '?',
                         arr: arr,
-                        flight: flightNumberFromLeg(leg, bar, puckLeg) || undefined,
-                        barRgbDist: Math.round(barInfo.minDist * 10) / 10,
-                        barOpacity: Math.round(barInfo.opacity * 1000) / 1000,
-                        barEffectiveHex: hex,
+                        flight:
+                            flightNumberFromPuck(puckLeg) ||
+                            flightNumberFromLeg(leg, colorTarget, puckLeg) ||
+                            undefined,
+                        colorRgbDist: Math.round(colorInfo.minDist * 10) / 10,
+                        colorOpacity: Math.round(colorInfo.opacity * 1000) / 1000,
+                        colorEffectiveHex: hex,
+                        colorTarget:
+                            colorTarget && colorTarget.getAttribute
+                                ? colorTarget.getAttribute('data-qe-id') || colorTarget.className
+                                : undefined,
                         hoverId:
                             puckLeg && puckLeg.getAttribute
                                 ? puckLeg.getAttribute('data-linked-hover-id')
@@ -465,10 +532,10 @@
             '<span style="opacity:.75;font-size:11px">' +
             'legs ' +
             stats.legCount +
-            ' · bars ' +
-            stats.barsFound +
+            ' · color targets ' +
+            stats.colorTargetsFound +
             ' · color✓ ' +
-            stats.barColorPass +
+            stats.colorPass +
             ' · arr=' +
             stationCode +
             ': ' +
@@ -540,8 +607,8 @@
                     count: cnt,
                     groundRowFound: !!groundRow,
                     legs: stats.legCount,
-                    barsInLegs: stats.barsFound,
-                    barColorPass: stats.barColorPass,
+                    colorTargets: stats.colorTargetsFound,
+                    colorPass: stats.colorPass,
                     arrEqualsStation: stats.arrMatchStation,
                     tol: tol,
                     excludeOpacity: exLow
@@ -599,7 +666,7 @@
             st
                 ? 'Inbound to ' +
                   st +
-                  ' (blue bar color match' +
+                  ' (active puck/background color match' +
                   (exLow ? '; opacity > ' + opMin : '') +
                   '; dep≠' +
                   st +
