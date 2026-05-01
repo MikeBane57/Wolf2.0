@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.4
+// @version      1.4.5
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -911,6 +911,7 @@
             clearInterval(intervalTimer);
             intervalTimer = null;
         }
+        intervalRemainingById = Object.create(null);
         resetIntervalCountdowns();
     }
 
@@ -926,49 +927,77 @@
     /**
      * One 1s timer drives all interval rows so each row can keep its own cadence.
      */
-    function startIntervalReplace() {
-        stopIntervalReplace();
-        var rows = readIntervalRows();
-        if (!anyIntervalRowOn(rows)) {
+    function tickIntervalRows() {
+        var current = readIntervalRows();
+        if (!anyIntervalRowOn(current)) {
+            stopIntervalReplace();
             return;
         }
-        intervalRemainingById = Object.create(null);
-        for (var i = 0; i < rows.length; i++) {
-            intervalRemainingById[rows[i].id] = rows[i].sec;
-            if (!rows[i].on) {
-                setIntervalCountdownText(rows[i].id, '');
+        for (var j = 0; j < current.length; j++) {
+            var row = current[j];
+            if (!row.on) {
+                delete intervalRemainingById[row.id];
+                setIntervalCountdownText(row.id, '');
+                continue;
             }
-        }
-        function tick() {
-            var current = readIntervalRows();
-            if (!anyIntervalRowOn(current)) {
-                stopIntervalReplace();
-                return;
+            if (!Number.isFinite(intervalRemainingById[row.id])) {
+                intervalRemainingById[row.id] = row.sec;
             }
-            for (var j = 0; j < current.length; j++) {
-                var row = current[j];
-                if (!row.on) {
-                    setIntervalCountdownText(row.id, '');
-                    continue;
-                }
-                if (!Number.isFinite(intervalRemainingById[row.id])) {
-                    intervalRemainingById[row.id] = row.sec;
-                }
-                if (intervalRemainingById[row.id] <= 0) {
-                    if (row.action) {
-                        clickToolbarAction(row.action, 'interval ' + row.sec + 's');
+            setIntervalCountdownText(
+                row.id,
+                formatCountdownSeconds(intervalRemainingById[row.id])
+            );
+            intervalRemainingById[row.id]--;
+            if (intervalRemainingById[row.id] <= 0) {
+                if (row.action) {
+                    if (!clickToolbarAction(row.action, 'interval ' + row.sec + 's')) {
+                        setTimeout(function (act, sec) {
+                            clickToolbarAction(act, 'interval retry ' + sec + 's');
+                        }, 250, row.action, row.sec);
                     }
-                    intervalRemainingById[row.id] = row.sec;
                 }
-                setIntervalCountdownText(
-                    row.id,
-                    formatCountdownSeconds(intervalRemainingById[row.id])
-                );
-                intervalRemainingById[row.id]--;
+                intervalRemainingById[row.id] = row.sec;
             }
         }
-        tick();
-        intervalTimer = setInterval(tick, 1000);
+    }
+
+    function resetIntervalRowCountdown(rowId, sec) {
+        var n = sec !== undefined ? normalizeIntervalSec(sec) : null;
+        if (n == null) {
+            var rows = readIntervalRows();
+            for (var i = 0; i < rows.length; i++) {
+                if (rows[i].id === rowId) {
+                    n = rows[i].sec;
+                    break;
+                }
+            }
+        }
+        if (n == null) {
+            return;
+        }
+        intervalRemainingById[rowId] = n;
+        setIntervalCountdownText(rowId, formatCountdownSeconds(n));
+    }
+
+    function startIntervalReplace() {
+        var rows = readIntervalRows();
+        if (!anyIntervalRowOn(rows)) {
+            stopIntervalReplace();
+            return;
+        }
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].on && !Number.isFinite(intervalRemainingById[rows[i].id])) {
+                intervalRemainingById[rows[i].id] = rows[i].sec;
+            }
+        }
+        if (!intervalTimer) {
+            tickIntervalRows();
+            intervalTimer = setInterval(tickIntervalRows, 1000);
+        }
+    }
+
+    function ensureIntervalReplaceRunning() {
+        startIntervalReplace();
     }
 
     function ensureStyle() {
@@ -1452,7 +1481,7 @@
     function refreshIntervalRows(host) {
         renderIntervalRows(host);
         if (anyIntervalRowOn(readIntervalRows())) {
-            startIntervalReplace();
+            ensureIntervalReplaceRunning();
         } else {
             stopIntervalReplace();
         }
@@ -1478,7 +1507,7 @@
             }
             if (ev.target.matches && ev.target.matches('select[data-dc-action-interval]')) {
                 updateIntervalRow(rowId, { action: ev.target.value });
-                startIntervalReplace();
+                ensureIntervalReplaceRunning();
                 return;
             }
             if (ev.target.matches && ev.target.matches('input[data-dc-interval-sec]')) {
@@ -1490,12 +1519,18 @@
                 v = normalizeIntervalSec(v);
                 ev.target.value = String(v);
                 updateIntervalRow(rowId, { sec: v });
-                startIntervalReplace();
+                resetIntervalRowCountdown(rowId, v);
+                ensureIntervalReplaceRunning();
                 return;
             }
             if (ev.target.matches && ev.target.matches('input[data-dc-interval-toggle]')) {
                 updateIntervalRow(rowId, { on: ev.target.checked });
-                startIntervalReplace();
+                if (ev.target.checked) {
+                    resetIntervalRowCountdown(rowId);
+                } else {
+                    setIntervalCountdownText(rowId, '');
+                }
+                ensureIntervalReplaceRunning();
             }
         });
         intervalList.addEventListener('click', function (ev) {
