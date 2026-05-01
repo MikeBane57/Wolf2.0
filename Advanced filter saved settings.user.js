@@ -17,7 +17,7 @@
     var BUTTON_CLASS = 'dc-afss-button';
     var PANEL_ID = SCRIPT_ID + '-panel';
     var STORAGE_KEY = 'dc_advanced_filter_saved_settings_v1';
-    var TITLE_RE = /^\s*advanced\s+filter\s*$/i;
+    var TITLE_RE = /^\s*advanced\s+filters?\s*$/i;
     var CONTROL_SELECTOR = 'input, select, textarea';
 
     var observer = null;
@@ -155,15 +155,6 @@
         if (!title) {
             return null;
         }
-        var el = title;
-        var depth = 0;
-        while (el && el !== document.body && depth < 8) {
-            if (controlsIn(el).length) {
-                return el;
-            }
-            el = el.parentElement;
-            depth++;
-        }
         var siblingRoot = title.parentElement;
         if (siblingRoot) {
             var siblings = siblingRoot.children || [];
@@ -180,11 +171,24 @@
                 }
             }
         }
+        var el = title;
+        var depth = 0;
+        while (el && el !== document.body && depth < 8) {
+            var controls = controlsIn(el);
+            if (controls.length) {
+                return el;
+            }
+            el = el.parentElement;
+            depth++;
+        }
         return null;
     }
 
     function shouldTrackControl(control) {
         if (!control || control.disabled || control.closest('#' + PANEL_ID)) {
+            return false;
+        }
+        if (!visible(control)) {
             return false;
         }
         var tag = (control.tagName || '').toLowerCase();
