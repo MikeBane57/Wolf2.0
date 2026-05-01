@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.0
+// @version      1.4.1
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -98,6 +98,89 @@
         return Math.min(3600, Math.max(5, Math.floor(n)));
     }
 
+    function normalizeIntervalSec(n) {
+        var x = Number(n);
+        if (!Number.isFinite(x)) {
+            x = intervalSecFromPref();
+        }
+        return Math.min(3600, Math.max(5, Math.floor(x)));
+    }
+
+    function normalizeAction(a) {
+        return a === 'append' || a === 'remove' || a === 'replace' ? a : '';
+    }
+
+    function cssAttrEscape(value) {
+        if (window.CSS && typeof window.CSS.escape === 'function') {
+            return window.CSS.escape(String(value));
+        }
+        return String(value).replace(/["\\]/g, '\\$&');
+    }
+
+    function htmlAttrEscape(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function makeIntervalRow(seed) {
+        seed = seed || {};
+        return {
+            id: String(seed.id || ('row' + Date.now() + '-' + Math.random().toString(36).slice(2, 8))),
+            on: !!seed.on,
+            sec: normalizeIntervalSec(seed.sec),
+            action: normalizeAction(seed.action)
+        };
+    }
+
+    function defaultIntervalRows() {
+        return [
+            makeIntervalRow({
+                id: 'default',
+                on: false,
+                sec: intervalSecFromPref(),
+                action: ''
+            })
+        ];
+    }
+
+    function normalizeIntervalRows(source) {
+        var raw = [];
+        if (Array.isArray(source)) {
+            raw = source;
+        } else if (source && Array.isArray(source.intervalRows)) {
+            raw = source.intervalRows;
+        } else if (source && typeof source === 'object') {
+            raw = [
+                {
+                    id: 'default',
+                    on: !!source.intervalOn,
+                    sec: source.intervalSec,
+                    action: source.actionInterval
+                }
+            ];
+        }
+        var out = [];
+        for (var i = 0; i < raw.length; i++) {
+            var row = makeIntervalRow(raw[i]);
+            if (!row.id) {
+                row.id = 'row' + String(i + 1);
+            }
+            out.push(row);
+        }
+        return out.length ? out : defaultIntervalRows();
+    }
+
+    function syncLegacyIntervalFields(state) {
+        var rows = normalizeIntervalRows(state.intervalRows);
+        state.intervalRows = rows;
+        state.intervalOn = !!(rows[0] && rows[0].on);
+        state.intervalSec = rows[0] ? rows[0].sec : intervalSecFromPref();
+        state.actionInterval = rows[0] ? rows[0].action : '';
+    }
+
     function defaultTabState() {
         return {
             watchOn: false,
@@ -105,6 +188,7 @@
             intervalSec: intervalSecFromPref(),
             actionWatch: '',
             actionInterval: '',
+            intervalRows: defaultIntervalRows(),
             metrics: { tails: true, lines: true, flights: true },
             collapsed: false,
             opTimeAuto: false
@@ -185,13 +269,13 @@
         } catch (e) {}
         try {
             var aw = localStorage.getItem(LS_ACTION_WATCH);
-            if (aw === 'append' || aw === 'remove') {
+            if (aw === 'append' || aw === 'remove' || aw === 'replace') {
                 s.actionWatch = aw;
             }
         } catch (e) {}
         try {
             var ai = localStorage.getItem(LS_ACTION_INTERVAL);
-            if (ai === 'append' || ai === 'remove') {
+            if (ai === 'append' || ai === 'remove' || ai === 'replace') {
                 s.actionInterval = ai;
             }
         } catch (e) {}
@@ -223,6 +307,11 @@
                 s.opTimeAuto = true;
             }
         } catch (e) {}
+        s.intervalRows = normalizeIntervalRows({
+            intervalOn: s.intervalOn,
+            intervalSec: s.intervalSec,
+            actionInterval: s.actionInterval
+        });
         return s;
     }
 
@@ -273,6 +362,7 @@
                 s.actionInterval === ''
                     ? s.actionInterval
                     : '';
+            o.intervalRows = normalizeIntervalRows(s);
             o.metrics = {
                 tails: !!(s.metrics && s.metrics.tails),
                 lines: !!(s.metrics && s.metrics.lines),
@@ -289,6 +379,7 @@
     }
 
     function writeTabState(next) {
+        syncLegacyIntervalFields(next);
         var tid = getOrCreateWorksheetTabId();
         var all = readAllByTab();
         all[tid] = next;
@@ -308,22 +399,28 @@
     }
 
     function readIntervalOn() {
-        return readTabState().intervalOn;
+        var rows = readIntervalRows();
+        return !!(rows[0] && rows[0].on);
     }
 
     function writeIntervalOn(on) {
         var s = readTabState();
-        s.intervalOn = !!on;
+        s.intervalRows = normalizeIntervalRows(s.intervalRows);
+        s.intervalRows[0].on = !!on;
+        syncLegacyIntervalFields(s);
         writeTabState(s);
     }
 
     function intervalSecEffective() {
-        return readTabState().intervalSec;
+        var rows = readIntervalRows();
+        return rows[0] ? rows[0].sec : intervalSecFromPref();
     }
 
     function writeIntervalSec(n) {
         var s = readTabState();
-        s.intervalSec = n;
+        s.intervalRows = normalizeIntervalRows(s.intervalRows);
+        s.intervalRows[0].sec = normalizeIntervalSec(n);
+        syncLegacyIntervalFields(s);
         writeTabState(s);
     }
 
@@ -339,14 +436,71 @@
     }
 
     function readActionInterval() {
-        return readTabState().actionInterval;
+        var rows = readIntervalRows();
+        return rows[0] ? rows[0].action : '';
     }
 
     function writeActionInterval(a) {
         var s = readTabState();
-        s.actionInterval =
-            a === 'append' || a === 'remove' || a === 'replace' || a === '' ? a : '';
+        s.intervalRows = normalizeIntervalRows(s.intervalRows);
+        s.intervalRows[0].action = normalizeAction(a);
+        syncLegacyIntervalFields(s);
         writeTabState(s);
+    }
+
+    function readIntervalRows() {
+        return normalizeIntervalRows(readTabState().intervalRows);
+    }
+
+    function writeIntervalRows(rows) {
+        var s = readTabState();
+        s.intervalRows = normalizeIntervalRows(rows);
+        syncLegacyIntervalFields(s);
+        writeTabState(s);
+    }
+
+    function updateIntervalRow(rowId, patch) {
+        var rows = readIntervalRows();
+        var found = false;
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].id !== rowId) {
+                continue;
+            }
+            if (patch.on !== undefined) {
+                rows[i].on = !!patch.on;
+            }
+            if (patch.sec !== undefined) {
+                rows[i].sec = normalizeIntervalSec(patch.sec);
+            }
+            if (patch.action !== undefined) {
+                rows[i].action = normalizeAction(patch.action);
+            }
+            found = true;
+            break;
+        }
+        if (found) {
+            writeIntervalRows(rows);
+        }
+    }
+
+    function addIntervalRow() {
+        var rows = readIntervalRows();
+        var prev = rows.length ? rows[rows.length - 1] : null;
+        rows.push(
+            makeIntervalRow({
+                on: false,
+                sec: prev ? prev.sec : intervalSecFromPref(),
+                action: prev ? prev.action : ''
+            })
+        );
+        writeIntervalRows(rows);
+    }
+
+    function removeIntervalRow(rowId) {
+        var rows = readIntervalRows().filter(function (row) {
+            return row.id !== rowId;
+        });
+        writeIntervalRows(rows.length ? rows : defaultIntervalRows());
     }
 
     function readMetricsSet() {
@@ -692,13 +846,23 @@
         }
     }
 
-    function intervalCountdownEl() {
+    function intervalCountdownEl(rowId) {
         var h = document.getElementById(HOST_ID);
-        return h ? h.querySelector('[data-dc-interval-countdown]') : null;
+        if (!h) {
+            return null;
+        }
+        if (rowId) {
+            return h.querySelector(
+                '[data-dc-interval-row-id="' +
+                    cssAttrEscape(rowId) +
+                    '"] [data-dc-interval-countdown]'
+            );
+        }
+        return h.querySelector('[data-dc-interval-countdown]');
     }
 
-    function setIntervalCountdownText(text) {
-        var el = intervalCountdownEl();
+    function setIntervalCountdownText(rowId, text) {
+        var el = intervalCountdownEl(rowId);
         if (el) {
             el.textContent = text;
         }
@@ -726,37 +890,77 @@
         return String(n) + 's';
     }
 
+    function resetIntervalCountdowns() {
+        var h = document.getElementById(HOST_ID);
+        if (!h) {
+            return;
+        }
+        var list = h.querySelectorAll('[data-dc-interval-countdown]');
+        for (var i = 0; i < list.length; i++) {
+            list[i].textContent = '—';
+        }
+    }
+
     function stopIntervalReplace() {
         if (intervalTimer) {
             clearInterval(intervalTimer);
             intervalTimer = null;
         }
-        setIntervalCountdownText('—');
+        resetIntervalCountdowns();
+    }
+
+    function anyIntervalRowOn(rows) {
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].on) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
-     * One 1s timer: countdown display + fire click when remaining hits 0 (synced, no drift).
+     * One 1s timer drives all interval rows so each row can keep its own cadence.
      */
     function startIntervalReplace() {
         stopIntervalReplace();
-        if (!readIntervalOn()) {
+        var rows = readIntervalRows();
+        if (!anyIntervalRowOn(rows)) {
             return;
         }
-        var remaining = intervalSecEffective();
+        var remainingById = Object.create(null);
+        for (var i = 0; i < rows.length; i++) {
+            remainingById[rows[i].id] = rows[i].sec;
+            if (!rows[i].on) {
+                setIntervalCountdownText(rows[i].id, '—');
+            }
+        }
         function tick() {
-            if (!readIntervalOn()) {
+            var current = readIntervalRows();
+            if (!anyIntervalRowOn(current)) {
                 stopIntervalReplace();
                 return;
             }
-            if (remaining <= 0) {
-                var ia = readActionInterval();
-                if (ia) {
-                    clickToolbarAction(ia, 'interval');
+            for (var j = 0; j < current.length; j++) {
+                var row = current[j];
+                if (!row.on) {
+                    setIntervalCountdownText(row.id, '—');
+                    continue;
                 }
-                remaining = intervalSecEffective();
+                if (!Number.isFinite(remainingById[row.id])) {
+                    remainingById[row.id] = row.sec;
+                }
+                if (remainingById[row.id] <= 0) {
+                    if (row.action) {
+                        clickToolbarAction(row.action, 'interval ' + row.sec + 's');
+                    }
+                    remainingById[row.id] = row.sec;
+                }
+                setIntervalCountdownText(
+                    row.id,
+                    formatCountdownSeconds(remainingById[row.id])
+                );
+                remainingById[row.id]--;
             }
-            setIntervalCountdownText(formatCountdownSeconds(remaining));
-            remaining--;
         }
         tick();
         intervalTimer = setInterval(tick, 1000);
@@ -820,6 +1024,12 @@
             '#' +
             HOST_ID +
             ' .dc-war-countdown{font-size:11px;color:#95a5a6;flex-shrink:0;margin-left:auto;min-width:4ch;text-align:right;font-variant-numeric:tabular-nums;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-icon-btn{width:20px;height:20px;line-height:18px;padding:0;border-radius:50%;border:1px solid #5dade2;background:#1a1f28;color:#5dade2;font-weight:700;cursor:pointer;flex-shrink:0;text-align:center;}' +
+            '#' +
+            HOST_ID +
+            ' .dc-war-icon-btn[data-dc-remove-interval]{border-color:#7f8c8d;color:#bdc3c7;}' +
             '#' +
             HOST_ID +
             ' label{cursor:pointer;display:inline-flex;align-items:center;gap:3px;user-select:none;font-size:11px;}' +
@@ -1107,22 +1317,7 @@
         '</select>' +
         '</div>' +
         '<hr class="dc-war-divider" />' +
-        '<div class="dc-war-row dc-war-interval-row">' +
-        '<div class="dc-war-interval-left">' +
-        '<label class="dc-war-toggle dc-war-toggle-interval" title="Interval toolbar clicks">' +
-        '<input type="checkbox" class="dc-war-toggle-input" data-dc-interval-toggle />' +
-        '<span class="dc-war-toggle-track" aria-hidden="true"><span class="dc-war-toggle-knob"></span></span>' +
-        '</label>' +
-        '<select class="dc-war-sel" data-dc-action-interval title="Toolbar button on interval">' +
-        '<option value="">Pick a button…</option>' +
-        '<option value="replace">Replace</option><option value="append">Append</option><option value="remove">Remove</option>' +
-        '</select>' +
-        '<span>every</span>' +
-        '<input type="number" class="dc-war-num" min="5" max="3600" step="1" data-dc-interval-sec title="Seconds" />' +
-        '<span>sec</span>' +
-        '</div>' +
-        '<span class="dc-war-countdown" data-dc-interval-countdown>—</span>' +
-        '</div>' +
+        '<div class="dc-war-interval-list" data-dc-interval-list></div>' +
         '</div>' +
         '</details>';
 
@@ -1163,26 +1358,85 @@
         return o;
     }
 
+    function intervalActionOptionsHtml(selected) {
+        return (
+            '<option value=""' +
+            (selected === '' ? ' selected' : '') +
+            '>Pick a button…</option>' +
+            '<option value="replace"' +
+            (selected === 'replace' ? ' selected' : '') +
+            '>Replace</option>' +
+            '<option value="append"' +
+            (selected === 'append' ? ' selected' : '') +
+            '>Append</option>' +
+            '<option value="remove"' +
+            (selected === 'remove' ? ' selected' : '') +
+            '>Remove</option>'
+        );
+    }
+
+    function intervalRowHtml(row, idx, count) {
+        var id = String(row.id);
+        return (
+            '<div class="dc-war-row dc-war-interval-row" data-dc-interval-row-id="' +
+            htmlAttrEscape(id) +
+            '">' +
+            '<div class="dc-war-interval-left">' +
+            '<label class="dc-war-toggle dc-war-toggle-interval" title="Interval toolbar clicks">' +
+            '<input type="checkbox" class="dc-war-toggle-input" data-dc-interval-toggle ' +
+            (row.on ? 'checked ' : '') +
+            '/>' +
+            '<span class="dc-war-toggle-track" aria-hidden="true"><span class="dc-war-toggle-knob"></span></span>' +
+            '</label>' +
+            '<select class="dc-war-sel" data-dc-action-interval title="Toolbar button on interval">' +
+            intervalActionOptionsHtml(row.action) +
+            '</select>' +
+            '<span>every</span>' +
+            '<input type="number" class="dc-war-num" min="5" max="3600" step="1" data-dc-interval-sec title="Seconds" value="' +
+            String(row.sec) +
+            '" />' +
+            '<span>sec</span>' +
+            '</div>' +
+            '<span class="dc-war-countdown" data-dc-interval-countdown>—</span>' +
+            '<button type="button" class="dc-war-icon-btn" data-dc-add-interval title="Add another interval row">+</button>' +
+            (count > 1
+                ? '<button type="button" class="dc-war-icon-btn" data-dc-remove-interval title="Remove this interval row">-</button>'
+                : '') +
+            '</div>'
+        );
+    }
+
+    function renderIntervalRows(host) {
+        var list = host.querySelector('[data-dc-interval-list]');
+        if (!list) {
+            return;
+        }
+        var rows = readIntervalRows();
+        var html = '';
+        for (var i = 0; i < rows.length; i++) {
+            html += intervalRowHtml(rows[i], i, rows.length);
+        }
+        list.innerHTML = html;
+    }
+
+    function refreshIntervalRows(host) {
+        renderIntervalRows(host);
+        if (anyIntervalRowOn(readIntervalRows())) {
+            startIntervalReplace();
+        } else {
+            stopIntervalReplace();
+        }
+    }
+
     function bindHostControls(wrap) {
         if (wrap.getAttribute('data-dc-war-bound') === '1') {
             applyMetricsToCheckboxes(wrap);
             var sw = wrap.querySelector('select[data-dc-action-watch]');
-            var si = wrap.querySelector('select[data-dc-action-interval]');
-            var sec = wrap.querySelector('input[data-dc-interval-sec]');
-            var it = wrap.querySelector('input[data-dc-interval-toggle]');
             var wt = wrap.querySelector('input[data-dc-watch-toggle]');
             if (sw) {
                 sw.value = readActionWatch();
             }
-            if (si) {
-                si.value = readActionInterval();
-            }
-            if (sec) {
-                sec.value = String(intervalSecEffective());
-            }
-            if (it) {
-                it.checked = readIntervalOn();
-            }
+            renderIntervalRows(wrap);
             if (wt) {
                 wt.checked = readWatchOn();
             }
@@ -1198,22 +1452,11 @@
         hostEl = wrap;
         toggleInput = wrap.querySelector('input[data-dc-watch-toggle]');
         var selWatch = wrap.querySelector('select[data-dc-action-watch]');
-        var selInterval = wrap.querySelector('select[data-dc-action-interval]');
-        var intervalToggle = wrap.querySelector('input[data-dc-interval-toggle]');
-        var intervalSecInput = wrap.querySelector('input[data-dc-interval-sec]');
         applyMetricsToCheckboxes(wrap);
         if (selWatch) {
             selWatch.value = readActionWatch();
         }
-        if (selInterval) {
-            selInterval.value = readActionInterval();
-        }
-        if (intervalSecInput) {
-            intervalSecInput.value = String(intervalSecEffective());
-        }
-        if (intervalToggle) {
-            intervalToggle.checked = readIntervalOn();
-        }
+        renderIntervalRows(wrap);
         if (toggleInput) {
             toggleInput.checked = readWatchOn();
         }
@@ -1237,36 +1480,47 @@
                 }
             });
         }
-        if (selInterval) {
-            selInterval.addEventListener('change', function () {
-                writeActionInterval(selInterval.value);
-                if (readIntervalOn()) {
-                    startIntervalReplace();
-                }
-            });
-        }
-        if (intervalSecInput) {
-            intervalSecInput.addEventListener('change', function () {
-                var v = parseInt(intervalSecInput.value, 10);
-                if (!Number.isFinite(v)) {
-                    intervalSecInput.value = String(intervalSecEffective());
+        var intervalList = wrap.querySelector('[data-dc-interval-list]');
+        if (intervalList) {
+            intervalList.addEventListener('change', function (ev) {
+                var rowId = intervalRowIdFromControl(ev.target);
+                if (!rowId) {
                     return;
                 }
-                v = Math.min(3600, Math.max(5, v));
-                intervalSecInput.value = String(v);
-                writeIntervalSec(v);
-                if (readIntervalOn()) {
+                if (ev.target.matches && ev.target.matches('select[data-dc-action-interval]')) {
+                    updateIntervalRow(rowId, { action: ev.target.value });
+                    startIntervalReplace();
+                    return;
+                }
+                if (ev.target.matches && ev.target.matches('input[data-dc-interval-sec]')) {
+                    var v = parseInt(ev.target.value, 10);
+                    if (!Number.isFinite(v)) {
+                        renderIntervalRows(wrap);
+                        return;
+                    }
+                    v = normalizeIntervalSec(v);
+                    ev.target.value = String(v);
+                    updateIntervalRow(rowId, { sec: v });
+                    startIntervalReplace();
+                    return;
+                }
+                if (ev.target.matches && ev.target.matches('input[data-dc-interval-toggle]')) {
+                    updateIntervalRow(rowId, { on: ev.target.checked });
                     startIntervalReplace();
                 }
             });
-        }
-        if (intervalToggle) {
-            intervalToggle.addEventListener('change', function () {
-                writeIntervalOn(intervalToggle.checked);
-                if (intervalToggle.checked) {
-                    startIntervalReplace();
-                } else {
-                    stopIntervalReplace();
+            intervalList.addEventListener('click', function (ev) {
+                if (ev.target.matches && ev.target.matches('[data-dc-add-interval]')) {
+                    addIntervalRow();
+                    refreshIntervalRows(wrap);
+                    return;
+                }
+                if (ev.target.matches && ev.target.matches('[data-dc-remove-interval]')) {
+                    var rowId = intervalRowIdFromControl(ev.target);
+                    if (rowId) {
+                        removeIntervalRow(rowId);
+                        refreshIntervalRows(wrap);
+                    }
                 }
             });
         }
@@ -1352,7 +1606,7 @@
         if (readWatchOn()) {
             startPoll();
         }
-        if (readIntervalOn()) {
+        if (anyIntervalRowOn(readIntervalRows())) {
             startIntervalReplace();
         }
         startRelocateRetries();
