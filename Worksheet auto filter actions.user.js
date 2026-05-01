@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.2
+// @version      1.4.3
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -1402,9 +1402,13 @@
             '<span>sec</span>' +
             '</div>' +
             '<span class="dc-war-countdown" data-dc-interval-countdown></span>' +
-            '<button type="button" class="dc-war-icon-btn" data-dc-add-interval title="Add another interval row">+</button>' +
+            '<button type="button" class="dc-war-icon-btn" data-dc-add-interval data-dc-interval-btn-row-id="' +
+            htmlAttrEscape(id) +
+            '" title="Add another interval row">+</button>' +
             (idx > 0
-                ? '<button type="button" class="dc-war-icon-btn" data-dc-remove-interval title="Remove this interval row">-</button>'
+                ? '<button type="button" class="dc-war-icon-btn" data-dc-remove-interval data-dc-interval-btn-row-id="' +
+                    htmlAttrEscape(id) +
+                    '" title="Remove this interval row">-</button>'
                 : '') +
             '</div>'
         );
@@ -1430,6 +1434,13 @@
         } else {
             stopIntervalReplace();
         }
+    }
+
+    function closestIntervalButton(target, selector) {
+        if (!target || !target.closest) {
+            return null;
+        }
+        return target.closest(selector);
     }
 
     function bindIntervalListControls(wrap) {
@@ -1466,13 +1477,21 @@
             }
         });
         intervalList.addEventListener('click', function (ev) {
-            if (ev.target.matches && ev.target.matches('[data-dc-add-interval]')) {
+            var addBtn = closestIntervalButton(ev.target, '[data-dc-add-interval]');
+            if (addBtn && intervalList.contains(addBtn)) {
+                ev.preventDefault();
+                ev.stopPropagation();
                 addIntervalRow();
                 refreshIntervalRows(wrap);
                 return;
             }
-            if (ev.target.matches && ev.target.matches('[data-dc-remove-interval]')) {
-                var rowId = intervalRowIdFromControl(ev.target);
+            var removeBtn = closestIntervalButton(ev.target, '[data-dc-remove-interval]');
+            if (removeBtn && intervalList.contains(removeBtn)) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                var rowId =
+                    removeBtn.getAttribute('data-dc-interval-btn-row-id') ||
+                    intervalRowIdFromControl(removeBtn);
                 if (rowId) {
                     removeIntervalRow(rowId);
                     refreshIntervalRows(wrap);
