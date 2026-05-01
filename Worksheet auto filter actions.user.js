@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.7
+// @version      1.4.8
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -1587,6 +1587,11 @@
             return null;
         }
         return target.closest(selector);
+    }
+
+    function intervalRowIdFromControl(el) {
+        var row = el && el.closest ? el.closest('[data-dc-interval-row-id]') : null;
+        return row ? row.getAttribute('data-dc-interval-row-id') || '' : '';
     }
 
     function bindIntervalListControls(wrap) {
