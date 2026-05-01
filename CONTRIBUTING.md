@@ -3,7 +3,7 @@
 ## Git branches
 
 - **Ship work on `main`.** Merge or push completed changes to `main` so the repo’s default branch always reflects what users should run.
-- **If you need a non-`main` branch** (experiments, pre-release checks, or anything that should not land on `main` yet), use **`test`** only.
-- **Do not use long-lived `cursor/…` (or similar agent-specific) branches** for ongoing work. Prefer `main` or `test` as above.
+- **Short-lived feature branches are OK** for reviews, experiments, or agent work. Merge or fast-forward them back to `main` when the change is ready.
+- **Use `test`** for staging changes that should be available for trial but should not ship from `main` yet.
 
-This keeps DonkeyCODE userscripts and automation aligned with a simple two-branch model: production on `main`, optional staging on `test`.
+This keeps DonkeyCODE userscripts and automation aligned around production on `main` while still allowing temporary working branches when they are useful.
