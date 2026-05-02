@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      2.1
 // @description  Show/hide and width for related-flights table columns (prefs)
-// @match        https://opssuitemain.swacorp.com/*
+// @match        https://opssuitemain.swacorp.com/widgets/related-flights
 // @grant        none
 // @donkeycode-pref {"rfColCheckbox":{"type":"boolean","group":"Related flights columns","label":"Show Checkbox","default":false},"rfColFlt":{"type":"boolean","group":"Related flights columns","label":"Show FLT","default":true},"rfColLn":{"type":"boolean","group":"Related flights columns","label":"Show LN","default":false},"rfColAc":{"type":"boolean","group":"Related flights columns","label":"Show AC","default":true},"rfColDep":{"type":"boolean","group":"Related flights columns","label":"Show Dep","default":true},"rfColTimeOut":{"type":"boolean","group":"Related flights columns","label":"Show Time Out","default":true},"rfColArr":{"type":"boolean","group":"Related flights columns","label":"Show Arr","default":true},"rfColTimeIn":{"type":"boolean","group":"Related flights columns","label":"Show Time In","default":true},"rfColTurn":{"type":"boolean","group":"Related flights columns","label":"Show Turn","default":true},"rfColPax":{"type":"boolean","group":"Related flights columns","label":"Show PAX","default":true},"rfColLid":{"type":"boolean","group":"Related flights columns","label":"Show LID","default":true}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Related%20flights%20columns.user.js
