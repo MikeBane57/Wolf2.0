@@ -3,7 +3,8 @@
 // @namespace    Wolf 2.0
 // @version      3.2
 // @description  Reliable dblclick launcher with smart date extraction + logging
-// @match        https://opssuitemain.swacorp.com/*
+// @match        https://opssuitemain.swacorp.com/*worksheet*
+// @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Turns%20W%26B%20Launcher%20(NoDis%20%2B%20Debug).user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Turns%20W%26B%20Launcher%20(NoDis%20%2B%20Debug).user.js

@@ -3,7 +3,8 @@
 // @namespace    Wolf 2.0
 // @version      1.6.3
 // @description  Default wifi-reset To: LOM.NOC@anuvu.com. Debug → extension only. Flowsheet/worksheet mailto; context menu.
-// @match        https://opssuitemain.swacorp.com/*
+// @match        https://opssuitemain.swacorp.com/*worksheet*
+// @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @donkeycode-pref {"wifiResetDebugLog":{"type":"boolean","group":"Wifi reset debug","label":"Log to extension inspector","description":"When ON: debug lines post to DonkeyCODE service worker (DONKEYCODE_PAGE_LOG), not the page console. Default OFF.","default":false}}
 // @donkeycode-pref {"wifiResetMailtoIframeWorksheet":{"type":"boolean","group":"Wifi reset mailto","label":"Flowsheet/worksheet: avoid anchor mailto","description":"ON (default): if hidden iframe mailto fails, retry iframe (don’t use a main-document link — can blank React on flowsheet/worksheet). OFF: allow anchor fallback on worksheet.","default":true}}
