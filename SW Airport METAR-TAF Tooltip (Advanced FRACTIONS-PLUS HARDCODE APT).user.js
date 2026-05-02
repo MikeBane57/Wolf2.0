@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      7.5
 // @description  METAR/TAF tooltip with per-token coloring, advanced alerts, prefs; shares METAR/TAF cache with METAR watch (same tab)
-// @match        https://opssuitemain.swacorp.com/widgets/worksheet
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov

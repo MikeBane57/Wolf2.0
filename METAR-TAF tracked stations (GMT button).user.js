@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      2.0.57
 // @description  Run on worksheet widget only (no schedule/other Ops Suite tabs). Toolbar debug → inspector only.
-// @match        https://opssuitemain.swacorp.com/widgets/worksheet
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        GM_xmlhttpRequest
 // @connect      tgftp.nws.noaa.gov
 // @connect      aviationweather.gov

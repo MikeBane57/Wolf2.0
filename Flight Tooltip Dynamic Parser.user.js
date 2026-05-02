@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      1.2
 // @description  Reformat tool tip pop up
-// @match        https://opssuitemain.swacorp.com/widgets/worksheet
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20Tooltip%20Dynamic%20Parser.user.js

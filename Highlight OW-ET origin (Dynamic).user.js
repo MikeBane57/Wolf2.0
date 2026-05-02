@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      1.2
 // @description  Turns line mission type yellow when block contains OW or ET, reacts to dynamic updates
-// @match        https://opssuitemain.swacorp.com/widgets/worksheet
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Highlight%20OW-ET%20origin%20(Dynamic).user.js
