@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.11
+// @version      1.4.12
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -39,10 +39,13 @@
     var mo = null;
     var relocateRaf = 0;
     var filterPadRaf = 0;
+    var filterPadRetryTimer = null;
+    var filterPadRetryCount = 0;
     var lastSig = '';
     var hostEl = null;
     var toggleInput = null;
     var opTimeTid = null;
+    var ADVANCED_FILTER_MIN_BOTTOM_PAD = 200;
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -1234,26 +1237,75 @@
             : null;
     }
 
+    function textHasAdvancedFilter(el) {
+        return !!(
+            el &&
+            (el.textContent || '').replace(/\s+/g, ' ').indexOf('Advanced Filter') >= 0
+        );
+    }
+
+    function visible(el) {
+        if (!el || !el.getClientRects || !el.getClientRects().length) {
+            return false;
+        }
+        var style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+        return !style || (style.visibility !== 'hidden' && style.display !== 'none');
+    }
+
+    function isAdvancedFilterTitleCandidate(el) {
+        if (!textHasAdvancedFilter(el) || !visible(el)) {
+            return false;
+        }
+        var tag = (el.tagName || '').toLowerCase();
+        if (/^h[1-6]$/.test(tag) || tag === 'legend' || tag === 'summary' || tag === 'label') {
+            return true;
+        }
+        return (el.children || []).length <= 2;
+    }
+
     function findAdvancedFilterPaddingTarget() {
-        var h1s = document.querySelectorAll('h1');
-        for (var i = 0; i < h1s.length; i++) {
-            if ((h1s[i].textContent || '').replace(/\s+/g, ' ').indexOf('Advanced Filter') < 0) {
+        var titles = document.querySelectorAll('h1,h2,h3,h4,h5,h6,legend,summary,label,div,span,p');
+        for (var i = 0; i < titles.length; i++) {
+            if (!isAdvancedFilterTitleCandidate(titles[i])) {
                 continue;
             }
-            var scope = h1s[i].parentElement;
-            for (var up = 0; scope && up < 8; up++) {
-                if (scope.querySelector && scope.querySelector('.accordion.ui.inverted')) {
-                    var accordion = scope.querySelector('.accordion.ui.inverted');
-                    return (
-                        (accordion.querySelector &&
-                            accordion.querySelector('.ui.stackable.grid')) ||
-                        accordion
-                    );
+            var scope = titles[i].parentElement;
+            for (var up = 0; scope && scope !== document.body && up < 8; up++) {
+                if (scope.querySelector) {
+                    var scopedGrid = scope.querySelector('.accordion.ui.inverted .ui.stackable.grid') ||
+                        scope.querySelector('.accordion .ui.stackable.grid') ||
+                        scope.querySelector('.ui.stackable.grid');
+                    if (scopedGrid) {
+                        return scopedGrid;
+                    }
                 }
                 scope = scope.parentElement;
             }
+            var siblingRoot = titles[i].parentElement;
+            if (siblingRoot) {
+                var siblings = siblingRoot.children || [];
+                var start = -1;
+                for (var s = 0; s < siblings.length; s++) {
+                    if (siblings[s] === titles[i] || (siblings[s].contains && siblings[s].contains(titles[i]))) {
+                        start = s;
+                        break;
+                    }
+                }
+                for (var j = start + 1; j >= 1 && j < siblings.length && j <= start + 4; j++) {
+                    if (siblings[j].matches && siblings[j].matches('.ui.stackable.grid')) {
+                        return siblings[j];
+                    }
+                    if (siblings[j].querySelector) {
+                        var siblingGrid = siblings[j].querySelector('.ui.stackable.grid');
+                        if (siblingGrid) {
+                            return siblingGrid;
+                        }
+                    }
+                }
+            }
         }
-        return null;
+        var grids = document.querySelectorAll('.accordion.ui.inverted .ui.stackable.grid,.accordion .ui.stackable.grid');
+        return grids.length === 1 ? grids[0] : null;
     }
 
     function restoreAdvancedFilterBottomPadding() {
@@ -1261,6 +1313,7 @@
         for (var i = 0; i < list.length; i++) {
             list[i].style.removeProperty('padding-bottom');
             list[i].removeAttribute('data-dc-war-bottom-pad');
+            list[i].removeAttribute('data-dc-war-bottom-pad-px');
         }
     }
 
@@ -1268,17 +1321,25 @@
         var target = findAdvancedFilterPaddingTarget();
         var details = findAutoActionsDetails();
         if (!target) {
-            return;
+            debugInterval('advanced filter padding target not found');
+            return false;
         }
         var h = details && details.getBoundingClientRect
             ? Math.ceil(details.getBoundingClientRect().height || 0)
             : 0;
-        var pad = Math.max(200, h);
-        if (!Number.isFinite(pad) || pad < 200) {
-            pad = 200;
+        var pad = Math.max(ADVANCED_FILTER_MIN_BOTTOM_PAD, h);
+        if (!Number.isFinite(pad) || pad < ADVANCED_FILTER_MIN_BOTTOM_PAD) {
+            pad = ADVANCED_FILTER_MIN_BOTTOM_PAD;
         }
         target.style.setProperty('padding-bottom', pad + 'px', 'important');
         target.setAttribute('data-dc-war-bottom-pad', '1');
+        target.setAttribute('data-dc-war-bottom-pad-px', String(pad));
+        debugInterval('advanced filter padding applied', {
+            pad: pad,
+            targetClass: target.className || '',
+            targetTag: target.tagName || ''
+        });
+        return true;
     }
 
     function scheduleAdvancedFilterBottomPadding() {
@@ -1287,7 +1348,24 @@
         }
         filterPadRaf = requestAnimationFrame(function () {
             filterPadRaf = 0;
-            updateAdvancedFilterBottomPadding();
+            if (updateAdvancedFilterBottomPadding()) {
+                filterPadRetryCount = 0;
+                if (filterPadRetryTimer) {
+                    clearInterval(filterPadRetryTimer);
+                    filterPadRetryTimer = null;
+                }
+                return;
+            }
+            if (!filterPadRetryTimer) {
+                filterPadRetryCount = 0;
+                filterPadRetryTimer = setInterval(function () {
+                    filterPadRetryCount++;
+                    if (updateAdvancedFilterBottomPadding() || filterPadRetryCount >= 20) {
+                        clearInterval(filterPadRetryTimer);
+                        filterPadRetryTimer = null;
+                    }
+                }, 250);
+            }
         });
     }
 
@@ -1913,6 +1991,14 @@
         if (relocateRaf) {
             cancelAnimationFrame(relocateRaf);
             relocateRaf = 0;
+        }
+        if (filterPadRetryTimer) {
+            clearInterval(filterPadRetryTimer);
+            filterPadRetryTimer = null;
+        }
+        if (filterPadRaf) {
+            cancelAnimationFrame(filterPadRaf);
+            filterPadRaf = 0;
         }
         if (mo) {
             mo.disconnect();
