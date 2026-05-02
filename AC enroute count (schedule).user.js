@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AC enroute count (schedule)
 // @namespace    Wolf 2.0
-// @version      1.5.0
+// @version      1.5.1
 // @description  Count inbound enroute aircraft by station filter, arrival station, and active puck classes.
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
@@ -27,16 +27,17 @@
     var DEP_STATION_EXTRA_SUBSEL = '[class*="zbA1EvKL1Bo="]';
     /** Arrival airport cell — pairs tg9Iiv9oAOo with this token */
     var ARR_STATION_EXTRA_SUBSEL = '[class*="Ziu3-r4LY1M="]';
-    var STATION_COMBO = 'div[name="station"][role="combobox"]';
+    var STATION_COMBO = 'div[name="station"][role="combobox"], div[name="station"]';
 
     var mo = null;
     var debounceTimer = null;
     var groundMo = null;
-    var stationMo = null;
+    var stationObservers = [];
     var stationEventListener = null;
-    var stationEventCombo = null;
+    var stationEventCombos = [];
     var FLOAT_HOST_ATTR = 'data-dc-ac-enroute-float';
     var tickLogLastMs = 0;
+    var noStationLogLastMs = 0;
     var lastStationCode = '';
     var TICK_LOG_MS = 4000;
 
@@ -99,6 +100,10 @@
         return v === true || v === 'true';
     }
 
+    function debugTickEnabled() {
+        return boolPref('acEnrouteDebugTickLog', true);
+    }
+
     function textLooksLikeStationCode(s) {
         var t = String(s || '').replace(/\s+/g, ' ').trim().toUpperCase();
         return /^[A-Z]{3}$/.test(t) ? t : '';
@@ -120,8 +125,7 @@
         return '';
     }
 
-    function readSelectedStationCode() {
-        var combo = document.querySelector(STATION_COMBO);
+    function stationCodeFromCombo(combo) {
         if (!combo) {
             return '';
         }
@@ -153,6 +157,31 @@
         var dataValue = textLooksLikeStationCode(combo.getAttribute('data-value'));
         if (dataValue) {
             return dataValue;
+        }
+        var selected =
+            combo.querySelector('[role="option"][aria-selected="true"] .text') ||
+            combo.querySelector('[role="option"][aria-checked="true"] .text') ||
+            combo.querySelector('.menu .item.active.selected .text') ||
+            combo.querySelector('.menu .item.selected.active .text');
+        if (selected && !(dv && dv.classList && dv.classList.contains('default'))) {
+            var selectedText = textLooksLikeStationCode(selected.textContent);
+            if (selectedText) {
+                return selectedText;
+            }
+        }
+        return '';
+    }
+
+    function readSelectedStationCode() {
+        var combos = document.querySelectorAll(STATION_COMBO);
+        if (!combos || !combos.length) {
+            return '';
+        }
+        for (var i = combos.length - 1; i >= 0; i--) {
+            var code = stationCodeFromCombo(combos[i]);
+            if (code) {
+                return code;
+            }
         }
         return '';
     }
@@ -373,6 +402,17 @@
         var stationChanged = st !== lastStationCode;
         lastStationCode = st;
         if (!st) {
+            var nowNoStation = Date.now();
+            if (debugTickEnabled() && nowNoStation - noStationLogLastMs >= TICK_LOG_MS) {
+                noStationLogLastMs = nowNoStation;
+                try {
+                    console.log('[AC enroute] NO STATION', {
+                        stationCombos: document.querySelectorAll(STATION_COMBO).length,
+                        pucks: document.querySelectorAll(PUCK_QE).length,
+                        activePucks: document.querySelectorAll(ACTIVE_PUCK_TARGET_SEL).length
+                    });
+                } catch (eNoStation) {}
+            }
             if (existing) {
                 try {
                     existing.remove();
@@ -382,7 +422,7 @@
             return;
         }
         var dbgMatch = boolPref('acEnrouteDebugMatchLog', true);
-        var dbgTick = boolPref('acEnrouteDebugTickLog', true);
+        var dbgTick = debugTickEnabled();
 
         var scanned = scanEnrouteToStation(st, dbgMatch);
         var cnt = scanned.count;
@@ -485,20 +525,13 @@
         } catch (e) {}
     }
 
-    function watchStationComboEl() {
-        var combo = document.querySelector(STATION_COMBO);
+    function wireStationCombo(combo) {
         if (!combo || combo.getAttribute('data-dc-ac-enroute-station-obs') === '1') {
             return;
         }
         combo.setAttribute('data-dc-ac-enroute-station-obs', '1');
-        if (stationMo) {
-            try {
-                stationMo.disconnect();
-            } catch (e) {}
-            stationMo = null;
-        }
         try {
-            stationMo = new MutationObserver(scheduleUpdate);
+            var stationMo = new MutationObserver(scheduleUpdate);
             stationMo.observe(combo, {
                 childList: true,
                 subtree: true,
@@ -513,20 +546,43 @@
                     'data-value'
                 ]
             });
+            stationObservers.push(stationMo);
         } catch (e2) {}
-        stationEventListener = function () {
-            setTimeout(scheduleUpdate, 0);
-        };
+        if (!stationEventListener) {
+            stationEventListener = function () {
+                setTimeout(scheduleUpdate, 0);
+            };
+        }
         try {
             combo.addEventListener('click', stationEventListener, true);
             combo.addEventListener('input', stationEventListener, true);
             combo.addEventListener('change', stationEventListener, true);
             combo.addEventListener('keyup', stationEventListener, true);
-            stationEventCombo = combo;
+            stationEventCombos.push(combo);
         } catch (e3) {}
     }
 
+    function watchStationComboEl() {
+        var combos = document.querySelectorAll(STATION_COMBO);
+        if (!combos || !combos.length) {
+            setTimeout(scheduleUpdate, 0);
+            return;
+        }
+        for (var i = 0; i < combos.length; i++) {
+            wireStationCombo(combos[i]);
+        }
+    }
+
     function init() {
+        if (debugTickEnabled()) {
+            try {
+                console.log('[AC enroute] init', {
+                    stationCombos: document.querySelectorAll(STATION_COMBO).length,
+                    pucks: document.querySelectorAll(PUCK_QE).length,
+                    activePucks: document.querySelectorAll(ACTIVE_PUCK_TARGET_SEL).length
+                });
+            } catch (eInit) {}
+        }
         scheduleUpdate();
         watchGroundArea();
         watchStationComboEl();
@@ -569,26 +625,28 @@
             } catch (e2) {}
             groundMo = null;
         }
-        if (stationMo) {
+        for (var si = 0; si < stationObservers.length; si++) {
             try {
-                stationMo.disconnect();
+                stationObservers[si].disconnect();
             } catch (e4) {}
-            stationMo = null;
         }
-        if (stationEventCombo && stationEventListener) {
-            try {
-                stationEventCombo.removeEventListener('click', stationEventListener, true);
-                stationEventCombo.removeEventListener('input', stationEventListener, true);
-                stationEventCombo.removeEventListener('change', stationEventListener, true);
-                stationEventCombo.removeEventListener('keyup', stationEventListener, true);
-            } catch (e6) {}
+        stationObservers = [];
+        if (stationEventListener) {
+            for (var ei = 0; ei < stationEventCombos.length; ei++) {
+                try {
+                    stationEventCombos[ei].removeEventListener('click', stationEventListener, true);
+                    stationEventCombos[ei].removeEventListener('input', stationEventListener, true);
+                    stationEventCombos[ei].removeEventListener('change', stationEventListener, true);
+                    stationEventCombos[ei].removeEventListener('keyup', stationEventListener, true);
+                } catch (e6) {}
+            }
         }
-        stationEventCombo = null;
+        stationEventCombos = [];
         stationEventListener = null;
         try {
-            var c = document.querySelector(STATION_COMBO + '[data-dc-ac-enroute-station-obs="1"]');
-            if (c) {
-                c.removeAttribute('data-dc-ac-enroute-station-obs');
+            var wired = document.querySelectorAll('[data-dc-ac-enroute-station-obs="1"]');
+            for (var wi = 0; wi < wired.length; wi++) {
+                wired[wi].removeAttribute('data-dc-ac-enroute-station-obs');
             }
         } catch (e5) {}
         try {
