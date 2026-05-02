@@ -3,7 +3,8 @@
 // @namespace    Wolf 2.0
 // @version      1.2
 // @description  Color date/time cells based on day relative to today with 3AM cutover
-// @match        https://opssuitemain.swacorp.com/*
+// @match        https://opssuitemain.swacorp.com/*worksheet*
+// @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @updateURL    	https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Date-Time%20Colors.user.js
 // @downloadURL  	https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Date-Time%20Colors.user.js

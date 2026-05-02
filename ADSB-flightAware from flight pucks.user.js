@@ -3,7 +3,8 @@
 // @namespace    Wolf 2.0
 // @version      2.3
 // @description  Double-click dep/arr or flight: pick airport + flight services (ADSB / FR24 / FlightAware)
-// @match        https://opssuitemain.swacorp.com/*
+// @match        https://opssuitemain.swacorp.com/*worksheet*
+// @match        https://opssuitemain.swacorp.com/schedule*
 // @donkeycode-pref {"flightTrackerProvider":{"type":"select","group":"Flight tracker (double-click flight number)","label":"Open flight in","description":"Southwest flight number from the puck. Flightradar24 opens the live map: flightradar24.com/SWA{n}.","default":"flightaware","options":[{"value":"flightaware","label":"FlightAware"},{"value":"flightradar24","label":"Flightradar24 live map"}]}}
 // @donkeycode-pref {"airportMapProvider":{"type":"select","group":"Airport map (double-click dep/arr code)","label":"Open airport in","description":"IATA code from the puck. ADSB Exchange globe or Flightradar24 airport page (flightradar24.com/airport/{code}).","default":"adsb","options":[{"value":"adsb","label":"ADSB Exchange globe"},{"value":"flightradar24","label":"Flightradar24 airport"}]}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/ADSB-flightAware%20from%20flight%20pucks.user.js

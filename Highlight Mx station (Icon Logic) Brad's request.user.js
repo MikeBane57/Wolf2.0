@@ -3,7 +3,8 @@
 // @namespace    Wolf 2.0
 // @version      1.5
 // @description  Color matches icon unless gray, otherwise default match color
-// @match        https://opssuitemain.swacorp.com/*
+// @match        https://opssuitemain.swacorp.com/*worksheet*
+// @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Highlight%20Mx%20station%20(Icon%20Logic)%20Brad's%20request.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Highlight%20Mx%20station%20(Icon%20Logic)%20Brad's%20request.user.js
