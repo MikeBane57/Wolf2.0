@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.8
+// @version      1.4.9
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -38,6 +38,7 @@
     var relocateRetryTimer = null;
     var mo = null;
     var relocateRaf = 0;
+    var filterPadRaf = 0;
     var lastSig = '';
     var hostEl = null;
     var toggleInput = null;
@@ -1226,6 +1227,85 @@
         }
     }
 
+    function findWorksheetActionArea() {
+        var host = document.getElementById(HOST_ID);
+        if (host) {
+            var p = host.parentElement;
+            while (p && p !== document.body && p !== document.documentElement) {
+                if (
+                    p.querySelector &&
+                    p.querySelector('.ui.small.inverted.statistics') &&
+                    p.querySelector('button')
+                ) {
+                    return p;
+                }
+                p = p.parentElement;
+            }
+        }
+        var stats = document.querySelector('.ui.small.inverted.statistics');
+        if (!stats) {
+            return null;
+        }
+        var el = stats;
+        for (var depth = 0; el && depth < 8; depth++) {
+            if (el.querySelector && el.querySelector('button')) {
+                return el;
+            }
+            el = el.parentElement;
+        }
+        return stats.parentElement || stats;
+    }
+
+    function findAdvancedFilterPaddingTarget() {
+        var h1s = document.querySelectorAll('h1');
+        for (var i = 0; i < h1s.length; i++) {
+            if ((h1s[i].textContent || '').replace(/\s+/g, ' ').indexOf('Advanced Filter') < 0) {
+                continue;
+            }
+            var scope = h1s[i].parentElement;
+            for (var up = 0; scope && up < 8; up++) {
+                if (scope.querySelector && scope.querySelector('.accordion.ui.inverted')) {
+                    return scope.querySelector('.accordion.ui.inverted');
+                }
+                scope = scope.parentElement;
+            }
+        }
+        return null;
+    }
+
+    function restoreAdvancedFilterBottomPadding() {
+        var list = document.querySelectorAll('[data-dc-war-bottom-pad]');
+        for (var i = 0; i < list.length; i++) {
+            list[i].style.removeProperty('padding-bottom');
+            list[i].removeAttribute('data-dc-war-bottom-pad');
+        }
+    }
+
+    function updateAdvancedFilterBottomPadding() {
+        var target = findAdvancedFilterPaddingTarget();
+        var actionArea = findWorksheetActionArea();
+        if (!target || !actionArea || !actionArea.getBoundingClientRect) {
+            return;
+        }
+        var h = Math.ceil(actionArea.getBoundingClientRect().height || 0);
+        if (!h) {
+            return;
+        }
+        var pad = Math.max(24, h + 16);
+        target.style.setProperty('padding-bottom', pad + 'px', 'important');
+        target.setAttribute('data-dc-war-bottom-pad', '1');
+    }
+
+    function scheduleAdvancedFilterBottomPadding() {
+        if (filterPadRaf) {
+            cancelAnimationFrame(filterPadRaf);
+        }
+        filterPadRaf = requestAnimationFrame(function () {
+            filterPadRaf = 0;
+            updateAdvancedFilterBottomPadding();
+        });
+    }
+
     /**
      * Move host under the toolbar after Replace appears (fixes fixed bottom-right stuck after refresh).
      */
@@ -1252,9 +1332,11 @@
         if (relocateRaf) {
             cancelAnimationFrame(relocateRaf);
         }
+        scheduleAdvancedFilterBottomPadding();
         relocateRaf = requestAnimationFrame(function () {
             relocateRaf = 0;
             relocateHost();
+            scheduleAdvancedFilterBottomPadding();
         });
     }
 
@@ -1571,6 +1653,7 @@
         }
         list.innerHTML = html;
         updateRenderedIntervalCountdowns(host);
+        scheduleAdvancedFilterBottomPadding();
     }
 
     function refreshIntervalRows(host) {
@@ -1669,6 +1752,7 @@
             }
             renderIntervalRows(wrap);
             bindIntervalListControls(wrap);
+            scheduleAdvancedFilterBottomPadding();
             if (wt) {
                 wt.checked = readWatchOn();
             }
@@ -1690,6 +1774,7 @@
         }
         renderIntervalRows(wrap);
         bindIntervalListControls(wrap);
+        scheduleAdvancedFilterBottomPadding();
         if (toggleInput) {
             toggleInput.checked = readWatchOn();
         }
@@ -1729,6 +1814,7 @@
             det.open = !readCollapsed();
             det.addEventListener('toggle', function () {
                 writeCollapsed(!det.open);
+                scheduleAdvancedFilterBottomPadding();
             });
         }
     }
@@ -1815,6 +1901,7 @@
                 tryMount();
             } else {
                 scheduleRelocateHost();
+                scheduleAdvancedFilterBottomPadding();
             }
             try {
                 mountOperationalTimeIfNeeded();
@@ -1833,6 +1920,7 @@
         unmountOpTime();
         stopPoll();
         stopIntervalReplace();
+        restoreAdvancedFilterBottomPadding();
         if (relocateRetryTimer) {
             clearInterval(relocateRetryTimer);
             relocateRetryTimer = null;
