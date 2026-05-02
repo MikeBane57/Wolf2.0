@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      1.1
 // @description  shrinks the spare gray bar height on spare Aircraft
-// @match        https://opssuitemain.swacorp.com/*worksheet*
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Spare%20height.user.js

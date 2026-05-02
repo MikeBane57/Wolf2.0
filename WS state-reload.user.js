@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      0.2.23
 // @description  Cloud/sync logs and toolbar debug → extension inspector only (no page console). Quick reload settle.
-// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet
 // @grant        GM_xmlhttpRequest
 // @connect      *
 // @connect      api.github.com

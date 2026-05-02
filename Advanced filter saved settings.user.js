@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      0.1.3
 // @description  Save and recall named Advanced filter input presets.
-// @match        https://opssuitemain.swacorp.com/*worksheet*
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Advanced%20filter%20saved%20settings.user.js

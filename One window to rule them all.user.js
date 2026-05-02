@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      10.9
 // @description  Position popup windows by URL; geometry from DonkeyCODE Pref (Scripts → gear) or defaults below.
-// @match        https://opssuitemain.swacorp.com/*worksheet*
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @run-at       document-start
 // @donkeycode-pref {"goTurnMonitor":{"type":"select","group":"Go Turn Details","label":"Monitor","description":"Primary: align from opener screen edge. Secondary: add opener window width (typical two-monitor setup).","default":1,"options":[{"value":1,"label":"Primary"},{"value":2,"label":"Secondary"}]},"goTurnLeft":{"type":"number","group":"Go Turn Details","label":"Left (px)","description":"Horizontal offset from the computed edge.","default":0,"min":-5000,"max":5000,"step":1},"goTurnTop":{"type":"number","group":"Go Turn Details","label":"Top (px)","default":0,"min":0,"max":4000,"step":1},"goTurnWidth":{"type":"number","group":"Go Turn Details","label":"Width (px)","default":1100,"min":200,"max":4000,"step":1},"goTurnHeight":{"type":"number","group":"Go Turn Details","label":"Height (px)","default":900,"min":200,"max":4000,"step":1}}
