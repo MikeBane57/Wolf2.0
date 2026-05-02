@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AC enroute count (schedule)
 // @namespace    Wolf 2.0
-// @version      1.5.1
+// @version      1.5.2
 // @description  Count inbound enroute aircraft by station filter, arrival station, and active puck classes.
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
@@ -39,6 +39,8 @@
     var tickLogLastMs = 0;
     var noStationLogLastMs = 0;
     var lastStationCode = '';
+    var lastScanSignature = '';
+    var lastScanResult = null;
     var TICK_LOG_MS = 4000;
 
     function elementHasClassToken(el, token) {
@@ -242,7 +244,26 @@
         return ap.length >= 2 ? ap[1] : '';
     }
 
-    function scanEnrouteToStation(station, debugMatch) {
+    function activePuckSnapshot(station) {
+        var allPucks = document.querySelectorAll(PUCK_QE);
+        var activePucks = document.querySelectorAll(ACTIVE_PUCK_TARGET_SEL);
+        var parts = [station || '', 'pucks=' + allPucks.length, 'active=' + activePucks.length];
+        for (var i = 0; i < activePucks.length; i++) {
+            var puck = activePucks[i];
+            parts.push(
+                (puck.getAttribute && puck.getAttribute('data-linked-hover-id')) ||
+                    flightNumberFromPuck(puck) ||
+                    String(i)
+            );
+        }
+        return {
+            signature: parts.join('|'),
+            pucks: allPucks,
+            activePucks: activePucks
+        };
+    }
+
+    function scanEnrouteToStation(station, debugMatch, snapshot) {
         var stats = {
             puckCount: 0,
             activePucks: 0,
@@ -252,8 +273,11 @@
         if (!station) {
             return { count: 0, stats: stats };
         }
-        var allPucks = document.querySelectorAll(PUCK_QE);
-        var activePucks = document.querySelectorAll(ACTIVE_PUCK_TARGET_SEL);
+        var allPucks = snapshot && snapshot.pucks ? snapshot.pucks : document.querySelectorAll(PUCK_QE);
+        var activePucks =
+            snapshot && snapshot.activePucks
+                ? snapshot.activePucks
+                : document.querySelectorAll(ACTIVE_PUCK_TARGET_SEL);
         stats.puckCount = allPucks.length;
         stats.activePucks = activePucks.length;
         var n = 0;
@@ -292,6 +316,74 @@
             }
         }
         return { count: n, stats: stats };
+    }
+
+    function nodeMatchesRelevantThing(el) {
+        if (!el || !el.matches) {
+            return false;
+        }
+        if (
+            el.matches(STATION_COMBO) ||
+            el.matches(PUCK_QE) ||
+            el.matches(ACTIVE_PUCK_TARGET_SEL) ||
+            elementHasClassToken(el, PUCK_CLASS_TOKEN)
+        ) {
+            return true;
+        }
+        for (var i = 0; i < ACTIVE_PUCK_PARENT_TOKENS.length; i++) {
+            if (elementHasClassToken(el, ACTIVE_PUCK_PARENT_TOKENS[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function nodeTreeRelevant(node) {
+        var el = node && node.nodeType === 1 ? node : node && node.parentElement;
+        if (!el) {
+            return false;
+        }
+        if (nodeMatchesRelevantThing(el)) {
+            return true;
+        }
+        try {
+            if (el.closest && el.closest(STATION_COMBO + ', ' + PUCK_QE)) {
+                return true;
+            }
+        } catch (e) {}
+        try {
+            if (el.querySelector && el.querySelector(STATION_COMBO + ', ' + PUCK_QE + ', ' + ACTIVE_PUCK_TARGET_SEL)) {
+                return true;
+            }
+        } catch (e2) {}
+        var txt = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+        return /A\/C\s+ON\s+THE\s+GROUND|ON\s+THE\s+GROUND/i.test(txt);
+    }
+
+    function mutationsRelevant(mutations) {
+        if (!mutations || !mutations.length) {
+            return true;
+        }
+        for (var i = 0; i < mutations.length; i++) {
+            var m = mutations[i];
+            if (m.type === 'attributes' || m.type === 'characterData') {
+                if (nodeTreeRelevant(m.target)) {
+                    return true;
+                }
+                continue;
+            }
+            for (var ai = 0; ai < m.addedNodes.length; ai++) {
+                if (nodeTreeRelevant(m.addedNodes[ai])) {
+                    return true;
+                }
+            }
+            for (var ri = 0; ri < m.removedNodes.length; ri++) {
+                if (nodeTreeRelevant(m.removedNodes[ri])) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     function findGroundStatRow() {
@@ -402,6 +494,8 @@
         var stationChanged = st !== lastStationCode;
         lastStationCode = st;
         if (!st) {
+            lastScanSignature = '';
+            lastScanResult = null;
             var nowNoStation = Date.now();
             if (debugTickEnabled() && nowNoStation - noStationLogLastMs >= TICK_LOG_MS) {
                 noStationLogLastMs = nowNoStation;
@@ -424,12 +518,18 @@
         var dbgMatch = boolPref('acEnrouteDebugMatchLog', true);
         var dbgTick = debugTickEnabled();
 
-        var scanned = scanEnrouteToStation(st, dbgMatch);
+        var snapshot = activePuckSnapshot(st);
+        var scanChanged = stationChanged || snapshot.signature !== lastScanSignature || !lastScanResult;
+        var scanned = scanChanged ? scanEnrouteToStation(st, dbgMatch, snapshot) : lastScanResult;
+        if (scanChanged) {
+            lastScanSignature = snapshot.signature;
+            lastScanResult = scanned;
+        }
         var cnt = scanned.count;
         var stats = scanned.stats;
 
         var now = Date.now();
-        if (dbgTick && (stationChanged || now - tickLogLastMs >= TICK_LOG_MS)) {
+        if (dbgTick && scanChanged) {
             tickLogLastMs = now;
             try {
                 console.log('[AC enroute] tick', {
@@ -439,7 +539,8 @@
                     pucks: stats.puckCount,
                     activePucks: stats.activePucks,
                     arrEqualsStation: stats.arrMatchStation,
-                    skippedOutboundSameStation: stats.skippedOutboundSameStation
+                    skippedOutboundSameStation: stats.skippedOutboundSameStation,
+                    reason: stationChanged ? 'station changed' : 'active pucks changed'
                 });
             } catch (e0) {}
         }
@@ -586,7 +687,10 @@
         scheduleUpdate();
         watchGroundArea();
         watchStationComboEl();
-        mo = new MutationObserver(function () {
+        mo = new MutationObserver(function (mutations) {
+            if (!mutationsRelevant(mutations)) {
+                return;
+            }
             scheduleUpdate();
             watchGroundArea();
             watchStationComboEl();
@@ -658,6 +762,8 @@
         removeFloatingHud();
         tickLogLastMs = 0;
         lastStationCode = '';
+        lastScanSignature = '';
+        lastScanResult = null;
         window.__myScriptCleanup = undefined;
     };
 })();
