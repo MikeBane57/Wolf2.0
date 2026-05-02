@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.10
+// @version      1.4.11
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -1273,9 +1273,9 @@
         var h = details && details.getBoundingClientRect
             ? Math.ceil(details.getBoundingClientRect().height || 0)
             : 0;
-        var pad = Math.max(100, h);
-        if (!Number.isFinite(pad) || pad < 100) {
-            pad = 100;
+        var pad = Math.max(200, h);
+        if (!Number.isFinite(pad) || pad < 200) {
+            pad = 200;
         }
         target.style.setProperty('padding-bottom', pad + 'px', 'important');
         target.setAttribute('data-dc-war-bottom-pad', '1');
