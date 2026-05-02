@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.9
+// @version      1.4.8
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -38,7 +38,6 @@
     var relocateRetryTimer = null;
     var mo = null;
     var relocateRaf = 0;
-    var filterLimitRaf = 0;
     var lastSig = '';
     var hostEl = null;
     var toggleInput = null;
@@ -1227,101 +1226,6 @@
         }
     }
 
-    function findWorksheetActionArea() {
-        var host = document.getElementById(HOST_ID);
-        if (host) {
-            var p = host.parentElement;
-            while (p && p !== document.body && p !== document.documentElement) {
-                if (
-                    p.querySelector &&
-                    p.querySelector('.ui.small.inverted.statistics') &&
-                    p.querySelector('button')
-                ) {
-                    return p;
-                }
-                p = p.parentElement;
-            }
-        }
-        var stats = document.querySelector('.ui.small.inverted.statistics');
-        if (!stats) {
-            return null;
-        }
-        var el = stats;
-        for (var depth = 0; el && depth < 8; depth++) {
-            if (el.querySelector && el.querySelector('button')) {
-                return el;
-            }
-            el = el.parentElement;
-        }
-        return stats.parentElement || stats;
-    }
-
-    function findAdvancedFilterScrollArea() {
-        var h1s = document.querySelectorAll('h1');
-        for (var i = 0; i < h1s.length; i++) {
-            if ((h1s[i].textContent || '').replace(/\s+/g, ' ').indexOf('Advanced Filter') < 0) {
-                continue;
-            }
-            var scope = h1s[i].parentElement;
-            for (var up = 0; scope && up < 8; up++) {
-                if (scope.querySelector && scope.querySelector('.accordion.ui.inverted')) {
-                    var cur = scope;
-                    while (
-                        cur &&
-                        cur.parentElement &&
-                        cur.parentElement !== document.body &&
-                        cur.parentElement !== document.documentElement
-                    ) {
-                        var cs = window.getComputedStyle(cur.parentElement);
-                        if (cs && (cs.overflowY === 'auto' || cs.overflowY === 'scroll')) {
-                            return cur.parentElement;
-                        }
-                        cur = cur.parentElement;
-                    }
-                    return scope.querySelector('.accordion.ui.inverted').parentElement || scope;
-                }
-                scope = scope.parentElement;
-            }
-        }
-        return null;
-    }
-
-    function restoreAdvancedFilterScrollLimit() {
-        var list = document.querySelectorAll('[data-dc-war-scroll-limited]');
-        for (var i = 0; i < list.length; i++) {
-            list[i].style.removeProperty('max-height');
-            list[i].style.removeProperty('overflow-y');
-            list[i].removeAttribute('data-dc-war-scroll-limited');
-        }
-    }
-
-    function limitAdvancedFilterScrollToStats() {
-        var scroller = findAdvancedFilterScrollArea();
-        var actionArea = findWorksheetActionArea();
-        if (!scroller || !actionArea || !scroller.getBoundingClientRect || !actionArea.getBoundingClientRect) {
-            return;
-        }
-        var sRect = scroller.getBoundingClientRect();
-        var aRect = actionArea.getBoundingClientRect();
-        if (!sRect.height || !aRect.top || aRect.top <= sRect.top + 80) {
-            return;
-        }
-        var nextMax = Math.max(120, Math.floor(aRect.top - sRect.top - 4));
-        scroller.style.setProperty('max-height', nextMax + 'px', 'important');
-        scroller.style.setProperty('overflow-y', 'auto', 'important');
-        scroller.setAttribute('data-dc-war-scroll-limited', '1');
-    }
-
-    function scheduleAdvancedFilterScrollLimit() {
-        if (filterLimitRaf) {
-            cancelAnimationFrame(filterLimitRaf);
-        }
-        filterLimitRaf = requestAnimationFrame(function () {
-            filterLimitRaf = 0;
-            limitAdvancedFilterScrollToStats();
-        });
-    }
-
     /**
      * Move host under the toolbar after Replace appears (fixes fixed bottom-right stuck after refresh).
      */
@@ -1351,7 +1255,6 @@
         relocateRaf = requestAnimationFrame(function () {
             relocateRaf = 0;
             relocateHost();
-            scheduleAdvancedFilterScrollLimit();
         });
     }
 
@@ -1672,7 +1575,6 @@
 
     function refreshIntervalRows(host) {
         renderIntervalRows(host);
-        scheduleAdvancedFilterScrollLimit();
         if (anyIntervalRowOn(readIntervalRows())) {
             ensureIntervalReplaceRunning();
         } else {
@@ -1739,7 +1641,6 @@
                 ev.stopPropagation();
                 addIntervalRow();
                 renderIntervalRows(wrap);
-                scheduleAdvancedFilterScrollLimit();
                 debugInterval('interval row added', readIntervalRows());
                 return;
             }
@@ -1828,7 +1729,6 @@
             det.open = !readCollapsed();
             det.addEventListener('toggle', function () {
                 writeCollapsed(!det.open);
-                scheduleAdvancedFilterScrollLimit();
             });
         }
     }
@@ -1865,7 +1765,6 @@
             }
             bindHostControls(existing);
             relocateHost();
-            limitAdvancedFilterScrollToStats();
             if (hostEl.getAttribute('data-dc-war-placed') !== '1') {
                 setHostPlaced(hostEl, findToolbarAnchor() !== null);
             }
@@ -1893,7 +1792,6 @@
             document.body.appendChild(wrap);
         }
         bindHostControls(wrap);
-        limitAdvancedFilterScrollToStats();
         if (readWatchOn()) {
             startPoll();
         }
@@ -1953,7 +1851,6 @@
                 h.remove();
             }
         } catch (e) {}
-        restoreAdvancedFilterScrollLimit();
         var st = document.getElementById(STYLE_ID);
         if (st) {
             st.remove();
