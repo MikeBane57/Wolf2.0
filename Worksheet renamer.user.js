@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      2.8
 // @description  Rename worksheet tab title; short poll then lightweight <title> watch; optional favicon
-// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet
 // @donkeycode-pref {"worksheetTitleTemplate":{"type":"string","group":"Tab title","label":"Title template","description":"Use {num} and optionally {base} (rest of title, dates stripped). Omit {base} for a fixed label only, e.g. WS {num}.","default":"{num} · {base}"},"worksheetFaviconUrl":{"type":"string","group":"Tab icon","label":"Tab icon (emoji or URL)","description":"Paste one emoji (e.g. 📋) or a full image URL (https://… or data:…). Leave empty for the default site icon. Mirrored in localStorage (donkeycode.mirror.worksheetFaviconUrl) when set so cloud sync cannot drop it.","default":"","placeholder":"📋 or https://…"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20renamer.user.js

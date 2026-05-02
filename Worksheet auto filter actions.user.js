@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      1.4.13
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
-// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet
 // @grant        none
 // @donkeycode-pref {"worksheetAutoReplacePollMs":{"type":"number","group":"Auto filter actions","label":"Check interval (ms)","description":"How often to re-read counts from the page while the watch is on.","default":800,"min":200,"max":10000,"step":100},"worksheetAutoReplaceIntervalSec":{"type":"number","group":"Auto filter actions","label":"Interval (seconds)","description":"Default seconds for interval clicks when interval mode is on (min 5).","default":30,"min":5,"max":3600,"step":1},"worksheetAutoReplaceDebug":{"type":"boolean","group":"Auto filter actions","label":"Debug interval actions","description":"Log interval row countdown/click state to the browser console.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Worksheet%20auto%20filter%20actions.user.js

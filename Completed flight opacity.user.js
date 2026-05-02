@@ -3,7 +3,7 @@
 // @namespace    Wolf 2.0
 // @version      2.0
 // @description  Set opacity for completed-flight leg styling (and matching sched bar) on the ops map
-// @match        https://opssuitemain.swacorp.com/*worksheet*
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @donkeycode-pref {"completedFlightOpacity":{"type":"number","group":"Opacity","label":"Completed flight opacity","description":"0 = invisible, 1 = fully opaque. Applied to completed leg and sched block elements.","default":0.4,"min":0,"max":1,"step":0.05}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Completed%20flight%20opacity.user.js
