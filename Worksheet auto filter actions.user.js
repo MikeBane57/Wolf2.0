@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.12
+// @version      1.4.13
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -46,6 +46,15 @@
     var toggleInput = null;
     var opTimeTid = null;
     var ADVANCED_FILTER_MIN_BOTTOM_PAD = 200;
+    var ADVANCED_FILTER_SECTION_TITLES = [
+        'Fleet',
+        'Aircraft',
+        'Maintenance',
+        'Route',
+        'Flight',
+        'Operation',
+        'Equipment'
+    ];
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -1263,7 +1272,58 @@
         return (el.children || []).length <= 2;
     }
 
+    function normalizedText(el) {
+        return (el && el.textContent ? el.textContent : '').replace(/\s+/g, ' ').trim();
+    }
+
+    function advancedFilterSectionTitleCount(grid) {
+        if (!grid || !grid.children) {
+            return 0;
+        }
+        var found = Object.create(null);
+        for (var i = 0; i < grid.children.length; i++) {
+            var col = grid.children[i];
+            if (!col || !col.querySelector) {
+                continue;
+            }
+            var title = col.querySelector(':scope > .title') || col.querySelector('.title');
+            var txt = normalizedText(title);
+            for (var j = 0; j < ADVANCED_FILTER_SECTION_TITLES.length; j++) {
+                var expected = ADVANCED_FILTER_SECTION_TITLES[j];
+                if (txt.indexOf(expected) === 0) {
+                    found[expected] = true;
+                    break;
+                }
+            }
+        }
+        var n = 0;
+        for (var k in found) {
+            if (Object.prototype.hasOwnProperty.call(found, k)) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    function findAdvancedFilterGridBySections() {
+        var grids = document.querySelectorAll('.ui.stackable.grid');
+        var best = null;
+        var bestScore = 0;
+        for (var i = 0; i < grids.length; i++) {
+            var score = advancedFilterSectionTitleCount(grids[i]);
+            if (score > bestScore) {
+                best = grids[i];
+                bestScore = score;
+            }
+        }
+        return bestScore >= 4 ? best : null;
+    }
+
     function findAdvancedFilterPaddingTarget() {
+        var sectionGrid = findAdvancedFilterGridBySections();
+        if (sectionGrid) {
+            return sectionGrid;
+        }
         var titles = document.querySelectorAll('h1,h2,h3,h4,h5,h6,legend,summary,label,div,span,p');
         for (var i = 0; i < titles.length; i++) {
             if (!isAdvancedFilterTitleCandidate(titles[i])) {
