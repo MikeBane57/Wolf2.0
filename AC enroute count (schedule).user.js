@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AC enroute count (schedule)
 // @namespace    Wolf 2.0
-// @version      1.5.2
-// @description  Count inbound enroute aircraft by station filter, arrival station, and active puck classes.
+// @version      1.6.0
+// @description  Count inbound enroute aircraft seen for the selected station using active puck classes.
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
 // @donkeycode-pref {"acEnrouteDebugMatchLog":{"type":"boolean","group":"AC enroute · debug","label":"Log each MATCH to page console","description":"Logs every counted puck (dep/arr, flight #, active class source). Default ON during tuning.","default":true},"acEnrouteDebugTickLog":{"type":"boolean","group":"AC enroute · debug","label":"Log periodic scan summary (tick)","description":"Every ~4s while the map updates: puck count, active pucks, station filter. Default ON; turn OFF to reduce noise.","default":true}}
@@ -41,6 +41,8 @@
     var lastStationCode = '';
     var lastScanSignature = '';
     var lastScanResult = null;
+    var seenPucks = {};
+    var seenPuckCount = 0;
     var TICK_LOG_MS = 4000;
 
     function elementHasClassToken(el, token) {
@@ -125,6 +127,17 @@
             }
         }
         return '';
+    }
+
+    function stablePuckKey(puck, dep, arr) {
+        if (!puck) {
+            return '';
+        }
+        var hoverId = puck.getAttribute && puck.getAttribute('data-linked-hover-id');
+        if (hoverId) {
+            return 'hover:' + hoverId;
+        }
+        return ['route', dep || '?', arr || '?', flightNumberFromPuck(puck) || '?'].join(':');
     }
 
     function stationCodeFromCombo(combo) {
@@ -244,17 +257,25 @@
         return ap.length >= 2 ? ap[1] : '';
     }
 
+    function resetSeenPucks() {
+        seenPucks = {};
+        seenPuckCount = 0;
+        lastScanSignature = '';
+        lastScanResult = null;
+    }
+
     function activePuckSnapshot(station) {
         var allPucks = document.querySelectorAll(PUCK_QE);
         var activePucks = document.querySelectorAll(ACTIVE_PUCK_TARGET_SEL);
         var parts = [station || '', 'pucks=' + allPucks.length, 'active=' + activePucks.length];
-        for (var i = 0; i < activePucks.length; i++) {
-            var puck = activePucks[i];
+        for (var i = 0; i < allPucks.length; i++) {
+            var puck = allPucks[i];
             parts.push(
                 (puck.getAttribute && puck.getAttribute('data-linked-hover-id')) ||
                     flightNumberFromPuck(puck) ||
                     String(i)
             );
+            parts.push(isActivePuck(puck) ? 'A' : 'I');
         }
         return {
             signature: parts.join('|'),
@@ -266,8 +287,11 @@
     function scanEnrouteToStation(station, debugMatch, snapshot) {
         var stats = {
             puckCount: 0,
-            activePucks: 0,
+            visibleActivePucks: 0,
+            seenActivePucks: 0,
             arrMatchStation: 0,
+            newlySeen: 0,
+            removedSeen: 0,
             skippedOutboundSameStation: 0
         };
         if (!station) {
@@ -279,43 +303,58 @@
                 ? snapshot.activePucks
                 : document.querySelectorAll(ACTIVE_PUCK_TARGET_SEL);
         stats.puckCount = allPucks.length;
-        stats.activePucks = activePucks.length;
-        var n = 0;
+        stats.visibleActivePucks = activePucks.length;
         var pi;
-        for (pi = 0; pi < activePucks.length; pi++) {
-            var puckLeg = activePucks[pi];
-            if (!isActivePuck(puckLeg)) {
-                continue;
-            }
+        for (pi = 0; pi < allPucks.length; pi++) {
+            var puckLeg = allPucks[pi];
             var arr = arrivalStationFromPuck(puckLeg);
             var dep = departureStationFromPuck(puckLeg);
-            if (!arr || arr !== station) {
+            var key = stablePuckKey(puckLeg, dep, arr);
+            if (!key) {
+                continue;
+            }
+            var shouldCount = isActivePuck(puckLeg) && arr === station && !(dep && dep === station);
+            if (!shouldCount) {
+                if (seenPucks[key]) {
+                    delete seenPucks[key];
+                    seenPuckCount = Math.max(0, seenPuckCount - 1);
+                    stats.removedSeen++;
+                }
                 continue;
             }
             stats.arrMatchStation++;
-            /** Inbound to map station only — exclude outbound from hub (e.g. DAL→DEN). */
             if (dep && dep === station) {
                 stats.skippedOutboundSameStation++;
                 continue;
             }
-            n++;
+            if (seenPucks[key]) {
+                continue;
+            }
+            seenPucks[key] = {
+                dep: dep || '',
+                arr: arr || '',
+                flight: flightNumberFromPuck(puckLeg) || '',
+                hoverId: puckLeg.getAttribute ? puckLeg.getAttribute('data-linked-hover-id') || '' : '',
+                activeClass: activePuckSourceClass(puckLeg) || ''
+            };
+            seenPuckCount++;
+            stats.newlySeen++;
             if (debugMatch) {
                 try {
                     console.log('[AC enroute] MATCH', {
                         mapStation: station,
-                        dep: dep || '?',
-                        arr: arr,
-                        flight: flightNumberFromPuck(puckLeg) || undefined,
-                        activeClass: activePuckSourceClass(puckLeg) || undefined,
-                        hoverId:
-                            puckLeg && puckLeg.getAttribute
-                                ? puckLeg.getAttribute('data-linked-hover-id')
-                                : undefined
+                        dep: seenPucks[key].dep || '?',
+                        arr: seenPucks[key].arr,
+                        flight: seenPucks[key].flight || undefined,
+                        activeClass: seenPucks[key].activeClass || undefined,
+                        hoverId: seenPucks[key].hoverId || undefined,
+                        source: 'seen cache'
                     });
                 } catch (logErr) {}
             }
         }
-        return { count: n, stats: stats };
+        stats.seenActivePucks = seenPuckCount;
+        return { count: seenPuckCount, stats: stats };
     }
 
     function nodeMatchesRelevantThing(el) {
@@ -456,14 +495,14 @@
         var line2 =
             stats &&
             '<span style="opacity:.75;font-size:11px">' +
-            'pucks ' +
+            'visible pucks ' +
             stats.puckCount +
-            ' · active ' +
-            stats.activePucks +
-            ' · arr=' +
-            stationCode +
-            ': ' +
-            stats.arrMatchStation +
+            ' · visible active ' +
+            stats.visibleActivePucks +
+            ' · seen active ' +
+            stats.seenActivePucks +
+            ' · new +' +
+            stats.newlySeen +
             '</span>';
         var hint =
             stats && stats.puckCount === 0
@@ -492,6 +531,9 @@
 
         var st = readSelectedStationCode();
         var stationChanged = st !== lastStationCode;
+        if (stationChanged) {
+            resetSeenPucks();
+        }
         lastStationCode = st;
         if (!st) {
             lastScanSignature = '';
@@ -537,8 +579,11 @@
                     count: cnt,
                     groundRowFound: !!groundRow,
                     pucks: stats.puckCount,
-                    activePucks: stats.activePucks,
-                    arrEqualsStation: stats.arrMatchStation,
+                    visibleActivePucks: stats.visibleActivePucks,
+                    seenActivePucks: stats.seenActivePucks,
+                    newlySeen: stats.newlySeen,
+                    removedSeen: stats.removedSeen,
+                    arrEqualsStationVisible: stats.arrMatchStation,
                     skippedOutboundSameStation: stats.skippedOutboundSameStation,
                     reason: stationChanged ? 'station changed' : 'active pucks changed'
                 });
@@ -762,8 +807,7 @@
         removeFloatingHud();
         tickLogLastMs = 0;
         lastStationCode = '';
-        lastScanSignature = '';
-        lastScanResult = null;
+        resetSeenPucks();
         window.__myScriptCleanup = undefined;
     };
 })();
