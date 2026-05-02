@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.9
+// @version      1.4.10
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -1227,33 +1227,11 @@
         }
     }
 
-    function findWorksheetActionArea() {
+    function findAutoActionsDetails() {
         var host = document.getElementById(HOST_ID);
-        if (host) {
-            var p = host.parentElement;
-            while (p && p !== document.body && p !== document.documentElement) {
-                if (
-                    p.querySelector &&
-                    p.querySelector('.ui.small.inverted.statistics') &&
-                    p.querySelector('button')
-                ) {
-                    return p;
-                }
-                p = p.parentElement;
-            }
-        }
-        var stats = document.querySelector('.ui.small.inverted.statistics');
-        if (!stats) {
-            return null;
-        }
-        var el = stats;
-        for (var depth = 0; el && depth < 8; depth++) {
-            if (el.querySelector && el.querySelector('button')) {
-                return el;
-            }
-            el = el.parentElement;
-        }
-        return stats.parentElement || stats;
+        return host && host.querySelector
+            ? host.querySelector('details.dc-war-details') || host
+            : null;
     }
 
     function findAdvancedFilterPaddingTarget() {
@@ -1265,7 +1243,12 @@
             var scope = h1s[i].parentElement;
             for (var up = 0; scope && up < 8; up++) {
                 if (scope.querySelector && scope.querySelector('.accordion.ui.inverted')) {
-                    return scope.querySelector('.accordion.ui.inverted');
+                    var accordion = scope.querySelector('.accordion.ui.inverted');
+                    return (
+                        (accordion.querySelector &&
+                            accordion.querySelector('.ui.stackable.grid')) ||
+                        accordion
+                    );
                 }
                 scope = scope.parentElement;
             }
@@ -1283,15 +1266,17 @@
 
     function updateAdvancedFilterBottomPadding() {
         var target = findAdvancedFilterPaddingTarget();
-        var actionArea = findWorksheetActionArea();
-        if (!target || !actionArea || !actionArea.getBoundingClientRect) {
+        var details = findAutoActionsDetails();
+        if (!target) {
             return;
         }
-        var h = Math.ceil(actionArea.getBoundingClientRect().height || 0);
-        if (!h) {
-            return;
+        var h = details && details.getBoundingClientRect
+            ? Math.ceil(details.getBoundingClientRect().height || 0)
+            : 0;
+        var pad = Math.max(100, h);
+        if (!Number.isFinite(pad) || pad < 100) {
+            pad = 100;
         }
-        var pad = Math.max(24, h + 16);
         target.style.setProperty('padding-bottom', pad + 'px', 'important');
         target.setAttribute('data-dc-war-bottom-pad', '1');
     }
