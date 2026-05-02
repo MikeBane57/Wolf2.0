@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced filter saved settings
 // @namespace    Wolf 2.0
-// @version      0.1.2
+// @version      0.1.3
 // @description  Save and recall named Advanced filter input presets.
 // @match        https://opssuitemain.swacorp.com/*
 // @grant        none
@@ -371,10 +371,23 @@
         if (values.length) {
             return values[0];
         }
-        var selected =
-            dropdown.querySelector('.menu [role="option"][aria-selected="true"] .text') ||
-            dropdown.querySelector('.menu .selected.item .text');
-        return textOf(selected);
+        return readSingleSemanticDropdownText(dropdown);
+    }
+
+    function readSingleSemanticDropdownText(dropdown) {
+        var children = dropdown ? dropdown.children || [] : [];
+        for (var i = 0; i < children.length; i++) {
+            var child = children[i];
+            if (
+                child &&
+                child.matches &&
+                child.matches('.text') &&
+                !(child.classList && (child.classList.contains('default') || child.classList.contains('divider')))
+            ) {
+                return textOf(child);
+            }
+        }
+        return '';
     }
 
     function snapshotArea(area) {
@@ -536,6 +549,36 @@
         dispatchControlEvents(dropdown);
     }
 
+    function clearControlValue(control) {
+        if (isSemanticDropdown(control)) {
+            applySemanticDropdownValue(control, []);
+            return;
+        }
+        var tag = (control.tagName || '').toLowerCase();
+        var type = String(control.type || '').toLowerCase();
+        if (tag === 'select' && control.multiple) {
+            for (var i = 0; i < control.options.length; i++) {
+                control.options[i].selected = false;
+            }
+            dispatchControlEvents(control);
+            return;
+        }
+        if (type === 'checkbox' || type === 'radio') {
+            setNativeValue(control, 'checked', false);
+            dispatchControlEvents(control);
+            return;
+        }
+        setNativeValue(control, 'value', '');
+        dispatchControlEvents(control);
+    }
+
+    function clearCurrentFilterValues(area) {
+        var controls = controlsIn(area, true);
+        for (var i = 0; i < controls.length; i++) {
+            clearControlValue(controls[i]);
+        }
+    }
+
     function applySnapshot(area, snapshot) {
         var current = controlsIn(area, true);
         var identities = [];
@@ -600,6 +643,62 @@
         } else {
             cb();
         }
+    }
+
+    function controlTextForButton(el) {
+        if (!el) {
+            return '';
+        }
+        return String(
+            (el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))) ||
+                el.textContent ||
+                ''
+        ).replace(/\s+/g, ' ').trim();
+    }
+
+    function findClearAllButton(title, area) {
+        var roots = [];
+        if (area) {
+            roots.push(area);
+        }
+        var p = area && area.parentElement;
+        var depth = 0;
+        while (p && p !== document.body && depth < 5) {
+            roots.push(p);
+            p = p.parentElement;
+            depth++;
+        }
+        if (title && roots.indexOf(title.parentElement) < 0) {
+            roots.push(title.parentElement);
+        }
+        for (var r = 0; r < roots.length; r++) {
+            var root = roots[r];
+            if (!root || !root.querySelectorAll) {
+                continue;
+            }
+            var buttons = root.querySelectorAll('button,[role="button"],a');
+            for (var i = 0; i < buttons.length; i++) {
+                var txt = controlTextForButton(buttons[i]);
+                if (/^clear\s+all$/i.test(txt) || /\bclear\s+all\b/i.test(txt)) {
+                    return buttons[i];
+                }
+            }
+        }
+        return null;
+    }
+
+    function clearBeforeRecall(title, area, cb) {
+        var clearBtn = findClearAllButton(title, area);
+        if (clearBtn) {
+            clickLikeUser(clearBtn);
+            setTimeout(function () {
+                clearCurrentFilterValues(area);
+                cb();
+            }, 180);
+            return;
+        }
+        clearCurrentFilterValues(area);
+        cb();
     }
 
     function presetByName(list, name) {
@@ -804,8 +903,11 @@
                 }
                 expandAdvancedFilter(title, area, function () {
                     var freshArea = findFilterArea(title) || area;
-                    var count = applySnapshot(freshArea, found.item.snapshot);
-                    setStatus(panel, 'Recalled "' + found.item.name + '" to ' + count + ' inputs.');
+                    clearBeforeRecall(title, freshArea, function () {
+                        var applyArea = findFilterArea(title) || freshArea;
+                        var count = applySnapshot(applyArea, found.item.snapshot);
+                        setStatus(panel, 'Recalled "' + found.item.name + '" to ' + count + ' inputs.');
+                    });
                 });
             });
         }
