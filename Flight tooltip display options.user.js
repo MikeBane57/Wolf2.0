@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Flight tooltip display options
 // @namespace    Wolf 2.0
-// @version      0.1.0
+// @version      0.2.0
 // @description  Choose whether the native flight tooltip shows on hover, click only, or not at all
 // @match        https://opssuitemain.swacorp.com/worksheet*
+// @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
-// @donkeycode-pref {"flightTooltipDisplayMode":{"type":"select","group":"Flight tooltip","label":"Display mode","description":"Hover = site default. Click = suppress hover and open the flight tooltip after clicking a flight puck. Disabled = hide flight tooltips.","default":"hover","options":[{"value":"hover","label":"Hover (site default)"},{"value":"click","label":"Click only"},{"value":"disabled","label":"Disabled"}]},"flightTooltipDebug":{"type":"boolean","group":"Flight tooltip","label":"Debug logging","description":"Log tooltip display controller events to the browser console.","default":false}}
+// @donkeycode-pref {"flightTooltipDisplayMode":{"type":"select","group":"Flight tooltip","label":"Display mode","description":"Hover = site default. Click = suppress hover and open the flight tooltip after clicking a flight puck. Disabled = hide flight tooltips.","default":"hover","options":[{"value":"hover","val":"hover","label":"Hover (site default)"},{"value":"click","val":"click","label":"Click only"},{"value":"disabled","val":"disabled","label":"Disabled"}]},"flightTooltipDebug":{"type":"boolean","group":"Flight tooltip","label":"Debug logging","description":"Log tooltip display controller events to the browser console.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20tooltip%20display%20options.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20tooltip%20display%20options.user.js
 // ==/UserScript==
@@ -25,17 +26,38 @@
 
     var clickOpenedPuck = null;
     var allowNativeHoverUntil = 0;
+    var allowClickTooltipUntil = 0;
     var observer = null;
+    var lastHoverLogAt = 0;
 
     function getPref(key, defaultValue) {
-        if (typeof donkeycodeGetPref !== 'function') {
+        var prefFn = typeof donkeycodeGetPref === 'function'
+            ? donkeycodeGetPref
+            : (typeof globalThis !== 'undefined' && typeof globalThis.donkeycodeGetPref === 'function'
+                ? globalThis.donkeycodeGetPref
+                : null);
+        if (!prefFn) {
             return defaultValue;
         }
-        var v = donkeycodeGetPref(key);
+        var v = prefFn(key);
         if (v === undefined || v === null || v === '') {
             return defaultValue;
         }
         return v;
+    }
+
+    function boolPref(key, defaultValue) {
+        var v = getPref(key, defaultValue);
+        if (v === true || v === false) {
+            return v;
+        }
+        if (v === 'true' || v === '1') {
+            return true;
+        }
+        if (v === 'false' || v === '0') {
+            return false;
+        }
+        return defaultValue;
     }
 
     function getMode() {
@@ -47,7 +69,7 @@
     }
 
     function log() {
-        if (!getPref('flightTooltipDebug', false)) {
+        if (!boolPref('flightTooltipDebug', false)) {
             return;
         }
         console.log.apply(console, ['%c[Flight tooltip]', 'color:#f9a825'].concat([].slice.call(arguments)));
@@ -72,6 +94,9 @@
             document.head.appendChild(style);
         }
         style.textContent =
+            'html[data-dc-flight-tooltip-mode="click"] ' + TOOLTIP_SELECTOR + ':not([data-dc-flight-tooltip-click-open="1"]){' +
+            'display:none!important;visibility:hidden!important;pointer-events:none!important;' +
+            '}' +
             'html[data-dc-flight-tooltip-mode="disabled"] ' + TOOLTIP_SELECTOR + '{' +
             'display:none!important;visibility:hidden!important;pointer-events:none!important;' +
             '}';
@@ -82,6 +107,8 @@
         document.documentElement.setAttribute('data-dc-flight-tooltip-mode', mode);
         if (mode === 'disabled') {
             hideTooltips();
+        } else if (mode === 'click') {
+            hideNonClickTooltips();
         }
     }
 
@@ -99,6 +126,47 @@
             tip.style.visibility = '';
             tip.removeAttribute('data-dc-flight-tooltip-hidden');
         });
+        document.querySelectorAll(TOOLTIP_SELECTOR + '[data-dc-flight-tooltip-click-open="1"]').forEach(function(tip) {
+            tip.removeAttribute('data-dc-flight-tooltip-click-open');
+        });
+    }
+
+    function hideNonClickTooltips() {
+        document.querySelectorAll(TOOLTIP_SELECTOR).forEach(function(tip) {
+            if (tip.getAttribute('data-dc-flight-tooltip-click-open') === '1') {
+                return;
+            }
+            tip.style.display = 'none';
+            tip.style.visibility = 'hidden';
+            tip.setAttribute('data-dc-flight-tooltip-hidden', '1');
+        });
+    }
+
+    function markOrHideTooltip(tip) {
+        var mode = getMode();
+        if (!tip) {
+            return;
+        }
+        if (mode === 'disabled') {
+            hideTooltips();
+            return;
+        }
+        if (mode !== 'click') {
+            return;
+        }
+        if (Date.now() <= allowClickTooltipUntil) {
+            tip.removeAttribute('data-dc-flight-tooltip-hidden');
+            tip.style.display = '';
+            tip.style.visibility = '';
+            tip.setAttribute('data-dc-flight-tooltip-click-open', '1');
+            log('tooltip allowed from click', tip);
+            return;
+        }
+        tip.removeAttribute('data-dc-flight-tooltip-click-open');
+        tip.style.display = 'none';
+        tip.style.visibility = 'hidden';
+        tip.setAttribute('data-dc-flight-tooltip-hidden', '1');
+        log('tooltip hidden because it was hover-created', tip);
     }
 
     function dispatchPointerLike(type, target, originalEvent, relatedTarget) {
@@ -149,6 +217,7 @@
         }
         clickOpenedPuck = puck;
         allowNativeHoverUntil = Date.now() + 250;
+        allowClickTooltipUntil = Date.now() + 1500;
         ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'].forEach(function(type) {
             dispatchPointerLike(type, puck, originalEvent, null);
         });
@@ -166,6 +235,7 @@
         var puck = clickOpenedPuck;
         clickOpenedPuck = null;
         allowNativeHoverUntil = Date.now() + 250;
+        allowClickTooltipUntil = 0;
         ['pointerout', 'pointerleave', 'mouseout', 'mouseleave'].forEach(function(type) {
             dispatchPointerLike(type, puck, originalEvent, document.body);
         });
@@ -191,8 +261,15 @@
             return;
         }
         e.stopImmediatePropagation();
+        var now = Date.now();
+        if (now - lastHoverLogAt > 1000) {
+            lastHoverLogAt = now;
+            log('blocked native hover event', e.type, e.target);
+        }
         if (getMode() === 'disabled') {
             hideTooltips();
+        } else {
+            hideNonClickTooltips();
         }
     }
 
@@ -228,7 +305,7 @@
 
     function observeTooltips() {
         observer = new MutationObserver(function(mutations) {
-            if (getMode() !== 'disabled') {
+            if (getMode() === 'hover') {
                 return;
             }
             mutations.forEach(function(mutation) {
@@ -237,11 +314,11 @@
                         return;
                     }
                     if (node.matches && node.matches(TOOLTIP_SELECTOR)) {
-                        hideTooltips();
+                        markOrHideTooltip(node);
                         return;
                     }
-                    if (node.querySelector && node.querySelector(TOOLTIP_SELECTOR)) {
-                        hideTooltips();
+                    if (node.querySelectorAll) {
+                        node.querySelectorAll(TOOLTIP_SELECTOR).forEach(markOrHideTooltip);
                     }
                 });
             });
@@ -252,6 +329,7 @@
     ensureStyle();
     applyModeAttribute();
     observeTooltips();
+    log('initialized', { mode: getMode(), href: location.href });
 
     [
         'pointerover',
