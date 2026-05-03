@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         Flight tooltip display options
 // @namespace    Wolf 2.0
-// @version      0.3.1
-// @description  Disable flight tooltips entirely, or require a longer hover before the native tooltip appears
+// @version      0.3.2
+// @description  Flight leg tooltip: default, hover-only (no click-open), disabled, optional extra hover delay
 // @match        https://opssuitemain.swacorp.com/worksheet*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
-// @donkeycode-pref {"flightTooltipDisplayMode":{"type":"select","group":"Flight tooltip","label":"Display mode","description":"Default = native hover tooltips. Extra hover delay adds milliseconds before hover events reach a puck (reduces accidental popups). Disabled = hide flight leg tooltips. Legacy “Click only” is treated as Default.","default":"hover","options":[{"value":"hover","val":"hover","label":"Default (hover)"},{"value":"disabled","val":"disabled","label":"Disabled"}]},"flightTooltipHoverDelayMs":{"type":"number","group":"Flight tooltip","label":"Extra hover delay (ms)","description":"Adds this many milliseconds of hover on a flight puck before pointer hover reaches the page (0 = site default).","default":0,"min":0,"max":5000,"step":50},"flightTooltipPassThroughClicks":{"type":"boolean","group":"Flight tooltip","label":"Tooltip: clicks pass through","description":"When ON, the flight tooltip ignores pointer events so clicks and hovers reach cells and pucks underneath. Turn OFF if you need to select or copy text inside the tooltip.","default":false},"flightTooltipDebug":{"type":"boolean","group":"Flight tooltip","label":"Debug logging","description":"Log tooltip display controller events to the browser console.","default":false}}
+// @donkeycode-pref {"flightTooltipDisplayMode":{"type":"select","group":"Flight tooltip","label":"Display mode","description":"Default = native behavior (hover + click if the app uses it). Hover only = tooltips from hovering pucks only; clicks dismiss any open tooltip. Extra hover delay still applies when set. Disabled = hide flight leg tooltips. Legacy “Click only” is treated as Default.","default":"hover","options":[{"value":"hover","val":"hover","label":"Default"},{"value":"hover_only","val":"hover_only","label":"Hover only (no click-open)"},{"value":"disabled","val":"disabled","label":"Disabled"}]},"flightTooltipHoverDelayMs":{"type":"number","group":"Flight tooltip","label":"Extra hover delay (ms)","description":"Adds this many milliseconds of hover on a flight puck before pointer hover reaches the page (0 = site default).","default":0,"min":0,"max":5000,"step":50},"flightTooltipPassThroughClicks":{"type":"boolean","group":"Flight tooltip","label":"Tooltip: clicks pass through","description":"When ON, the flight tooltip ignores pointer events so clicks and hovers reach cells and pucks underneath. Turn OFF if you need to select or copy text inside the tooltip.","default":false},"flightTooltipDebug":{"type":"boolean","group":"Flight tooltip","label":"Debug logging","description":"Log tooltip display controller events to the browser console.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20tooltip%20display%20options.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20tooltip%20display%20options.user.js
 // ==/UserScript==
@@ -39,6 +39,7 @@
     var dwellScreenY = 0;
     /** Puck we already released hover to (site receives real events until leave). */
     var releasedHoverPuck = null;
+    var lastAppliedMode = null;
 
     function getPref(key, defaultValue) {
         var prefFn = typeof donkeycodeGetPref === 'function'
@@ -93,6 +94,9 @@
         if (mode === 'disabled') {
             return 'disabled';
         }
+        if (mode === 'hover_only') {
+            return 'hover_only';
+        }
         return 'hover';
     }
 
@@ -127,6 +131,10 @@
         return el.closest(PUCK_SELECTOR);
     }
 
+    function isFlightTooltip(el) {
+        return !!(el && el.nodeType === 1 && el.closest && el.closest(TOOLTIP_SELECTOR));
+    }
+
     function ensureStyle() {
         var style = document.getElementById(STYLE_ID);
         if (!style) {
@@ -148,7 +156,10 @@
         document.documentElement.setAttribute('data-dc-flight-tooltip-mode', mode);
         if (mode === 'disabled') {
             hideTooltips();
+        } else if (mode === 'hover_only' && lastAppliedMode !== 'hover_only') {
+            hideTooltips();
         }
+        lastAppliedMode = mode;
     }
 
     function hideTooltips() {
@@ -271,6 +282,35 @@
             }
         }, hoverExtraDelayMs());
         log('dwell started', hoverExtraDelayMs() + 'ms', puck);
+    }
+
+    /** After paint so the app can finish click handling before we hide click-opened tooltips. */
+    function scheduleHideTooltipsForHoverOnlyMode() {
+        if (getMode() !== 'hover_only') {
+            return;
+        }
+        var raf = typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame
+            : function(fn) { return setTimeout(fn, 16); };
+        raf(function() {
+            raf(function() {
+                if (getMode() !== 'hover_only') {
+                    return;
+                }
+                hideTooltips();
+                pruneStaleFlightTooltips();
+                log('hover-only: hid tooltips after click');
+            });
+        });
+    }
+
+    function onClickCaptureHoverOnly(e) {
+        if (getMode() !== 'hover_only') {
+            return;
+        }
+        if (closestPuck(e.target) || isFlightTooltip(e.target)) {
+            scheduleHideTooltipsForHoverOnlyMode();
+        }
     }
 
     function isLeaveType(type) {
@@ -443,6 +483,7 @@
     ].forEach(function(type) {
         window.addEventListener(type, onPointerHoverGateCapture, true);
     });
+    window.addEventListener('click', onClickCaptureHoverOnly, true);
 
     window.__myScriptCleanup = function() {
         if (prefPollTimer) {
@@ -467,8 +508,9 @@
             'mouseout',
             'mouseleave'
         ].forEach(function(type) {
-            window.removeEventListener(type, onPointerHoverGateCapture, true);
-        });
+        window.removeEventListener(type, onPointerHoverGateCapture, true);
+    });
+        window.removeEventListener('click', onClickCaptureHoverOnly, true);
         restoreTooltips();
         document.documentElement.removeAttribute('data-dc-flight-tooltip-mode');
         document.documentElement.removeAttribute('data-dc-flight-tooltip-pass-through');
