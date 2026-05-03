@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flight tooltip display options
 // @namespace    Wolf 2.0
-// @version      0.2.0
+// @version      0.2.1
 // @description  Choose whether the native flight tooltip shows on hover, click only, or not at all
 // @match        https://opssuitemain.swacorp.com/worksheet*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
@@ -29,6 +29,9 @@
     var allowClickTooltipUntil = 0;
     var observer = null;
     var lastHoverLogAt = 0;
+    var scheduleMicrotask = typeof queueMicrotask === 'function'
+        ? queueMicrotask
+        : function(fn) { Promise.resolve().then(fn); };
 
     function getPref(key, defaultValue) {
         var prefFn = typeof donkeycodeGetPref === 'function'
@@ -298,9 +301,11 @@
         if (!puck) {
             return;
         }
-        setTimeout(function() {
+        // After the click stack (so the app can create the tooltip) but before the next
+        // macrotask/paint — snappier than setTimeout(0).
+        scheduleMicrotask(function() {
             triggerNativeTooltip(puck, e);
-        }, 0);
+        });
     }
 
     function observeTooltips() {
