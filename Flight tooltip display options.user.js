@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         Flight tooltip display options
 // @namespace    Wolf 2.0
-// @version      0.2.1
+// @version      0.2.2
 // @description  Choose whether the native flight tooltip shows on hover, click only, or not at all
 // @match        https://opssuitemain.swacorp.com/worksheet*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
-// @donkeycode-pref {"flightTooltipDisplayMode":{"type":"select","group":"Flight tooltip","label":"Display mode","description":"Hover = site default. Click = suppress hover and open the flight tooltip after clicking a flight puck. Disabled = hide flight tooltips.","default":"hover","options":[{"value":"hover","val":"hover","label":"Hover (site default)"},{"value":"click","val":"click","label":"Click only"},{"value":"disabled","val":"disabled","label":"Disabled"}]},"flightTooltipDebug":{"type":"boolean","group":"Flight tooltip","label":"Debug logging","description":"Log tooltip display controller events to the browser console.","default":false}}
+// @donkeycode-pref {"flightTooltipDisplayMode":{"type":"select","group":"Flight tooltip","label":"Display mode","description":"Hover = site default. Click = suppress hover and open the flight tooltip after clicking a flight puck. Disabled = hide flight tooltips.","default":"hover","options":[{"value":"hover","val":"hover","label":"Hover (site default)"},{"value":"click","val":"click","label":"Click only"},{"value":"disabled","val":"disabled","label":"Disabled"}]},"flightTooltipPassThroughClicks":{"type":"boolean","group":"Flight tooltip","label":"Tooltip: clicks pass through","description":"When ON, the flight tooltip ignores pointer events so clicks and hovers reach cells and pucks underneath. Turn OFF if you need to select or copy text inside the tooltip.","default":false},"flightTooltipDebug":{"type":"boolean","group":"Flight tooltip","label":"Debug logging","description":"Log tooltip display controller events to the browser console.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20tooltip%20display%20options.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20tooltip%20display%20options.user.js
 // ==/UserScript==
@@ -32,6 +32,8 @@
     var scheduleMicrotask = typeof queueMicrotask === 'function'
         ? queueMicrotask
         : function(fn) { Promise.resolve().then(fn); };
+    var prefPollTimer = null;
+    var lastPassThroughPref = null;
 
     function getPref(key, defaultValue) {
         var prefFn = typeof donkeycodeGetPref === 'function'
@@ -71,6 +73,15 @@
         return mode;
     }
 
+    function passThroughClicksEnabled() {
+        return boolPref('flightTooltipPassThroughClicks', false);
+    }
+
+    function syncPassThroughAttribute() {
+        var on = passThroughClicksEnabled();
+        document.documentElement.setAttribute('data-dc-flight-tooltip-pass-through', on ? '1' : '0');
+    }
+
     function log() {
         if (!boolPref('flightTooltipDebug', false)) {
             return;
@@ -102,6 +113,9 @@
             '}' +
             'html[data-dc-flight-tooltip-mode="disabled"] ' + TOOLTIP_SELECTOR + '{' +
             'display:none!important;visibility:hidden!important;pointer-events:none!important;' +
+            '}' +
+            'html[data-dc-flight-tooltip-pass-through="1"] ' + TOOLTIP_SELECTOR + '{' +
+            'pointer-events:none!important;' +
             '}';
     }
 
@@ -333,8 +347,18 @@
 
     ensureStyle();
     applyModeAttribute();
+    syncPassThroughAttribute();
+    lastPassThroughPref = passThroughClicksEnabled();
+    prefPollTimer = setInterval(function() {
+        var cur = passThroughClicksEnabled();
+        if (cur !== lastPassThroughPref) {
+            lastPassThroughPref = cur;
+            syncPassThroughAttribute();
+            log('pass-through clicks', cur);
+        }
+    }, 600);
     observeTooltips();
-    log('initialized', { mode: getMode(), href: location.href });
+    log('initialized', { mode: getMode(), passThrough: passThroughClicksEnabled(), href: location.href });
 
     [
         'pointerover',
@@ -354,6 +378,10 @@
     window.addEventListener('click', onClickCapture, true);
 
     window.__myScriptCleanup = function() {
+        if (prefPollTimer) {
+            clearInterval(prefPollTimer);
+            prefPollTimer = null;
+        }
         if (observer) {
             observer.disconnect();
             observer = null;
@@ -376,6 +404,7 @@
         window.removeEventListener('click', onClickCapture, true);
         restoreTooltips();
         document.documentElement.removeAttribute('data-dc-flight-tooltip-mode');
+        document.documentElement.removeAttribute('data-dc-flight-tooltip-pass-through');
         var style = document.getElementById(STYLE_ID);
         if (style) {
             style.remove();
