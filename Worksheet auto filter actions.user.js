@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.13
+// @version      1.4.14
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -55,6 +55,8 @@
         'Operation',
         'Equipment'
     ];
+    var SMART_WIDGET_ADVANCED_FILTER_SELECTOR =
+        '#smart-widget > div > section > div.k-FiYKNfW8E\\= > div.SCnr-Yt9a28\\= > div > div > div > div > div.KU0FYL-A87M\\=';
 
     function getPref(key, def) {
         if (typeof donkeycodeGetPref !== 'function') {
@@ -1319,7 +1321,20 @@
         return bestScore >= 4 ? best : null;
     }
 
+    function findSmartWidgetAdvancedFilterPaddingTarget() {
+        try {
+            return document.querySelector(SMART_WIDGET_ADVANCED_FILTER_SELECTOR);
+        } catch (e) {
+            debugInterval('smart widget advanced filter selector failed', e);
+            return null;
+        }
+    }
+
     function findAdvancedFilterPaddingTarget() {
+        var smartWidgetTarget = findSmartWidgetAdvancedFilterPaddingTarget();
+        if (smartWidgetTarget) {
+            return smartWidgetTarget;
+        }
         var sectionGrid = findAdvancedFilterGridBySections();
         if (sectionGrid) {
             return sectionGrid;
