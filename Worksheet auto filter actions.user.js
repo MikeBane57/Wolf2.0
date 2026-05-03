@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.16
+// @version      1.4.17
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -42,6 +42,8 @@
     var filterPadRetryTimer = null;
     var filterPadRetryCount = 0;
     var lastSig = '';
+    var lastAdvancedFilterPadLogKey = '';
+    var lastAdvancedFilterPadLogAt = 0;
     var hostEl = null;
     var toggleInput = null;
     var opTimeTid = null;
@@ -93,6 +95,44 @@
                 )
             );
         } catch (e) {}
+    }
+
+    function debugAdvancedFilterPad() {
+        var args = ['%c[WS-AUTO-FILTER advanced-filter pad]', 'color:#58d68d;font-weight:600;'].concat(
+            [].slice.call(arguments)
+        );
+        try {
+            console.info.apply(console, args);
+        } catch (e) {}
+        try {
+            debugInterval.apply(null, [].slice.call(arguments));
+        } catch (e2) {}
+    }
+
+    function elClassSnippet(el, maxLen) {
+        if (!el || el.className == null) {
+            return '';
+        }
+        var s = typeof el.className === 'string' ? el.className : String(el.className);
+        var n = maxLen == null ? 96 : maxLen;
+        return s.length > n ? s.slice(0, n) + '…' : s;
+    }
+
+    function maybeLogAdvancedFilterPad(payload) {
+        var now = Date.now();
+        var key = [
+            payload.reason || '',
+            String(payload.pad || ''),
+            payload.usedScrollPort ? '1' : '0',
+            elClassSnippet(payload.padEl, 48),
+            elClassSnippet(payload.innerTarget, 48)
+        ].join('|');
+        if (key === lastAdvancedFilterPadLogKey && now - lastAdvancedFilterPadLogAt < 2000) {
+            return;
+        }
+        lastAdvancedFilterPadLogKey = key;
+        lastAdvancedFilterPadLogAt = now;
+        debugAdvancedFilterPad('advanced filter bottom padding', payload);
     }
 
     function getOrCreateWorksheetTabId() {
@@ -1333,11 +1373,11 @@
     function findAdvancedFilterPaddingTarget() {
         var smartWidgetTarget = findSmartWidgetAdvancedFilterPaddingTarget();
         if (smartWidgetTarget) {
-            return smartWidgetTarget;
+            return { target: smartWidgetTarget, reason: 'smart_widget_css_selector' };
         }
         var sectionGrid = findAdvancedFilterGridBySections();
         if (sectionGrid) {
-            return sectionGrid;
+            return { target: sectionGrid, reason: 'section_title_grid_heuristic' };
         }
         var titles = document.querySelectorAll('h1,h2,h3,h4,h5,h6,legend,summary,label,div,span,p');
         for (var i = 0; i < titles.length; i++) {
@@ -1351,7 +1391,7 @@
                         scope.querySelector('.accordion .ui.stackable.grid') ||
                         scope.querySelector('.ui.stackable.grid');
                     if (scopedGrid) {
-                        return scopedGrid;
+                        return { target: scopedGrid, reason: 'title_ancestor_stackable_grid' };
                     }
                 }
                 scope = scope.parentElement;
@@ -1368,19 +1408,22 @@
                 }
                 for (var j = start + 1; j >= 1 && j < siblings.length && j <= start + 4; j++) {
                     if (siblings[j].matches && siblings[j].matches('.ui.stackable.grid')) {
-                        return siblings[j];
+                        return { target: siblings[j], reason: 'title_sibling_stackable_grid' };
                     }
                     if (siblings[j].querySelector) {
                         var siblingGrid = siblings[j].querySelector('.ui.stackable.grid');
                         if (siblingGrid) {
-                            return siblingGrid;
+                            return { target: siblingGrid, reason: 'title_sibling_nested_stackable_grid' };
                         }
                     }
                 }
             }
         }
         var grids = document.querySelectorAll('.accordion.ui.inverted .ui.stackable.grid,.accordion .ui.stackable.grid');
-        return grids.length === 1 ? grids[0] : null;
+        if (grids.length === 1) {
+            return { target: grids[0], reason: 'single_accordion_stackable_grid' };
+        }
+        return { target: null, reason: 'none' };
     }
 
     /**
@@ -1439,10 +1482,23 @@
 
     function updateAdvancedFilterBottomPadding() {
         restoreAdvancedFilterBottomPadding();
-        var target = findAdvancedFilterPaddingTarget();
+        var found = findAdvancedFilterPaddingTarget();
+        var target = found && found.target;
         var details = findAutoActionsDetails();
         if (!target) {
-            debugInterval('advanced filter padding target not found');
+            maybeLogAdvancedFilterPad({
+                reason: found && found.reason ? found.reason : 'none',
+                pad: 0,
+                usedScrollPort: false,
+                innerTarget: null,
+                padEl: null,
+                selectorMatched: false,
+                smartWidgetSelector: SMART_WIDGET_ADVANCED_FILTER_SELECTOR,
+                note: 'padding target not found'
+            });
+            debugInterval('advanced filter padding target not found', {
+                reason: found && found.reason ? found.reason : 'none'
+            });
             return false;
         }
         var h = details && details.getBoundingClientRect
@@ -1457,13 +1513,51 @@
         padEl.style.setProperty('padding-bottom', pad + 'px', 'important');
         padEl.setAttribute('data-dc-war-bottom-pad', '1');
         padEl.setAttribute('data-dc-war-bottom-pad-px', String(pad));
-        debugInterval('advanced filter padding applied', {
+        var inlinePb = '';
+        var computedPb = '';
+        var scrollH = null;
+        var clientH = null;
+        var overflowY = '';
+        var flexGrow = '';
+        try {
+            inlinePb = padEl.style && padEl.style.getPropertyValue
+                ? padEl.style.getPropertyValue('padding-bottom')
+                : '';
+        } catch (ePb) {}
+        if (window.getComputedStyle) {
+            try {
+                var cs = window.getComputedStyle(padEl);
+                computedPb = cs ? cs.paddingBottom : '';
+                overflowY = cs ? cs.overflowY : '';
+                flexGrow = cs ? cs.flexGrow : '';
+            } catch (eCs) {}
+        }
+        try {
+            scrollH = padEl.scrollHeight;
+            clientH = padEl.clientHeight;
+        } catch (eSh) {}
+        var payload = {
+            reason: found.reason || 'unknown',
             pad: pad,
-            padTag: padEl.tagName || '',
-            padClass: padEl.className || '',
+            detailsBarHeight: h,
             usedScrollPort: !!scrollPort,
-            innerTargetTag: target.tagName || ''
-        });
+            innerTarget: target,
+            padEl: padEl,
+            selectorMatched: found.reason === 'smart_widget_css_selector',
+            smartWidgetSelector: SMART_WIDGET_ADVANCED_FILTER_SELECTOR,
+            innerTag: target.tagName || '',
+            innerClass: elClassSnippet(target, 120),
+            padTag: padEl.tagName || '',
+            padClass: elClassSnippet(padEl, 120),
+            inlinePaddingBottom: inlinePb,
+            computedPaddingBottom: computedPb,
+            padElOverflowY: overflowY,
+            padElFlexGrow: flexGrow,
+            scrollHeight: scrollH,
+            clientHeight: clientH
+        };
+        maybeLogAdvancedFilterPad(payload);
+        debugInterval('advanced filter padding applied', payload);
         return true;
     }
 
