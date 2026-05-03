@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.14
+// @version      1.4.16
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -1383,6 +1383,51 @@
         return grids.length === 1 ? grids[0] : null;
     }
 
+    /**
+     * Advanced filter content often sits inside a flex column whose *ancestor* is the
+     * overflow:auto scrollport. Padding only the inner grid then does not grow scrollHeight,
+     * so the bottom stays clipped. Prefer the nearest scrollport (this node or an ancestor).
+     */
+    function overflowYCreatesScrollport(style) {
+        if (!style) {
+            return false;
+        }
+        var oy = style.overflowY;
+        var fall = style.overflow;
+        return (
+            oy === 'auto' ||
+            oy === 'scroll' ||
+            oy === 'overlay' ||
+            fall === 'auto' ||
+            fall === 'scroll' ||
+            fall === 'overlay'
+        );
+    }
+
+    function findAdvancedFilterScrollPort(from) {
+        if (!from) {
+            return null;
+        }
+        var el = from;
+        var depth = 0;
+        while (el && depth < 32) {
+            if (window.getComputedStyle) {
+                try {
+                    var st = window.getComputedStyle(el);
+                    if (overflowYCreatesScrollport(st)) {
+                        return el;
+                    }
+                } catch (e) {}
+            }
+            if (el === document.documentElement) {
+                break;
+            }
+            el = el.parentElement;
+            depth++;
+        }
+        return null;
+    }
+
     function restoreAdvancedFilterBottomPadding() {
         var list = document.querySelectorAll('[data-dc-war-bottom-pad]');
         for (var i = 0; i < list.length; i++) {
@@ -1393,6 +1438,7 @@
     }
 
     function updateAdvancedFilterBottomPadding() {
+        restoreAdvancedFilterBottomPadding();
         var target = findAdvancedFilterPaddingTarget();
         var details = findAutoActionsDetails();
         if (!target) {
@@ -1406,13 +1452,17 @@
         if (!Number.isFinite(pad) || pad < ADVANCED_FILTER_MIN_BOTTOM_PAD) {
             pad = ADVANCED_FILTER_MIN_BOTTOM_PAD;
         }
-        target.style.setProperty('padding-bottom', pad + 'px', 'important');
-        target.setAttribute('data-dc-war-bottom-pad', '1');
-        target.setAttribute('data-dc-war-bottom-pad-px', String(pad));
+        var scrollPort = findAdvancedFilterScrollPort(target);
+        var padEl = scrollPort || target;
+        padEl.style.setProperty('padding-bottom', pad + 'px', 'important');
+        padEl.setAttribute('data-dc-war-bottom-pad', '1');
+        padEl.setAttribute('data-dc-war-bottom-pad-px', String(pad));
         debugInterval('advanced filter padding applied', {
             pad: pad,
-            targetClass: target.className || '',
-            targetTag: target.tagName || ''
+            padTag: padEl.tagName || '',
+            padClass: padEl.className || '',
+            usedScrollPort: !!scrollPort,
+            innerTargetTag: target.tagName || ''
         });
         return true;
     }
