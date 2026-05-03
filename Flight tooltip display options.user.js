@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         Flight tooltip display options
 // @namespace    Wolf 2.0
-// @version      0.2.2
-// @description  Choose whether the native flight tooltip shows on hover, click only, or not at all
+// @version      0.3.0
+// @description  Disable flight tooltips entirely, or require a longer hover before the native tooltip appears
 // @match        https://opssuitemain.swacorp.com/worksheet*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
-// @donkeycode-pref {"flightTooltipDisplayMode":{"type":"select","group":"Flight tooltip","label":"Display mode","description":"Hover = site default. Click = suppress hover and open the flight tooltip after clicking a flight puck. Disabled = hide flight tooltips.","default":"hover","options":[{"value":"hover","val":"hover","label":"Hover (site default)"},{"value":"click","val":"click","label":"Click only"},{"value":"disabled","val":"disabled","label":"Disabled"}]},"flightTooltipPassThroughClicks":{"type":"boolean","group":"Flight tooltip","label":"Tooltip: clicks pass through","description":"When ON, the flight tooltip ignores pointer events so clicks and hovers reach cells and pucks underneath. Turn OFF if you need to select or copy text inside the tooltip.","default":false},"flightTooltipDebug":{"type":"boolean","group":"Flight tooltip","label":"Debug logging","description":"Log tooltip display controller events to the browser console.","default":false}}
+// @donkeycode-pref {"flightTooltipDisplayMode":{"type":"select","group":"Flight tooltip","label":"Display mode","description":"Default = native hover tooltips. Extra hover delay adds milliseconds before hover events reach a puck (reduces accidental popups). Disabled = hide flight leg tooltips. Legacy “Click only” is treated as Default.","default":"hover","options":[{"value":"hover","val":"hover","label":"Default (hover)"},{"value":"disabled","val":"disabled","label":"Disabled"}]},"flightTooltipHoverDelayMs":{"type":"number","group":"Flight tooltip","label":"Extra hover delay (ms)","description":"Adds this many milliseconds of hover on a flight puck before pointer hover reaches the page (0 = site default).","default":0,"min":0,"max":5000,"step":50},"flightTooltipPassThroughClicks":{"type":"boolean","group":"Flight tooltip","label":"Tooltip: clicks pass through","description":"When ON, the flight tooltip ignores pointer events so clicks and hovers reach cells and pucks underneath. Turn OFF if you need to select or copy text inside the tooltip.","default":false},"flightTooltipDebug":{"type":"boolean","group":"Flight tooltip","label":"Debug logging","description":"Log tooltip display controller events to the browser console.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20tooltip%20display%20options.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20tooltip%20display%20options.user.js
 // ==/UserScript==
@@ -24,16 +24,21 @@
     var TOOLTIP_SELECTOR = '[data-testid="flight-leg-tooltip"]';
     var STYLE_ID = 'dc-flight-tooltip-display-options-style';
 
-    var clickOpenedPuck = null;
-    var allowNativeHoverUntil = 0;
-    var allowClickTooltipUntil = 0;
     var observer = null;
     var lastHoverLogAt = 0;
-    var scheduleMicrotask = typeof queueMicrotask === 'function'
-        ? queueMicrotask
-        : function(fn) { Promise.resolve().then(fn); };
     var prefPollTimer = null;
-    var lastPassThroughPref = null;
+    var lastPollSig = null;
+
+    /** While waiting for extra hover delay (ms > 0). */
+    var dwellTimerId = null;
+    var dwellPuck = null;
+    /** Last pointer position while dwelling (for synthetic events). */
+    var dwellClientX = 0;
+    var dwellClientY = 0;
+    var dwellScreenX = 0;
+    var dwellScreenY = 0;
+    /** Puck we already released hover to (site receives real events until leave). */
+    var releasedHoverPuck = null;
 
     function getPref(key, defaultValue) {
         var prefFn = typeof donkeycodeGetPref === 'function'
@@ -65,12 +70,34 @@
         return defaultValue;
     }
 
+    function numPref(key, defaultValue, min, max) {
+        var raw = getPref(key, defaultValue);
+        var n = typeof raw === 'number' ? raw : parseInt(String(raw).replace(/[^\d.-]/g, ''), 10);
+        if (!Number.isFinite(n)) {
+            n = defaultValue;
+        }
+        if (Number.isFinite(min) && n < min) {
+            n = min;
+        }
+        if (Number.isFinite(max) && n > max) {
+            n = max;
+        }
+        return n;
+    }
+
     function getMode() {
         var mode = String(getPref('flightTooltipDisplayMode', 'hover') || 'hover').toLowerCase();
-        if (mode !== 'click' && mode !== 'disabled') {
+        if (mode === 'click') {
             return 'hover';
         }
-        return mode;
+        if (mode === 'disabled') {
+            return 'disabled';
+        }
+        return 'hover';
+    }
+
+    function hoverExtraDelayMs() {
+        return numPref('flightTooltipHoverDelayMs', 0, 0, 5000);
     }
 
     function passThroughClicksEnabled() {
@@ -80,6 +107,10 @@
     function syncPassThroughAttribute() {
         var on = passThroughClicksEnabled();
         document.documentElement.setAttribute('data-dc-flight-tooltip-pass-through', on ? '1' : '0');
+    }
+
+    function pollSignature() {
+        return getMode() + '|' + hoverExtraDelayMs() + '|' + (passThroughClicksEnabled() ? '1' : '0');
     }
 
     function log() {
@@ -96,10 +127,6 @@
         return el.closest(PUCK_SELECTOR);
     }
 
-    function isFlightTooltip(el) {
-        return !!(el && el.nodeType === 1 && el.closest && el.closest(TOOLTIP_SELECTOR));
-    }
-
     function ensureStyle() {
         var style = document.getElementById(STYLE_ID);
         if (!style) {
@@ -108,9 +135,6 @@
             document.head.appendChild(style);
         }
         style.textContent =
-            'html[data-dc-flight-tooltip-mode="click"] ' + TOOLTIP_SELECTOR + ':not([data-dc-flight-tooltip-click-open="1"]){' +
-            'display:none!important;visibility:hidden!important;pointer-events:none!important;' +
-            '}' +
             'html[data-dc-flight-tooltip-mode="disabled"] ' + TOOLTIP_SELECTOR + '{' +
             'display:none!important;visibility:hidden!important;pointer-events:none!important;' +
             '}' +
@@ -124,8 +148,6 @@
         document.documentElement.setAttribute('data-dc-flight-tooltip-mode', mode);
         if (mode === 'disabled') {
             hideTooltips();
-        } else if (mode === 'click') {
-            hideNonClickTooltips();
         }
     }
 
@@ -143,59 +165,29 @@
             tip.style.visibility = '';
             tip.removeAttribute('data-dc-flight-tooltip-hidden');
         });
-        document.querySelectorAll(TOOLTIP_SELECTOR + '[data-dc-flight-tooltip-click-open="1"]').forEach(function(tip) {
-            tip.removeAttribute('data-dc-flight-tooltip-click-open');
-        });
     }
 
-    function hideNonClickTooltips() {
-        document.querySelectorAll(TOOLTIP_SELECTOR).forEach(function(tip) {
-            if (tip.getAttribute('data-dc-flight-tooltip-click-open') === '1') {
-                return;
-            }
-            tip.style.display = 'none';
-            tip.style.visibility = 'hidden';
-            tip.setAttribute('data-dc-flight-tooltip-hidden', '1');
-        });
+    function clearDwell(reason) {
+        if (dwellTimerId) {
+            clearTimeout(dwellTimerId);
+            dwellTimerId = null;
+        }
+        dwellPuck = null;
+        if (reason) {
+            log('dwell cleared', reason);
+        }
     }
 
-    function markOrHideTooltip(tip) {
-        var mode = getMode();
-        if (!tip) {
-            return;
-        }
-        if (mode === 'disabled') {
-            hideTooltips();
-            return;
-        }
-        if (mode !== 'click') {
-            return;
-        }
-        if (Date.now() <= allowClickTooltipUntil) {
-            tip.removeAttribute('data-dc-flight-tooltip-hidden');
-            tip.style.display = '';
-            tip.style.visibility = '';
-            tip.setAttribute('data-dc-flight-tooltip-click-open', '1');
-            log('tooltip allowed from click', tip);
-            return;
-        }
-        tip.removeAttribute('data-dc-flight-tooltip-click-open');
-        tip.style.display = 'none';
-        tip.style.visibility = 'hidden';
-        tip.setAttribute('data-dc-flight-tooltip-hidden', '1');
-        log('tooltip hidden because it was hover-created', tip);
-    }
-
-    function dispatchPointerLike(type, target, originalEvent, relatedTarget) {
+    function dispatchPointerLike(type, target, clientX, clientY, screenX, screenY, relatedTarget) {
         var init = {
             bubbles: type.indexOf('enter') === -1 && type.indexOf('leave') === -1,
             cancelable: true,
             composed: true,
             view: window,
-            clientX: originalEvent && Number.isFinite(originalEvent.clientX) ? originalEvent.clientX : 0,
-            clientY: originalEvent && Number.isFinite(originalEvent.clientY) ? originalEvent.clientY : 0,
-            screenX: originalEvent && Number.isFinite(originalEvent.screenX) ? originalEvent.screenX : 0,
-            screenY: originalEvent && Number.isFinite(originalEvent.screenY) ? originalEvent.screenY : 0,
+            clientX: Number.isFinite(clientX) ? clientX : 0,
+            clientY: Number.isFinite(clientY) ? clientY : 0,
+            screenX: Number.isFinite(screenX) ? screenX : 0,
+            screenY: Number.isFinite(screenY) ? screenY : 0,
             relatedTarget: relatedTarget || null
         };
         var ev;
@@ -228,137 +220,173 @@
         target.dispatchEvent(ev);
     }
 
-    function triggerNativeTooltip(puck, originalEvent) {
+    function releaseHoverToPuck(puck) {
         if (!puck) {
             return;
         }
-        clickOpenedPuck = puck;
-        allowNativeHoverUntil = Date.now() + 250;
-        allowClickTooltipUntil = Date.now() + 1500;
+        releasedHoverPuck = puck;
+        clearDwell('release');
         ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'].forEach(function(type) {
-            dispatchPointerLike(type, puck, originalEvent, null);
+            dispatchPointerLike(type, puck, dwellClientX, dwellClientY, dwellScreenX, dwellScreenY, null);
         });
-        setTimeout(function() {
-            allowNativeHoverUntil = 0;
-        }, 260);
-        log('click-open', puck);
+        log('hover released after dwell', puck);
     }
 
-    function closeNativeTooltip(originalEvent) {
-        if (!clickOpenedPuck) {
-            hideTooltips();
+    function startOrResetDwell(puck, e) {
+        if (!puck || hoverExtraDelayMs() <= 0) {
             return;
         }
-        var puck = clickOpenedPuck;
-        clickOpenedPuck = null;
-        allowNativeHoverUntil = Date.now() + 250;
-        allowClickTooltipUntil = 0;
-        ['pointerout', 'pointerleave', 'mouseout', 'mouseleave'].forEach(function(type) {
-            dispatchPointerLike(type, puck, originalEvent, document.body);
-        });
-        setTimeout(function() {
-            allowNativeHoverUntil = 0;
-        }, 260);
-        log('close');
+        dwellClientX = e.clientX;
+        dwellClientY = e.clientY;
+        dwellScreenX = e.screenX;
+        dwellScreenY = e.screenY;
+        if (dwellPuck === puck && dwellTimerId) {
+            return;
+        }
+        clearDwell('puck change');
+        dwellPuck = puck;
+        dwellTimerId = setTimeout(function() {
+            dwellTimerId = null;
+            if (dwellPuck === puck) {
+                releaseHoverToPuck(puck);
+            }
+        }, hoverExtraDelayMs());
+        log('dwell started', hoverExtraDelayMs() + 'ms', puck);
     }
 
-    function shouldBlockHover(e) {
+    function isLeaveType(type) {
+        return type === 'pointerout' || type === 'pointerleave' ||
+            type === 'mouseout' || type === 'mouseleave';
+    }
+
+    function onPointerHoverGateCapture(e) {
         var mode = getMode();
-        if (mode === 'hover') {
-            return false;
-        }
-        if (Date.now() < allowNativeHoverUntil) {
-            return false;
-        }
-        return !!closestPuck(e.target);
-    }
-
-    function onNativeTooltipPointerCapture(e) {
-        if (!shouldBlockHover(e)) {
-            return;
-        }
-        e.stopImmediatePropagation();
-        var now = Date.now();
-        if (now - lastHoverLogAt > 1000) {
-            lastHoverLogAt = now;
-            log('blocked native hover event', e.type, e.target);
-        }
-        if (getMode() === 'disabled') {
-            hideTooltips();
-        } else {
-            hideNonClickTooltips();
-        }
-    }
-
-    function onPointerDownCapture(e) {
-        var mode = getMode();
-        if (mode === 'hover') {
-            return;
-        }
-        var puck = closestPuck(e.target);
         if (mode === 'disabled') {
-            if (puck) {
-                hideTooltips();
+            if (!closestPuck(e.target)) {
+                return;
+            }
+            e.stopImmediatePropagation();
+            var now = Date.now();
+            if (now - lastHoverLogAt > 1000) {
+                lastHoverLogAt = now;
+                log('blocked hover (disabled)', e.type, e.target);
+            }
+            hideTooltips();
+            clearDwell('disabled');
+            releasedHoverPuck = null;
+            return;
+        }
+
+        if (hoverExtraDelayMs() <= 0) {
+            releasedHoverPuck = null;
+            clearDwell('delay off');
+            return;
+        }
+
+        var puck = closestPuck(e.target);
+
+        if (puck && puck === releasedHoverPuck && !isLeaveType(e.type)) {
+            return;
+        }
+
+        if (isLeaveType(e.type)) {
+            var stillOnReleased = releasedHoverPuck && e.relatedTarget &&
+                e.relatedTarget.nodeType === 1 && releasedHoverPuck.contains(e.relatedTarget);
+            if (releasedHoverPuck && e.target && releasedHoverPuck.contains(e.target) && !stillOnReleased) {
+                releasedHoverPuck = null;
+                clearDwell('leave released puck');
+            }
+            if (dwellPuck && e.target && dwellPuck.contains(e.target)) {
+                var stillOnDwell = e.relatedTarget && dwellPuck.contains(e.relatedTarget);
+                if (!stillOnDwell) {
+                    clearDwell('leave dwell puck');
+                }
             }
             return;
         }
-        if (!puck && !isFlightTooltip(e.target)) {
-            closeNativeTooltip(e);
-        }
-    }
 
-    function onClickCapture(e) {
-        if (getMode() !== 'click') {
-            return;
-        }
-        var puck = closestPuck(e.target);
         if (!puck) {
             return;
         }
-        // After the click stack (so the app can create the tooltip) but before the next
-        // macrotask/paint — snappier than setTimeout(0).
-        scheduleMicrotask(function() {
-            triggerNativeTooltip(puck, e);
-        });
+
+        if (releasedHoverPuck && puck !== releasedHoverPuck) {
+            ['pointerout', 'pointerleave', 'mouseout', 'mouseleave'].forEach(function(type) {
+                dispatchPointerLike(
+                    type,
+                    releasedHoverPuck,
+                    e.clientX,
+                    e.clientY,
+                    e.screenX,
+                    e.screenY,
+                    document.body
+                );
+            });
+            releasedHoverPuck = null;
+        }
+
+        e.stopImmediatePropagation();
+        dwellClientX = e.clientX;
+        dwellClientY = e.clientY;
+        dwellScreenX = e.screenX;
+        dwellScreenY = e.screenY;
+        startOrResetDwell(puck, e);
     }
 
     function observeTooltips() {
-        observer = new MutationObserver(function(mutations) {
-            if (getMode() === 'hover') {
+        observer = new MutationObserver(function() {
+            if (getMode() !== 'disabled') {
                 return;
             }
-            mutations.forEach(function(mutation) {
-                mutation.addedNodes.forEach(function(node) {
-                    if (node.nodeType !== 1) {
-                        return;
-                    }
-                    if (node.matches && node.matches(TOOLTIP_SELECTOR)) {
-                        markOrHideTooltip(node);
-                        return;
-                    }
-                    if (node.querySelectorAll) {
-                        node.querySelectorAll(TOOLTIP_SELECTOR).forEach(markOrHideTooltip);
-                    }
-                });
+            document.querySelectorAll(TOOLTIP_SELECTOR).forEach(function(tip) {
+                if (tip.getAttribute('data-dc-flight-tooltip-hidden') !== '1') {
+                    tip.style.display = 'none';
+                    tip.style.visibility = 'hidden';
+                    tip.setAttribute('data-dc-flight-tooltip-hidden', '1');
+                }
             });
         });
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
+    function syntheticLeaveReleasedPuck() {
+        if (!releasedHoverPuck) {
+            return;
+        }
+        var t = releasedHoverPuck;
+        ['pointerout', 'pointerleave', 'mouseout', 'mouseleave'].forEach(function(type) {
+            dispatchPointerLike(type, t, dwellClientX, dwellClientY, dwellScreenX, dwellScreenY, document.body);
+        });
+        releasedHoverPuck = null;
+    }
+
+    function syncFromPrefs() {
+        ensureStyle();
+        applyModeAttribute();
+        syncPassThroughAttribute();
+        var sig = pollSignature();
+        if (getMode() === 'disabled') {
+            syntheticLeaveReleasedPuck();
+            clearDwell('prefs disabled');
+        }
+        if (hoverExtraDelayMs() <= 0) {
+            syntheticLeaveReleasedPuck();
+            clearDwell('prefs delay 0');
+        }
+        if (sig !== lastPollSig) {
+            lastPollSig = sig;
+            log('prefs', { mode: getMode(), hoverDelayMs: hoverExtraDelayMs(), passThrough: passThroughClicksEnabled() });
+        }
+    }
+
     ensureStyle();
     applyModeAttribute();
     syncPassThroughAttribute();
-    lastPassThroughPref = passThroughClicksEnabled();
+    lastPollSig = pollSignature();
     prefPollTimer = setInterval(function() {
-        var cur = passThroughClicksEnabled();
-        if (cur !== lastPassThroughPref) {
-            lastPassThroughPref = cur;
-            syncPassThroughAttribute();
-            log('pass-through clicks', cur);
-        }
+        syncFromPrefs();
     }, 600);
     observeTooltips();
-    log('initialized', { mode: getMode(), passThrough: passThroughClicksEnabled(), href: location.href });
+    log('initialized', { mode: getMode(), hoverDelayMs: hoverExtraDelayMs(), passThrough: passThroughClicksEnabled(), href: location.href });
 
     [
         'pointerover',
@@ -372,16 +400,16 @@
         'mouseout',
         'mouseleave'
     ].forEach(function(type) {
-        window.addEventListener(type, onNativeTooltipPointerCapture, true);
+        window.addEventListener(type, onPointerHoverGateCapture, true);
     });
-    window.addEventListener('pointerdown', onPointerDownCapture, true);
-    window.addEventListener('click', onClickCapture, true);
 
     window.__myScriptCleanup = function() {
         if (prefPollTimer) {
             clearInterval(prefPollTimer);
             prefPollTimer = null;
         }
+        clearDwell('cleanup');
+        releasedHoverPuck = null;
         if (observer) {
             observer.disconnect();
             observer = null;
@@ -398,10 +426,8 @@
             'mouseout',
             'mouseleave'
         ].forEach(function(type) {
-            window.removeEventListener(type, onNativeTooltipPointerCapture, true);
+            window.removeEventListener(type, onPointerHoverGateCapture, true);
         });
-        window.removeEventListener('pointerdown', onPointerDownCapture, true);
-        window.removeEventListener('click', onClickCapture, true);
         restoreTooltips();
         document.documentElement.removeAttribute('data-dc-flight-tooltip-mode');
         document.documentElement.removeAttribute('data-dc-flight-tooltip-pass-through');
