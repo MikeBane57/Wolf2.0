@@ -1,11 +1,14 @@
 // ==UserScript==
 // @name         Advanced filter saved settings
 // @namespace    Wolf 2.0
-// @version      0.1.3
+// @version      0.2.0
 // @description  Save and recall named Advanced filter input presets.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/schedule*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      api.github.com
+// @connect      raw.githubusercontent.com
+// @donkeycode-pref {"advancedFilterDataOwner":{"type":"string","group":"Advanced filter saves","label":"JSON repo owner","description":"If blank: donkeycode_github_owner -> MikeBane57.","default":"","placeholder":""},"advancedFilterDataRepo":{"type":"string","group":"Advanced filter saves","label":"JSON repo name","description":"If blank: donkeycode_github_repo -> DonkeyCODE.","default":"","placeholder":""},"advancedFilterDataBranch":{"type":"string","group":"Advanced filter saves","label":"JSON branch","description":"If blank: donkeycode_github_branch -> main.","default":"","placeholder":""},"advancedFilterRepoPath":{"type":"string","group":"Advanced filter saves","label":"JSON folder in repo","description":"Folder for shared advanced filter presets. Empty -> ADVANCED FILTERS.","default":"","placeholder":"ADVANCED FILTERS"}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Advanced%20filter%20saved%20settings.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Advanced%20filter%20saved%20settings.user.js
 // ==/UserScript==
@@ -21,6 +24,14 @@
     var TITLE_RE = /^\s*advanced\s+filters?\s*$/i;
     var CONTROL_SELECTOR = 'input, select, textarea';
     var SEMANTIC_DROPDOWN_SELECTOR = '.ui.dropdown[role="combobox"], [role="combobox"].ui.dropdown';
+    var GITHUB_OWNER = 'MikeBane57';
+    var GITHUB_REPO = 'DonkeyCODE';
+    var GITHUB_BRANCH = 'main';
+    var CLOUD_ROOT = 'ADVANCED FILTERS';
+
+    var cloudPresets = [];
+    var cloudLoaded = false;
+    var cloudLoading = false;
 
     var observer = null;
     var rescanTimer = 0;
@@ -72,6 +83,327 @@
         var store = readStore();
         store[pageKey()] = Array.isArray(list) ? list : [];
         return writeStore(store);
+    }
+
+
+    function getPref(key, def) {
+        if (typeof donkeycodeGetPref !== 'function') {
+            return def;
+        }
+        var v;
+        try {
+            v = donkeycodeGetPref(key);
+        } catch (e) {
+            return def;
+        }
+        if (v === undefined || v === null || v === '') {
+            return def;
+        }
+        return v;
+    }
+
+    function trimText(value) {
+        return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+    }
+
+    function resolvedGithubPat() {
+        return trimText(getPref('donkeycode_github_pat', ''));
+    }
+
+    function resolvedCloudOwner() {
+        return trimText(getPref('advancedFilterDataOwner', '')) || trimText(getPref('donkeycode_github_owner', '')) || GITHUB_OWNER;
+    }
+
+    function resolvedCloudRepo() {
+        return trimText(getPref('advancedFilterDataRepo', '')) || trimText(getPref('donkeycode_github_repo', '')) || GITHUB_REPO;
+    }
+
+    function resolvedCloudBranch() {
+        return trimText(getPref('advancedFilterDataBranch', '')) || trimText(getPref('donkeycode_github_branch', '')) || GITHUB_BRANCH;
+    }
+
+    function resolvedCloudRoot() {
+        var root = trimText(getPref('advancedFilterRepoPath', '')) || CLOUD_ROOT;
+        return root.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/\.\./g, '') || CLOUD_ROOT;
+    }
+
+    function indexJsonPath() {
+        return resolvedCloudRoot() + '/index.json';
+    }
+
+    function presetJsonPath(id) {
+        return resolvedCloudRoot() + '/presets/' + encodeURIComponent(String(id || 'preset')).replace(/%/g, '') + '.json';
+    }
+
+    function encodedRepoPath(path) {
+        return String(path || '').replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
+    }
+
+    function githubContentsApiUrlForPath(relPath) {
+        return 'https://api.github.com/repos/' + encodeURIComponent(resolvedCloudOwner()) + '/' + encodeURIComponent(resolvedCloudRepo()) + '/contents/' + encodedRepoPath(relPath);
+    }
+
+    function githubApiHeaders() {
+        return {
+            Authorization: 'Bearer ' + resolvedGithubPat(),
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28'
+        };
+    }
+
+    function utf8ToBase64(str) {
+        return btoa(unescape(encodeURIComponent(String(str == null ? '' : str))));
+    }
+
+    function decodeGithubFileContent(b64) {
+        if (!b64) {
+            return '';
+        }
+        var bin = atob(String(b64).replace(/\s/g, ''));
+        try {
+            return decodeURIComponent(escape(bin));
+        } catch (e) {
+            return bin;
+        }
+    }
+
+    function gmXhr(method, url, headers, bodyObj, cb) {
+        if (typeof GM_xmlhttpRequest !== 'function') {
+            cb(0, 'GM_xmlhttpRequest unavailable.');
+            return;
+        }
+        GM_xmlhttpRequest({
+            method: method,
+            url: url,
+            headers: headers || {},
+            data: bodyObj == null ? undefined : JSON.stringify(bodyObj),
+            onload: function (res) {
+                cb(res.status || 0, res.responseText || '');
+            },
+            onerror: function () {
+                cb(0, 'Network error.');
+            }
+        });
+    }
+
+    function githubApiErrorSummary(status, body) {
+        var o = safeJsonParse(String(body || ''), null);
+        if (o && o.message) {
+            return o.message;
+        }
+        return body ? String(body).slice(0, 200) : 'HTTP ' + status;
+    }
+
+    function getJsonAtCloudPath(relPath, cb) {
+        if (!resolvedGithubPat()) {
+            cb(null, 'Set donkeycode_github_pat to load shared filters.');
+            return;
+        }
+        var url = githubContentsApiUrlForPath(relPath) + '?ref=' + encodeURIComponent(resolvedCloudBranch());
+        gmXhr('GET', url, githubApiHeaders(), null, function (status, text) {
+            if (status === 404) {
+                cb(null, null);
+                return;
+            }
+            if (status < 200 || status >= 300) {
+                cb(null, 'GET ' + relPath + ' failed: HTTP ' + status + ' - ' + githubApiErrorSummary(status, text));
+                return;
+            }
+            var meta = safeJsonParse(text, null);
+            if (!meta) {
+                cb(null, 'Could not parse GitHub metadata for ' + relPath + '.');
+                return;
+            }
+            cb(safeJsonParse(decodeGithubFileContent(meta.content || ''), null), null, meta.sha || null);
+        });
+    }
+
+    function getCloudFileSha(relPath, cb) {
+        if (!resolvedGithubPat()) {
+            cb({ sha: null }, null);
+            return;
+        }
+        var url = githubContentsApiUrlForPath(relPath) + '?ref=' + encodeURIComponent(resolvedCloudBranch());
+        gmXhr('GET', url, githubApiHeaders(), null, function (status, text) {
+            if (status === 404) {
+                cb({ sha: null }, null);
+                return;
+            }
+            if (status < 200 || status >= 300) {
+                cb(null, 'GET SHA failed: HTTP ' + status + ' - ' + githubApiErrorSummary(status, text));
+                return;
+            }
+            var meta = safeJsonParse(text, null);
+            cb({ sha: meta && meta.sha ? String(meta.sha) : null }, null);
+        });
+    }
+
+    function putJsonAtCloudPath(relPath, jsonObj, message, cb) {
+        if (!resolvedGithubPat()) {
+            cb(false, 'Set donkeycode_github_pat with Contents read/write for ' + resolvedCloudOwner() + '/' + resolvedCloudRepo() + '.');
+            return;
+        }
+        var attempts = 0;
+        function putWithFreshSha() {
+            getCloudFileSha(relPath, function (meta, err) {
+                if (err) {
+                    cb(false, err);
+                    return;
+                }
+                var body = {
+                    message: (message || 'Advanced filters: update shared preset') + (attempts ? ' (retry ' + attempts + ')' : ''),
+                    content: utf8ToBase64(JSON.stringify(jsonObj, null, 2) + '\n'),
+                    branch: resolvedCloudBranch()
+                };
+                if (meta && meta.sha) {
+                    body.sha = meta.sha;
+                }
+                var headers = githubApiHeaders();
+                headers['Content-Type'] = 'application/json';
+                gmXhr('PUT', githubContentsApiUrlForPath(relPath), headers, body, function (status, text) {
+                    if (status === 200 || status === 201) {
+                        cb(true, null);
+                        return;
+                    }
+                    if (status === 409 && attempts < 4) {
+                        attempts += 1;
+                        setTimeout(putWithFreshSha, 120);
+                        return;
+                    }
+                    cb(false, 'PUT ' + relPath + ' failed: HTTP ' + status + ' - ' + githubApiErrorSummary(status, text));
+                });
+            });
+        }
+        putWithFreshSha();
+    }
+
+    function stableHash(value) {
+        var s = String(value == null ? '' : value);
+        var h = 0;
+        for (var i = 0; i < s.length; i++) {
+            h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+        }
+        return Math.abs(h).toString(36);
+    }
+
+    function presetIdFromName(name) {
+        var base = trimText(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'preset';
+        return base.slice(0, 48) + '-' + stableHash(pageKey() + '|' + trimText(name).toLowerCase());
+    }
+
+    function normalizeCloudPreset(raw) {
+        if (!raw || typeof raw !== 'object' || !raw.snapshot) {
+            return null;
+        }
+        return {
+            id: trimText(raw.id) || presetIdFromName(raw.name || 'preset'),
+            name: trimText(raw.name) || '(unnamed)',
+            pageKey: trimText(raw.pageKey || raw.scopeKey || ''),
+            snapshot: raw.snapshot,
+            updatedAt: raw.updatedAt || Date.now(),
+            shared: true
+        };
+    }
+
+    function loadCloudPresets(panel, cb) {
+        if (cloudLoading) {
+            return;
+        }
+        cloudLoading = true;
+        setStatus(panel, 'Loading shared filters...');
+        getJsonAtCloudPath(indexJsonPath(), function (indexDoc, err) {
+            if (err) {
+                cloudLoading = false;
+                setStatus(panel, err);
+                if (cb) {
+                    cb(false);
+                }
+                return;
+            }
+            var ids = indexDoc && Array.isArray(indexDoc.presetIds) ? indexDoc.presetIds.slice() : [];
+            var out = [];
+            function next(i) {
+                if (i >= ids.length) {
+                    cloudPresets = sortPresets(out);
+                    cloudLoaded = true;
+                    cloudLoading = false;
+                    refreshPanelOptions(panel);
+                    setStatus(panel, 'Loaded ' + cloudPresets.length + ' shared filter(s).');
+                    if (cb) {
+                        cb(true);
+                    }
+                    return;
+                }
+                getJsonAtCloudPath(presetJsonPath(ids[i]), function (doc) {
+                    var norm = normalizeCloudPreset(doc);
+                    if (norm && (!norm.pageKey || norm.pageKey === pageKey())) {
+                        out.push(norm);
+                    }
+                    next(i + 1);
+                });
+            }
+            next(0);
+        });
+    }
+
+    function cloudPresetById(id) {
+        for (var i = 0; i < cloudPresets.length; i++) {
+            if (String(cloudPresets[i].id) === String(id)) {
+                return cloudPresets[i];
+            }
+        }
+        return null;
+    }
+
+    function saveCloudPreset(localPreset, cb) {
+        var existing = null;
+        for (var i = 0; i < cloudPresets.length; i++) {
+            if (String(cloudPresets[i].name).toLowerCase() === String(localPreset.name).toLowerCase() && cloudPresets[i].pageKey === pageKey()) {
+                existing = cloudPresets[i];
+                break;
+            }
+        }
+        var id = existing ? existing.id : presetIdFromName(localPreset.name);
+        var doc = {
+            version: 1,
+            id: id,
+            name: localPreset.name,
+            pageKey: pageKey(),
+            scope: { origin: location.origin, pathname: location.pathname },
+            updatedAt: Date.now(),
+            snapshot: localPreset.snapshot
+        };
+        getJsonAtCloudPath(indexJsonPath(), function (indexDoc) {
+            var ids = indexDoc && Array.isArray(indexDoc.presetIds) ? indexDoc.presetIds.slice() : [];
+            if (ids.indexOf(id) < 0) {
+                ids.push(id);
+            }
+            var newIndex = { version: 1, format: 'advanced-filter-presets-shard', presetIds: ids, updatedAt: Date.now() };
+            putJsonAtCloudPath(presetJsonPath(id), doc, 'Advanced filters: save shared preset ' + localPreset.name, function (ok, err) {
+                if (!ok) {
+                    cb(false, err);
+                    return;
+                }
+                putJsonAtCloudPath(indexJsonPath(), newIndex, 'Advanced filters: update preset index', function (ok2, err2) {
+                    if (ok2) {
+                        var norm = normalizeCloudPreset(doc);
+                        var found = false;
+                        for (var j = 0; j < cloudPresets.length; j++) {
+                            if (cloudPresets[j].id === norm.id) {
+                                cloudPresets[j] = norm;
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            cloudPresets.push(norm);
+                        }
+                        sortPresets(cloudPresets);
+                    }
+                    cb(ok2, err2);
+                });
+            });
+        });
     }
 
     function cssEscape(value) {
@@ -741,20 +1073,38 @@
         document.head.appendChild(style);
     }
 
-    function panelHtml(list) {
-        var options = '<option value="">Choose saved setting...</option>';
-        for (var i = 0; i < list.length; i++) {
-            options += '<option value="' + htmlEscape(list[i].name) + '">' + htmlEscape(list[i].name) + '</option>';
+    function optionsHtml(localList, sharedList) {
+        var html = '<option value="">Choose saved setting...</option>';
+        if (localList && localList.length) {
+            html += '<optgroup label="Local">';
+            for (var i = 0; i < localList.length; i++) {
+                html += '<option value="local:' + htmlEscape(localList[i].name) + '">' + htmlEscape(localList[i].name) + '</option>';
+            }
+            html += '</optgroup>';
         }
+        if (sharedList && sharedList.length) {
+            html += '<optgroup label="Shared">';
+            for (var j = 0; j < sharedList.length; j++) {
+                html += '<option value="cloud:' + htmlEscape(sharedList[j].id) + '">' + htmlEscape(sharedList[j].name) + '</option>';
+            }
+            html += '</optgroup>';
+        }
+        return html;
+    }
+
+    function panelHtml(list) {
+        var options = optionsHtml(list, cloudPresets);
         return (
             '<div class="dc-afss-title">Advanced filter settings</div>' +
             '<div class="dc-afss-row">' +
             '<input type="text" data-dc-afss-name placeholder="Name this setting" />' +
-            '<button type="button" data-dc-afss-save>Save</button>' +
+            '<button type="button" data-dc-afss-save>Save Local</button>' +
+            '<button type="button" data-dc-afss-save-cloud>Save Shared</button>' +
             '</div>' +
             '<div class="dc-afss-row">' +
             '<select data-dc-afss-select>' + options + '</select>' +
             '<button type="button" data-dc-afss-load>Recall</button>' +
+            '<button type="button" data-dc-afss-refresh>Refresh Shared</button>' +
             '<button type="button" data-dc-afss-delete>Delete</button>' +
             '</div>' +
             '<div class="dc-afss-status" data-dc-afss-status></div>'
@@ -777,12 +1127,7 @@
             return;
         }
         var selected = select.value;
-        var list = readPagePresets();
-        var html = '<option value="">Choose saved setting...</option>';
-        for (var i = 0; i < list.length; i++) {
-            html += '<option value="' + htmlEscape(list[i].name) + '">' + htmlEscape(list[i].name) + '</option>';
-        }
-        select.innerHTML = html;
+        select.innerHTML = optionsHtml(readPagePresets(), cloudPresets);
         select.value = selected;
     }
 
@@ -818,6 +1163,9 @@
         activePanel = panel;
         activeTitle = title;
         bindPanel(panel);
+        if (!cloudLoaded && !cloudLoading) {
+            loadCloudPresets(panel);
+        }
         outsideClickHandler = function (ev) {
             if (panel.contains(ev.target) || button.contains(ev.target)) {
                 return;
@@ -837,16 +1185,54 @@
         }
     }
 
+
+
+    function selectedPresetFromControls(select, nameInput) {
+        var val = (select && select.value) || '';
+        if (val.indexOf('cloud:') === 0) {
+            return { item: cloudPresetById(val.slice(6)), source: 'cloud' };
+        }
+        if (val.indexOf('local:') === 0) {
+            return Object.assign(presetByName(readPagePresets(), val.slice(6)), { source: 'local' });
+        }
+        return Object.assign(presetByName(readPagePresets(), (nameInput && nameInput.value) || ''), { source: 'local' });
+    }
+
+    function buildPresetFromArea(name, area) {
+        var snap = snapshotArea(area);
+        if (!snap.items.length) {
+            return null;
+        }
+        return { name: name, snapshot: snap };
+    }
+
+    function saveLocalPreset(preset) {
+        var list = readPagePresets();
+        var found = presetByName(list, preset.name);
+        if (found.index >= 0) {
+            list[found.index] = preset;
+        } else {
+            list.push(preset);
+        }
+        sortPresets(list);
+        return writePagePresets(list);
+    }
+
     function bindPanel(panel) {
         var nameInput = panel.querySelector('[data-dc-afss-name]');
         var select = panel.querySelector('[data-dc-afss-select]');
         var saveBtn = panel.querySelector('[data-dc-afss-save]');
+        var saveCloudBtn = panel.querySelector('[data-dc-afss-save-cloud]');
+        var refreshBtn = panel.querySelector('[data-dc-afss-refresh]');
         var loadBtn = panel.querySelector('[data-dc-afss-load]');
         var deleteBtn = panel.querySelector('[data-dc-afss-delete]');
         if (select && nameInput) {
             select.addEventListener('change', function () {
                 if (select.value) {
-                    nameInput.value = select.value;
+                    var chosen = selectedPresetFromControls(select, nameInput);
+                    if (chosen && chosen.item) {
+                        nameInput.value = chosen.item.name;
+                    }
                 }
             });
         }
@@ -863,37 +1249,63 @@
                     setStatus(panel, 'Enter a name before saving.');
                     return;
                 }
-                var snap = snapshotArea(area);
-                if (!snap.items.length) {
+                var preset = buildPresetFromArea(name, area);
+                if (!preset) {
                     setStatus(panel, 'No inputs found to save.');
                     return;
                 }
-                var list = readPagePresets();
-                var found = presetByName(list, name);
-                var next = { name: name, snapshot: snap };
-                if (found.index >= 0) {
-                    list[found.index] = next;
-                } else {
-                    list.push(next);
-                }
-                sortPresets(list);
-                if (!writePagePresets(list)) {
+                if (!saveLocalPreset(preset)) {
                     setStatus(panel, 'Could not save setting. Storage may be full.');
                     return;
                 }
                 refreshPanelOptions(panel);
                 if (select) {
-                    select.value = name;
+                    select.value = 'local:' + name;
                 }
-                setStatus(panel, 'Saved "' + name + '" with ' + snap.items.length + ' inputs.');
+                setStatus(panel, 'Saved local "' + name + '" with ' + preset.snapshot.items.length + ' inputs.');
+            });
+        }
+        if (saveCloudBtn) {
+            saveCloudBtn.addEventListener('click', function () {
+                var title = activeTitle || findAdvancedFilterTitle();
+                var area = findFilterArea(title);
+                if (!area) {
+                    setStatus(panel, 'Could not find the Advanced filter inputs.');
+                    return;
+                }
+                var name = String((nameInput && nameInput.value) || '').replace(/\s+/g, ' ').trim();
+                if (!name) {
+                    setStatus(panel, 'Enter a name before saving shared.');
+                    return;
+                }
+                var preset = buildPresetFromArea(name, area);
+                if (!preset) {
+                    setStatus(panel, 'No inputs found to save.');
+                    return;
+                }
+                saveLocalPreset(preset);
+                setStatus(panel, 'Saving shared filter...');
+                saveCloudPreset(preset, function (ok, err) {
+                    if (!ok) {
+                        setStatus(panel, err || 'Shared save failed.');
+                        return;
+                    }
+                    cloudLoaded = true;
+                    refreshPanelOptions(panel);
+                    setStatus(panel, 'Saved shared "' + name + '".');
+                });
+            });
+        }
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', function () {
+                loadCloudPresets(panel);
             });
         }
         if (loadBtn) {
             loadBtn.addEventListener('click', function () {
                 var title = activeTitle || findAdvancedFilterTitle();
                 var area = findFilterArea(title);
-                var name = (select && select.value) || (nameInput && nameInput.value) || '';
-                var found = presetByName(readPagePresets(), name);
+                var found = selectedPresetFromControls(select, nameInput);
                 if (!area) {
                     setStatus(panel, 'Could not find the Advanced filter inputs.');
                     return;
@@ -914,8 +1326,11 @@
         }
         if (deleteBtn) {
             deleteBtn.addEventListener('click', function () {
-                var name = (select && select.value) || (nameInput && nameInput.value) || '';
-                var found = presetByName(readPagePresets(), name);
+                var found = selectedPresetFromControls(select, nameInput);
+                if (found.source === 'cloud') {
+                    setStatus(panel, 'Shared delete is not enabled yet; delete local presets only.');
+                    return;
+                }
                 if (!found.item) {
                     setStatus(panel, 'Choose a saved setting to delete.');
                     return;
