@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flight tooltip display options
 // @namespace    Wolf 2.0
-// @version      0.3.0
+// @version      0.3.1
 // @description  Disable flight tooltips entirely, or require a longer hover before the native tooltip appears
 // @match        https://opssuitemain.swacorp.com/worksheet*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
@@ -167,6 +167,24 @@
         });
     }
 
+    /** Keep only the newest flight tooltip node (last in document order); remove older duplicates from the DOM. */
+    function pruneStaleFlightTooltips() {
+        if (getMode() === 'disabled') {
+            return;
+        }
+        var nodes = document.querySelectorAll(TOOLTIP_SELECTOR);
+        if (nodes.length <= 1) {
+            return;
+        }
+        var keep = nodes[nodes.length - 1];
+        for (var i = 0; i < nodes.length - 1; i++) {
+            if (nodes[i] !== keep) {
+                nodes[i].remove();
+            }
+        }
+        log('pruned stale flight tooltips', nodes.length - 1);
+    }
+
     function clearDwell(reason) {
         if (dwellTimerId) {
             clearTimeout(dwellTimerId);
@@ -226,6 +244,7 @@
         }
         releasedHoverPuck = puck;
         clearDwell('release');
+        pruneStaleFlightTooltips();
         ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'].forEach(function(type) {
             dispatchPointerLike(type, puck, dwellClientX, dwellClientY, dwellScreenX, dwellScreenY, null);
         });
@@ -322,6 +341,7 @@
                 );
             });
             releasedHoverPuck = null;
+            pruneStaleFlightTooltips();
         }
 
         e.stopImmediatePropagation();
@@ -333,17 +353,35 @@
     }
 
     function observeTooltips() {
-        observer = new MutationObserver(function() {
-            if (getMode() !== 'disabled') {
+        observer = new MutationObserver(function(mutations) {
+            if (getMode() === 'disabled') {
+                document.querySelectorAll(TOOLTIP_SELECTOR).forEach(function(tip) {
+                    if (tip.getAttribute('data-dc-flight-tooltip-hidden') !== '1') {
+                        tip.style.display = 'none';
+                        tip.style.visibility = 'hidden';
+                        tip.setAttribute('data-dc-flight-tooltip-hidden', '1');
+                    }
+                });
                 return;
             }
-            document.querySelectorAll(TOOLTIP_SELECTOR).forEach(function(tip) {
-                if (tip.getAttribute('data-dc-flight-tooltip-hidden') !== '1') {
-                    tip.style.display = 'none';
-                    tip.style.visibility = 'hidden';
-                    tip.setAttribute('data-dc-flight-tooltip-hidden', '1');
-                }
+            var needPrune = false;
+            mutations.forEach(function(mutation) {
+                mutation.addedNodes.forEach(function(node) {
+                    if (node.nodeType !== 1) {
+                        return;
+                    }
+                    if (node.matches && node.matches(TOOLTIP_SELECTOR)) {
+                        needPrune = true;
+                        return;
+                    }
+                    if (node.querySelector && node.querySelector(TOOLTIP_SELECTOR)) {
+                        needPrune = true;
+                    }
+                });
             });
+            if (needPrune) {
+                pruneStaleFlightTooltips();
+            }
         });
         observer.observe(document.body, { childList: true, subtree: true });
     }
@@ -386,6 +424,9 @@
         syncFromPrefs();
     }, 600);
     observeTooltips();
+    if (getMode() !== 'disabled') {
+        pruneStaleFlightTooltips();
+    }
     log('initialized', { mode: getMode(), hoverDelayMs: hoverExtraDelayMs(), passThrough: passThroughClicksEnabled(), href: location.href });
 
     [
