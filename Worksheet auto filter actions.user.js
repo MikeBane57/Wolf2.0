@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.17
+// @version      1.4.18
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -44,9 +44,12 @@
     var lastSig = '';
     var lastAdvancedFilterPadLogKey = '';
     var lastAdvancedFilterPadLogAt = 0;
+    var advancedFilterPadBootLogged = false;
     var hostEl = null;
     var toggleInput = null;
     var opTimeTid = null;
+    /** Keep in sync with the @version header line. */
+    var SCRIPT_VERSION = '1.4.18';
     var ADVANCED_FILTER_MIN_BOTTOM_PAD = 200;
     var ADVANCED_FILTER_SECTION_TITLES = [
         'Fleet',
@@ -105,8 +108,27 @@
             console.info.apply(console, args);
         } catch (e) {}
         try {
+            console.warn.apply(console, args);
+        } catch (eW) {}
+        try {
             debugInterval.apply(null, [].slice.call(arguments));
         } catch (e2) {}
+    }
+
+    function logAdvancedFilterPadBootOnce() {
+        if (advancedFilterPadBootLogged) {
+            return;
+        }
+        advancedFilterPadBootLogged = true;
+        var msg =
+            'Worksheet auto filter actions loaded; advanced-filter padding runs on schedule. ' +
+            'Call __dcWarProbeAdvancedFilterPad() to force a padding pass.';
+        try {
+            console.warn('%c[WS-AUTO-FILTER]', 'color:#f4d03f;font-weight:600;', msg, {
+                version: SCRIPT_VERSION,
+                match: typeof location !== 'undefined' ? location.href : ''
+            });
+        } catch (e) {}
     }
 
     function elClassSnippet(el, maxLen) {
@@ -1363,17 +1385,53 @@
 
     function findSmartWidgetAdvancedFilterPaddingTarget() {
         try {
-            return document.querySelector(SMART_WIDGET_ADVANCED_FILTER_SELECTOR);
+            var exact = document.querySelector(SMART_WIDGET_ADVANCED_FILTER_SELECTOR);
+            if (exact) {
+                return { el: exact, matchKind: 'selector' };
+            }
         } catch (e) {
             debugInterval('smart widget advanced filter selector failed', e);
-            return null;
+        }
+        try {
+            var sw = document.querySelector('#smart-widget');
+            if (!sw || !sw.querySelectorAll) {
+                return { el: null, matchKind: '' };
+            }
+            var candidates = sw.querySelectorAll('div[class*="KU0FYL"]');
+            if (!candidates.length) {
+                return { el: null, matchKind: '' };
+            }
+            if (candidates.length === 1) {
+                return { el: candidates[0], matchKind: 'class_substring' };
+            }
+            var best = null;
+            var bestArea = 0;
+            for (var ci = 0; ci < candidates.length; ci++) {
+                var c = candidates[ci];
+                var r = c.getBoundingClientRect && c.getBoundingClientRect();
+                var area = r && r.width > 0 && r.height > 0 ? r.width * r.height : 0;
+                if (area > bestArea) {
+                    bestArea = area;
+                    best = c;
+                }
+            }
+            return { el: best, matchKind: best ? 'class_substring' : '' };
+        } catch (e2) {
+            return { el: null, matchKind: '' };
         }
     }
 
     function findAdvancedFilterPaddingTarget() {
-        var smartWidgetTarget = findSmartWidgetAdvancedFilterPaddingTarget();
+        var swFound = findSmartWidgetAdvancedFilterPaddingTarget();
+        var smartWidgetTarget = swFound && swFound.el;
         if (smartWidgetTarget) {
-            return { target: smartWidgetTarget, reason: 'smart_widget_css_selector' };
+            return {
+                target: smartWidgetTarget,
+                reason:
+                    swFound.matchKind === 'class_substring'
+                        ? 'smart_widget_class_substring'
+                        : 'smart_widget_css_selector'
+            };
         }
         var sectionGrid = findAdvancedFilterGridBySections();
         if (sectionGrid) {
@@ -1543,7 +1601,9 @@
             usedScrollPort: !!scrollPort,
             innerTarget: target,
             padEl: padEl,
-            selectorMatched: found.reason === 'smart_widget_css_selector',
+            selectorMatched:
+                found.reason === 'smart_widget_css_selector' ||
+                found.reason === 'smart_widget_class_substring',
             smartWidgetSelector: SMART_WIDGET_ADVANCED_FILTER_SELECTOR,
             innerTag: target.tagName || '',
             innerClass: elClassSnippet(target, 120),
@@ -1560,6 +1620,18 @@
         debugInterval('advanced filter padding applied', payload);
         return true;
     }
+
+    window.__dcWarProbeAdvancedFilterPad = function () {
+        logAdvancedFilterPadBootOnce();
+        try {
+            return updateAdvancedFilterBottomPadding();
+        } catch (eProbe) {
+            try {
+                console.warn('[WS-AUTO-FILTER] __dcWarProbeAdvancedFilterPad error', eProbe);
+            } catch (e2) {}
+            return false;
+        }
+    };
 
     function scheduleAdvancedFilterBottomPadding() {
         if (filterPadRaf) {
@@ -2177,7 +2249,9 @@
     }
 
     function init() {
+        logAdvancedFilterPadBootOnce();
         tryMount();
+        scheduleAdvancedFilterBottomPadding();
         mo = new MutationObserver(function () {
             if (!document.getElementById(HOST_ID)) {
                 tryMount();
@@ -2235,6 +2309,9 @@
         }
         hostEl = null;
         toggleInput = null;
+        try {
+            window.__dcWarProbeAdvancedFilterPad = undefined;
+        } catch (eProbeDel) {}
         window.__myScriptCleanup = undefined;
     };
 })();
