@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.18
+// @version      1.4.19
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -49,8 +49,9 @@
     var toggleInput = null;
     var opTimeTid = null;
     /** Keep in sync with the @version header line. */
-    var SCRIPT_VERSION = '1.4.18';
+    var SCRIPT_VERSION = '1.4.19';
     var ADVANCED_FILTER_MIN_BOTTOM_PAD = 200;
+    var ADVANCED_FILTER_SPACER_ATTR = 'data-dc-war-adv-filter-spacer';
     var ADVANCED_FILTER_SECTION_TITLES = [
         'Fleet',
         'Aircraft',
@@ -1530,12 +1531,52 @@
     }
 
     function restoreAdvancedFilterBottomPadding() {
+        var spacers = document.querySelectorAll('[' + ADVANCED_FILTER_SPACER_ATTR + '="1"]');
+        for (var s = 0; s < spacers.length; s++) {
+            try {
+                var p = spacers[s].parentNode;
+                if (p) {
+                    p.removeChild(spacers[s]);
+                }
+            } catch (eSp) {}
+        }
         var list = document.querySelectorAll('[data-dc-war-bottom-pad]');
         for (var i = 0; i < list.length; i++) {
             list[i].style.removeProperty('padding-bottom');
             list[i].removeAttribute('data-dc-war-bottom-pad');
             list[i].removeAttribute('data-dc-war-bottom-pad-px');
         }
+    }
+
+    /**
+     * Padding on flex descendants often does not increase the scrollport's scrollHeight.
+     * A zero-content block with explicit height at the end of the filter column does.
+     */
+    function ensureAdvancedFilterSpacer(target, heightPx) {
+        if (!target || !target.appendChild || !target.querySelector) {
+            return null;
+        }
+        var sel = '[' + ADVANCED_FILTER_SPACER_ATTR + '="1"]';
+        var div = target.querySelector(sel);
+        if (!div) {
+            div = document.createElement('div');
+            div.setAttribute(ADVANCED_FILTER_SPACER_ATTR, '1');
+            div.setAttribute('aria-hidden', 'true');
+            div.style.setProperty('flex-shrink', '0', 'important');
+            div.style.setProperty('flex-grow', '0', 'important');
+            div.style.setProperty('width', '100%', 'important');
+            div.style.setProperty('margin', '0', 'important');
+            div.style.setProperty('padding', '0', 'important');
+            div.style.setProperty('border', 'none', 'important');
+            div.style.setProperty('pointer-events', 'none', 'important');
+            div.style.setProperty('box-sizing', 'border-box', 'important');
+            div.style.setProperty('visibility', 'hidden', 'important');
+            div.style.setProperty('overflow', 'hidden', 'important');
+            target.appendChild(div);
+        }
+        div.style.setProperty('min-height', heightPx + 'px', 'important');
+        div.style.setProperty('height', heightPx + 'px', 'important');
+        return div;
     }
 
     function updateAdvancedFilterBottomPadding() {
@@ -1567,50 +1608,60 @@
             pad = ADVANCED_FILTER_MIN_BOTTOM_PAD;
         }
         var scrollPort = findAdvancedFilterScrollPort(target);
-        var padEl = scrollPort || target;
-        padEl.style.setProperty('padding-bottom', pad + 'px', 'important');
-        padEl.setAttribute('data-dc-war-bottom-pad', '1');
-        padEl.setAttribute('data-dc-war-bottom-pad-px', String(pad));
-        var inlinePb = '';
+        var spacerEl = ensureAdvancedFilterSpacer(target, pad);
+        var measureEl = scrollPort || target;
         var computedPb = '';
         var scrollH = null;
         var clientH = null;
         var overflowY = '';
         var flexGrow = '';
-        try {
-            inlinePb = padEl.style && padEl.style.getPropertyValue
-                ? padEl.style.getPropertyValue('padding-bottom')
-                : '';
-        } catch (ePb) {}
-        if (window.getComputedStyle) {
+        var spacerH = '';
+        var spacerMinInline = '';
+        if (spacerEl) {
             try {
-                var cs = window.getComputedStyle(padEl);
+                spacerMinInline = spacerEl.style && spacerEl.style.getPropertyValue
+                    ? spacerEl.style.getPropertyValue('min-height')
+                    : '';
+            } catch (eMi) {}
+        }
+        if (spacerEl && window.getComputedStyle) {
+            try {
+                var sCs = window.getComputedStyle(spacerEl);
+                spacerH = sCs ? sCs.height : '';
+            } catch (eSc) {}
+        }
+        if (measureEl && window.getComputedStyle) {
+            try {
+                var cs = window.getComputedStyle(measureEl);
                 computedPb = cs ? cs.paddingBottom : '';
                 overflowY = cs ? cs.overflowY : '';
                 flexGrow = cs ? cs.flexGrow : '';
             } catch (eCs) {}
         }
         try {
-            scrollH = padEl.scrollHeight;
-            clientH = padEl.clientHeight;
+            scrollH = measureEl.scrollHeight;
+            clientH = measureEl.clientHeight;
         } catch (eSh) {}
         var payload = {
             reason: found.reason || 'unknown',
             pad: pad,
+            padVia: 'bottom_spacer',
             detailsBarHeight: h,
             usedScrollPort: !!scrollPort,
             innerTarget: target,
-            padEl: padEl,
+            padEl: measureEl,
+            spacerEl: spacerEl,
             selectorMatched:
                 found.reason === 'smart_widget_css_selector' ||
                 found.reason === 'smart_widget_class_substring',
             smartWidgetSelector: SMART_WIDGET_ADVANCED_FILTER_SELECTOR,
             innerTag: target.tagName || '',
             innerClass: elClassSnippet(target, 120),
-            padTag: padEl.tagName || '',
-            padClass: elClassSnippet(padEl, 120),
-            inlinePaddingBottom: inlinePb,
+            padTag: measureEl.tagName || '',
+            padClass: elClassSnippet(measureEl, 120),
+            spacerMinHeightInline: spacerMinInline,
             computedPaddingBottom: computedPb,
+            computedSpacerHeight: spacerH,
             padElOverflowY: overflowY,
             padElFlexGrow: flexGrow,
             scrollHeight: scrollH,
