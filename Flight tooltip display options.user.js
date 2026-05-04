@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flight tooltip display options
 // @namespace    Wolf 2.0
-// @version      0.4.0
+// @version      0.4.1
 // @description  Flight leg tooltip: default, hold on puck to show, disabled, optional extra hover delay
 // @match        https://opssuitemain.swacorp.com/worksheet*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
@@ -90,14 +90,15 @@
     }
 
     function getMode() {
-        var mode = String(getPref('flightTooltipDisplayMode', 'hover') || 'hover').toLowerCase();
+        var raw = String(getPref('flightTooltipDisplayMode', 'hover') || 'hover').toLowerCase();
+        var mode = raw.replace(/\s+/g, '_').replace(/-/g, '_');
         if (mode === 'click') {
             return 'hover';
         }
         if (mode === 'hover_only') {
             return 'hold_click';
         }
-        if (mode === 'hold_click') {
+        if (mode === 'hold_click' || mode === 'hold_on_puck' || mode === 'hold_on_puck_to_show') {
             return 'hold_click';
         }
         if (mode === 'disabled') {
@@ -141,6 +142,35 @@
         return el.closest(PUCK_SELECTOR);
     }
 
+    /**
+     * Puck under the pointer for this event (handles shadow DOM / retargeting).
+     * Falls back to e.target when composedPath is missing.
+     */
+    function puckFromEvent(e) {
+        if (e && typeof e.composedPath === 'function') {
+            var path = e.composedPath();
+            for (var i = 0; i < path.length; i++) {
+                var n = path[i];
+                if (!n || n.nodeType !== 1 || !n.closest) {
+                    continue;
+                }
+                var p = n.closest(PUCK_SELECTOR);
+                if (p) {
+                    return p;
+                }
+            }
+        }
+        return closestPuck(e && e.target);
+    }
+
+    function clearHoldTooltipRevealAttr() {
+        document.documentElement.removeAttribute('data-dc-flight-tooltip-hold-active');
+    }
+
+    function setHoldTooltipRevealAttr() {
+        document.documentElement.setAttribute('data-dc-flight-tooltip-hold-active', '1');
+    }
+
     function ensureStyle() {
         var style = document.getElementById(STYLE_ID);
         if (!style) {
@@ -150,6 +180,9 @@
         }
         style.textContent =
             'html[data-dc-flight-tooltip-mode="disabled"] ' + TOOLTIP_SELECTOR + '{' +
+            'display:none!important;visibility:hidden!important;pointer-events:none!important;' +
+            '}' +
+            'html[data-dc-flight-tooltip-mode="hold_click"]:not([data-dc-flight-tooltip-hold-active="1"]) ' + TOOLTIP_SELECTOR + '{' +
             'display:none!important;visibility:hidden!important;pointer-events:none!important;' +
             '}' +
             'html[data-dc-flight-tooltip-pass-through="1"] ' + TOOLTIP_SELECTOR + '{' +
@@ -166,6 +199,9 @@
             hideTooltips();
             clearLongPress('mode switch');
             syntheticLeaveReleasedPuck();
+            clearHoldTooltipRevealAttr();
+        } else if (lastAppliedMode === 'hold_click' && mode !== 'hold_click') {
+            clearHoldTooltipRevealAttr();
         }
         lastAppliedMode = mode;
     }
@@ -274,6 +310,9 @@
         releasedHoverPuck = puck;
         clearDwell('release');
         pruneStaleFlightTooltips();
+        if (getMode() === 'hold_click') {
+            setHoldTooltipRevealAttr();
+        }
         ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'].forEach(function(type) {
             dispatchPointerLike(type, puck, dwellClientX, dwellClientY, dwellScreenX, dwellScreenY, null);
         });
@@ -316,6 +355,9 @@
             dispatchPointerLike(type, t, dwellClientX, dwellClientY, dwellScreenX, dwellScreenY, document.body);
         });
         releasedHoverPuck = null;
+        if (getMode() === 'hold_click') {
+            clearHoldTooltipRevealAttr();
+        }
     }
 
     function dismissHoldTooltip(reason) {
@@ -328,7 +370,7 @@
     }
 
     function onPointerHoverGateHoldMode(e) {
-        var puck = closestPuck(e.target);
+        var puck = puckFromEvent(e);
 
         if (puck && puck === releasedHoverPuck && !isLeaveType(e.type)) {
             return;
@@ -370,6 +412,7 @@
                 );
             });
             releasedHoverPuck = null;
+            clearHoldTooltipRevealAttr();
             pruneStaleFlightTooltips();
         }
 
@@ -440,7 +483,7 @@
     function onPointerHoverGateCapture(e) {
         var mode = getMode();
         if (mode === 'disabled') {
-            if (!closestPuck(e.target)) {
+            if (!puckFromEvent(e)) {
                 return;
             }
             e.stopImmediatePropagation();
@@ -457,7 +500,7 @@
         }
 
         if (mode === 'hold_click' && longPressTimerId && longPressPuck) {
-            var overPuck = closestPuck(e.target);
+            var overPuck = puckFromEvent(e);
             if (overPuck !== longPressPuck) {
                 clearLongPress('pointer left puck while pressing');
             }
@@ -475,7 +518,7 @@
         if (getMode() !== 'hold_click') {
             return;
         }
-        var puck = closestPuck(e.target);
+        var puck = puckFromEvent(e);
         if (!puck) {
             return;
         }
@@ -553,6 +596,7 @@
                 syntheticLeaveReleasedPuck();
                 hideTooltips();
                 clearLongPress('left hold mode via prefs');
+                clearHoldTooltipRevealAttr();
             }
         }
         if (getMode() === 'disabled') {
@@ -647,6 +691,7 @@
         restoreTooltips();
         document.documentElement.removeAttribute('data-dc-flight-tooltip-mode');
         document.documentElement.removeAttribute('data-dc-flight-tooltip-pass-through');
+        document.documentElement.removeAttribute('data-dc-flight-tooltip-hold-active');
         var style = document.getElementById(STYLE_ID);
         if (style) {
             style.remove();
