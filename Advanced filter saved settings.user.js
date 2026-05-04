@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         Advanced filter saved settings
 // @namespace    Wolf 2.0
-// @version      0.2.0
+// @version      0.3.0
 // @description  Save and recall named Advanced filter input presets.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
-// @donkeycode-pref {"advancedFilterDataOwner":{"type":"string","group":"Advanced filter saves","label":"JSON repo owner","description":"If blank: donkeycode_github_owner -> MikeBane57.","default":"","placeholder":""},"advancedFilterDataRepo":{"type":"string","group":"Advanced filter saves","label":"JSON repo name","description":"If blank: donkeycode_github_repo -> DonkeyCODE.","default":"","placeholder":""},"advancedFilterDataBranch":{"type":"string","group":"Advanced filter saves","label":"JSON branch","description":"If blank: donkeycode_github_branch -> main.","default":"","placeholder":""},"advancedFilterRepoPath":{"type":"string","group":"Advanced filter saves","label":"JSON folder in repo","description":"Folder for shared advanced filter presets. Empty -> ADVANCED FILTERS.","default":"","placeholder":"ADVANCED FILTERS"}}
+// @donkeycode-pref {"advancedFilterDataOwner":{"type":"string","group":"Advanced filter saves","label":"JSON repo owner","description":"If blank: donkeycode_github_owner -> MikeBane57.","default":"","placeholder":""},"advancedFilterDataRepo":{"type":"string","group":"Advanced filter saves","label":"JSON repo name","description":"If blank: donkeycode_github_repo -> DonkeyCODE.","default":"","placeholder":""},"advancedFilterDataBranch":{"type":"string","group":"Advanced filter saves","label":"JSON branch","description":"If blank: donkeycode_github_branch -> main.","default":"","placeholder":""},"advancedFilterRepoPath":{"type":"string","group":"Advanced filter saves","label":"JSON folder in repo","description":"Base folder for shared presets. Empty -> ADVANCED FILTERS. When \"Match DonkeyCODE session folder\" is on, each session folder gets a subfolder under this base.","default":"","placeholder":"ADVANCED FILTERS"},"advancedFilterUseDonkeycodeFolder":{"type":"boolean","group":"Advanced filter saves","label":"Match DonkeyCODE session folder","description":"When on (default): cloud saves load/store under the active DonkeyCODE folder (same logic as worksheet state). When off: use only the JSON folder above (legacy one flat ADVANCED FILTERS tree).","default":true}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Advanced%20filter%20saved%20settings.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Advanced%20filter%20saved%20settings.user.js
 // ==/UserScript==
@@ -32,6 +32,9 @@
     var cloudPresets = [];
     var cloudLoaded = false;
     var cloudLoading = false;
+    var lastSessionFolderPrefKey = '';
+    var cloudFolderWatchTimer = 0;
+    var lastCloudTargetSig = '';
 
     var observer = null;
     var rescanTimer = 0;
@@ -106,6 +109,227 @@
         return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
     }
 
+    function getPrefRaw(key) {
+        if (typeof donkeycodeGetPref !== 'function' || !key) {
+            return null;
+        }
+        try {
+            return donkeycodeGetPref(key);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * DonkeyCODE may expose a string, JSON, or a plain object with name/path/folder/…
+     * (same pattern as WS state-reload).
+     */
+    function extractFolderStringFromDonkeycodeValue(maybe) {
+        if (maybe == null) {
+            return '';
+        }
+        if (typeof maybe === 'object' && !Array.isArray(maybe) && maybe !== null) {
+            var pickO =
+                maybe.name ||
+                maybe.path ||
+                maybe.folder ||
+                maybe.folderName ||
+                maybe.key ||
+                maybe.id ||
+                maybe.slug ||
+                maybe.label ||
+                maybe.sessionFolder ||
+                maybe.session;
+            if (pickO != null) {
+                var t = trimText(String(pickO));
+                if (t) {
+                    return t;
+                }
+            }
+        }
+        var s = typeof maybe === 'string' ? maybe : JSON.stringify(maybe);
+        s = trimText(s);
+        if (!s) {
+            return '';
+        }
+        if (s === '__default__' || s.toLowerCase() === 'default') {
+            return s === '__default__' ? '__default__' : 'default';
+        }
+        if (s.charAt(0) === '{' || s.charAt(0) === '[') {
+            var o = safeJsonParse(s, null);
+            if (o && typeof o === 'object' && !Array.isArray(o)) {
+                return extractFolderStringFromDonkeycodeValue(o);
+            }
+        }
+        return s;
+    }
+
+    function globalDonkeycodeSessionFolder() {
+        var g;
+        try {
+            g = typeof globalThis !== 'undefined' ? globalThis : window;
+        } catch (e) {
+            g = window;
+        }
+        if (!g) {
+            return '';
+        }
+        if (typeof g.donkeycodeGetCurrentSessionFolder === 'function') {
+            try {
+                var v = g.donkeycodeGetCurrentSessionFolder();
+                var s = extractFolderStringFromDonkeycodeValue(v);
+                s = trimText(String(s == null ? '' : s));
+                if (s) {
+                    lastSessionFolderPrefKey = 'donkeycodeGetCurrentSessionFolder()';
+                    return s;
+                }
+            } catch (e2) {}
+        }
+        if (g.donkeycodeCurrentSessionFolder != null && g.donkeycodeCurrentSessionFolder !== '') {
+            var s2 = extractFolderStringFromDonkeycodeValue(g.donkeycodeCurrentSessionFolder);
+            s2 = trimText(String(s2 == null ? '' : s2));
+            if (s2) {
+                lastSessionFolderPrefKey = 'window.donkeycodeCurrentSessionFolder';
+                return s2;
+            }
+        }
+        return '';
+    }
+
+    function donkeycodeCurrentSessionFolderRaw() {
+        lastSessionFolderPrefKey = '';
+        var fromGlobal = globalDonkeycodeSessionFolder();
+        if (fromGlobal) {
+            return fromGlobal;
+        }
+        var tryKeys = [
+            'donkeycode_current_session_folder',
+            'donkeycode_active_session_folder',
+            'donkeycode_session_folder',
+            'donkeycode_session_folder_key',
+            'donkeycode_active_session_key',
+            'donkeycode_session_key',
+            'donkeycode_active_session',
+            'donkeycode_current_session',
+            'donkeycode_current_session_id'
+        ];
+        var i;
+        for (i = 0; i < tryKeys.length; i++) {
+            var k = tryKeys[i];
+            var v = getPrefRaw(k);
+            if (v === undefined || v === null || (typeof v === 'string' && v === '')) {
+                continue;
+            }
+            var ex = extractFolderStringFromDonkeycodeValue(v);
+            ex = trimText(String(ex == null ? '' : ex));
+            if (ex) {
+                lastSessionFolderPrefKey = k;
+                return ex;
+            }
+        }
+        return '';
+    }
+
+    function legacySessionFolderFromPrefs() {
+        var keys = [
+            'donkeycode_current_folder',
+            'donkeycode_folder',
+            'donkeycode_session_name',
+            'donkeycode_active_session_name',
+            'donkeycode_active_tab_folder',
+            'donkeycode_session'
+        ];
+        var j;
+        for (j = 0; j < keys.length; j++) {
+            var v = getPrefRaw(keys[j]);
+            if (v === undefined || v === null) {
+                continue;
+            }
+            var t = extractFolderStringFromDonkeycodeValue(v);
+            t = trimText(String(t == null ? '' : t));
+            if (!t) {
+                continue;
+            }
+            t = t.replace(/^\/+|\/+$/g, '');
+            if (!t) {
+                continue;
+            }
+            if (/[\\/]/.test(t) && (t.indexOf('github') >= 0 || t.indexOf('.com') >= 0 || t.split('/').length > 2)) {
+                var seg = t.split(/[\\/]+/).filter(Boolean);
+                t = seg[seg.length - 1] || t;
+            }
+            return t || 'Default';
+        }
+        return '';
+    }
+
+    function normalizeSessionFolderKey(s) {
+        var t = trimText(String(s == null ? '' : s));
+        if (!t) {
+            return '__default__';
+        }
+        if (t === '__default__' || t === 'Default' || t.toLowerCase() === 'default') {
+            return '__default__';
+        }
+        return t;
+    }
+
+    function sessionFolderKeyCanonical() {
+        var r = trimText(donkeycodeCurrentSessionFolderRaw());
+        if (r) {
+            if (r === '__default__' || r.toLowerCase() === 'default') {
+                return '__default__';
+            }
+            return r;
+        }
+        var leg = trimText(legacySessionFolderFromPrefs());
+        if (leg) {
+            lastSessionFolderPrefKey = 'legacy';
+        }
+        if (!leg || leg === 'Default') {
+            if (!leg) {
+                lastSessionFolderPrefKey = '';
+            }
+            return '__default__';
+        }
+        return leg;
+    }
+
+    function sessionFolderDisplayLabel(keyOrCanonical) {
+        var k = trimText(String(keyOrCanonical == null ? '' : keyOrCanonical));
+        if (!k) {
+            return 'Default';
+        }
+        if (k === '__default__' || k === 'Default' || k.toLowerCase() === 'default') {
+            return 'Default';
+        }
+        return k;
+    }
+
+    /** Safe single path segment for GitHub repo path (per DonkeyCODE folder). */
+    function sessionFolderSegmentForRepo(canonicalKey) {
+        var k = normalizeSessionFolderKey(canonicalKey);
+        if (k === '__default__') {
+            return '__default__';
+        }
+        var seg = String(k)
+            .replace(/\\/g, '/')
+            .split('/')
+            .filter(Boolean)
+            .join('-')
+            .replace(/[^a-zA-Z0-9._-]+/g, '-')
+            .replace(/^-+|-+$/g, '');
+        return seg || 'folder';
+    }
+
+    function advancedFilterMatchDonkeycodeFolder() {
+        var v = getPref('advancedFilterUseDonkeycodeFolder', true);
+        if (v === false || v === 'false' || v === 0 || v === '0') {
+            return false;
+        }
+        return true;
+    }
+
     function resolvedGithubPat() {
         return trimText(getPref('donkeycode_github_pat', ''));
     }
@@ -122,17 +346,34 @@
         return trimText(getPref('advancedFilterDataBranch', '')) || trimText(getPref('donkeycode_github_branch', '')) || GITHUB_BRANCH;
     }
 
-    function resolvedCloudRoot() {
+    function resolvedCloudRootBase() {
         var root = trimText(getPref('advancedFilterRepoPath', '')) || CLOUD_ROOT;
         return root.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/\.\./g, '') || CLOUD_ROOT;
     }
 
+    /**
+     * Full repo-relative directory for this script's index + presets/.
+     * When matching DonkeyCODE folder: …/ADVANCED FILTERS/<folder-segment>/.
+     */
+    function resolvedCloudRootDir() {
+        var base = resolvedCloudRootBase();
+        if (!advancedFilterMatchDonkeycodeFolder()) {
+            return base;
+        }
+        var fk = sessionFolderKeyCanonical();
+        return base + '/' + sessionFolderSegmentForRepo(fk);
+    }
+
+    function cloudStorageTargetSignature() {
+        return resolvedCloudOwner() + '/' + resolvedCloudRepo() + '@' + resolvedCloudBranch() + ':' + resolvedCloudRootDir();
+    }
+
     function indexJsonPath() {
-        return resolvedCloudRoot() + '/index.json';
+        return resolvedCloudRootDir() + '/index.json';
     }
 
     function presetJsonPath(id) {
-        return resolvedCloudRoot() + '/presets/' + encodeURIComponent(String(id || 'preset')).replace(/%/g, '') + '.json';
+        return resolvedCloudRootDir() + '/presets/' + encodeURIComponent(String(id || 'preset')).replace(/%/g, '') + '.json';
     }
 
     function encodedRepoPath(path) {
@@ -288,20 +529,30 @@
 
     function presetIdFromName(name) {
         var base = trimText(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'preset';
-        return base.slice(0, 48) + '-' + stableHash(pageKey() + '|' + trimText(name).toLowerCase());
+        var folderSalt = '';
+        if (advancedFilterMatchDonkeycodeFolder()) {
+            folderSalt = '|' + normalizeSessionFolderKey(sessionFolderKeyCanonical());
+        }
+        return base.slice(0, 48) + '-' + stableHash(pageKey() + folderSalt + '|' + trimText(name).toLowerCase());
     }
 
     function normalizeCloudPreset(raw) {
         if (!raw || typeof raw !== 'object' || !raw.snapshot) {
             return null;
         }
+        var fk =
+            raw.folderKey != null && raw.folderKey !== ''
+                ? normalizeSessionFolderKey(raw.folderKey)
+                : null;
         return {
             id: trimText(raw.id) || presetIdFromName(raw.name || 'preset'),
             name: trimText(raw.name) || '(unnamed)',
             pageKey: trimText(raw.pageKey || raw.scopeKey || ''),
             snapshot: raw.snapshot,
             updatedAt: raw.updatedAt || Date.now(),
-            shared: true
+            shared: true,
+            createdBy: trimText(raw.createdBy || raw.creator || raw.author || ''),
+            folderKey: fk
         };
     }
 
@@ -371,7 +622,9 @@
             pageKey: pageKey(),
             scope: { origin: location.origin, pathname: location.pathname },
             updatedAt: Date.now(),
-            snapshot: localPreset.snapshot
+            snapshot: localPreset.snapshot,
+            createdBy: sessionFolderDisplayLabel(sessionFolderKeyCanonical()),
+            folderKey: sessionFolderKeyCanonical()
         };
         getJsonAtCloudPath(indexJsonPath(), function (indexDoc) {
             var ids = indexDoc && Array.isArray(indexDoc.presetIds) ? indexDoc.presetIds.slice() : [];
@@ -1069,6 +1322,7 @@
             '#' + PANEL_ID + ' button{padding:4px 8px;border:1px solid #5dade2;border-radius:4px;background:#1a1f28;color:#e8eef5;font:12px system-ui,sans-serif;cursor:pointer;}' +
             '#' + PANEL_ID + ' button:hover{background:#26364b;}' +
             '#' + PANEL_ID + ' button[data-dc-afss-delete]{border-color:#8a4b4b;}' +
+            '#' + PANEL_ID + ' .dc-afss-folder{font-size:11px;color:#95a5a6;margin-bottom:6px;line-height:1.35;word-break:break-word;}' +
             '#' + PANEL_ID + ' .dc-afss-status{min-height:16px;margin-top:7px;color:#bdc3c7;font-size:11px;}';
         document.head.appendChild(style);
     }
@@ -1085,7 +1339,11 @@
         if (sharedList && sharedList.length) {
             html += '<optgroup label="Shared">';
             for (var j = 0; j < sharedList.length; j++) {
-                html += '<option value="cloud:' + htmlEscape(sharedList[j].id) + '">' + htmlEscape(sharedList[j].name) + '</option>';
+                var optLabel = htmlEscape(sharedList[j].name);
+                if (trimText(sharedList[j].createdBy || '')) {
+                    optLabel += ' · ' + htmlEscape(trimText(sharedList[j].createdBy));
+                }
+                html += '<option value="cloud:' + htmlEscape(sharedList[j].id) + '">' + optLabel + '</option>';
             }
             html += '</optgroup>';
         }
@@ -1095,6 +1353,7 @@
     function panelHtml(list) {
         var options = optionsHtml(list, cloudPresets);
         return (
+            '<div class="dc-afss-folder" data-dc-afss-folder></div>' +
             '<div class="dc-afss-title">Advanced filter settings</div>' +
             '<div class="dc-afss-row">' +
             '<input type="text" data-dc-afss-name placeholder="Name this setting" />' +
@@ -1118,6 +1377,47 @@
         }
     }
 
+    function updateSharedFolderBanner(panel) {
+        var el = panel && panel.querySelector('[data-dc-afss-folder]');
+        if (!el) {
+            return;
+        }
+        var dir = resolvedCloudRootDir();
+        if (!advancedFilterMatchDonkeycodeFolder()) {
+            el.textContent = 'Shared: ' + dir + ' (session folder matching off)';
+            return;
+        }
+        var fk = sessionFolderKeyCanonical();
+        var label = sessionFolderDisplayLabel(fk);
+        el.textContent =
+            'DonkeyCODE folder: ' + label + (fk !== '__default__' ? ' (' + fk + ')' : '') + ' · repo ' + dir;
+    }
+
+    function stopCloudFolderWatch() {
+        if (cloudFolderWatchTimer) {
+            clearInterval(cloudFolderWatchTimer);
+            cloudFolderWatchTimer = 0;
+        }
+    }
+
+    function scheduleCloudFolderWatch(panel) {
+        stopCloudFolderWatch();
+        cloudFolderWatchTimer = setInterval(function () {
+            if (!panel || !panel.isConnected || panel !== activePanel) {
+                stopCloudFolderWatch();
+                return;
+            }
+            var sig = cloudStorageTargetSignature();
+            if (sig !== lastCloudTargetSig) {
+                lastCloudTargetSig = sig;
+                cloudLoaded = false;
+                cloudPresets = [];
+                updateSharedFolderBanner(panel);
+                loadCloudPresets(panel);
+            }
+        }, 800);
+    }
+
     function refreshPanelOptions(panel) {
         if (!panel) {
             return;
@@ -1138,6 +1438,7 @@
     }
 
     function closePanel() {
+        stopCloudFolderWatch();
         if (activePanel) {
             activePanel.remove();
             activePanel = null;
@@ -1162,7 +1463,10 @@
         positionPanel(panel, button);
         activePanel = panel;
         activeTitle = title;
+        lastCloudTargetSig = cloudStorageTargetSignature();
         bindPanel(panel);
+        updateSharedFolderBanner(panel);
+        scheduleCloudFolderWatch(panel);
         if (!cloudLoaded && !cloudLoading) {
             loadCloudPresets(panel);
         }
@@ -1394,6 +1698,7 @@
     }
 
     window.__myScriptCleanup = function () {
+        stopCloudFolderWatch();
         closePanel();
         if (observer) {
             observer.disconnect();
