@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Worksheet auto filter actions
 // @namespace    Wolf 2.0
-// @version      1.4.19
+// @version      1.4.20
 // @description  Worksheet: watch & interval as toggle switches; both actions default to Pick a button.
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @grant        none
@@ -41,6 +41,7 @@
     var filterPadRaf = 0;
     var filterPadRetryTimer = null;
     var filterPadRetryCount = 0;
+    var filterPadSlowTimer = null;
     var lastSig = '';
     var lastAdvancedFilterPadLogKey = '';
     var lastAdvancedFilterPadLogAt = 0;
@@ -49,7 +50,7 @@
     var toggleInput = null;
     var opTimeTid = null;
     /** Keep in sync with the @version header line. */
-    var SCRIPT_VERSION = '1.4.19';
+    var SCRIPT_VERSION = '1.4.20';
     var ADVANCED_FILTER_MIN_BOTTOM_PAD = 200;
     var ADVANCED_FILTER_SPACER_ATTR = 'data-dc-war-adv-filter-spacer';
     var ADVANCED_FILTER_SECTION_TITLES = [
@@ -1370,8 +1371,128 @@
         return n;
     }
 
-    function findAdvancedFilterGridBySections() {
-        var grids = document.querySelectorAll('.ui.stackable.grid');
+    function forEachReachableDocument(fn) {
+        var seen = [];
+        var queue = [];
+        var maxDocs = 80;
+        var maxIframeDepth = 6;
+        var depthByDoc = Object.create(null);
+        try {
+            if (document && seen.indexOf(document) < 0) {
+                seen.push(document);
+                queue.push(document);
+                depthByDoc[document] = 0;
+            }
+        } catch (eRoot) {}
+        while (queue.length > 0 && seen.length <= maxDocs) {
+            var doc = queue.shift();
+            if (!doc) {
+                continue;
+            }
+            try {
+                fn(doc);
+            } catch (eFn) {}
+            var root = doc.documentElement;
+            if (!root || !root.querySelectorAll) {
+                continue;
+            }
+            var d0 = depthByDoc[doc] || 0;
+            if (d0 >= maxIframeDepth) {
+                continue;
+            }
+            var iframes;
+            try {
+                iframes = root.querySelectorAll('iframe');
+            } catch (eQ) {
+                continue;
+            }
+            for (var i = 0; i < iframes.length; i++) {
+                var childDoc = null;
+                try {
+                    childDoc = iframes[i].contentDocument;
+                } catch (eC) {
+                    childDoc = null;
+                }
+                if (!childDoc || seen.indexOf(childDoc) >= 0) {
+                    continue;
+                }
+                seen.push(childDoc);
+                depthByDoc[childDoc] = d0 + 1;
+                queue.push(childDoc);
+            }
+        }
+    }
+
+    function advancedFilterReasonPriority(reason) {
+        switch (reason) {
+            case 'smart_widget_css_selector':
+                return 100;
+            case 'smart_widget_class_substring':
+                return 95;
+            case 'section_title_grid_heuristic':
+                return 80;
+            case 'title_ancestor_stackable_grid':
+                return 70;
+            case 'title_sibling_stackable_grid':
+                return 69;
+            case 'title_sibling_nested_stackable_grid':
+                return 68;
+            case 'single_accordion_stackable_grid':
+                return 60;
+            default:
+                return 0;
+        }
+    }
+
+    function advancedFilterTargetArea(el) {
+        if (!el || !el.getBoundingClientRect) {
+            return 0;
+        }
+        try {
+            var r = el.getBoundingClientRect();
+            return Math.max(0, r.width) * Math.max(0, r.height);
+        } catch (eA) {
+            return 0;
+        }
+    }
+
+    function docHrefForLog(doc) {
+        try {
+            return doc && doc.defaultView && doc.defaultView.location
+                ? String(doc.defaultView.location.href || '')
+                : '';
+        } catch (eH) {
+            return '';
+        }
+    }
+
+    function attachIframePadHooks(rootDoc) {
+        var doc = rootDoc || document;
+        if (!doc || !doc.querySelectorAll) {
+            return;
+        }
+        var iframes;
+        try {
+            iframes = doc.querySelectorAll('iframe');
+        } catch (eIf) {
+            return;
+        }
+        for (var i = 0; i < iframes.length; i++) {
+            var fr = iframes[i];
+            if (!fr || fr.getAttribute('data-dc-war-pad-iframe-hook') === '1') {
+                continue;
+            }
+            fr.setAttribute('data-dc-war-pad-iframe-hook', '1');
+            fr.addEventListener('load', function () {
+                scheduleAdvancedFilterBottomPadding();
+            });
+        }
+    }
+
+        if (!doc || !doc.querySelectorAll) {
+            return null;
+        }
+        var grids = doc.querySelectorAll('.ui.stackable.grid');
         var best = null;
         var bestScore = 0;
         for (var i = 0; i < grids.length; i++) {
@@ -1384,9 +1505,12 @@
         return bestScore >= 4 ? best : null;
     }
 
-    function findSmartWidgetAdvancedFilterPaddingTarget() {
+    function findSmartWidgetAdvancedFilterPaddingTargetInDoc(doc) {
+        if (!doc || !doc.querySelector) {
+            return { el: null, matchKind: '' };
+        }
         try {
-            var exact = document.querySelector(SMART_WIDGET_ADVANCED_FILTER_SELECTOR);
+            var exact = doc.querySelector(SMART_WIDGET_ADVANCED_FILTER_SELECTOR);
             if (exact) {
                 return { el: exact, matchKind: 'selector' };
             }
@@ -1394,7 +1518,7 @@
             debugInterval('smart widget advanced filter selector failed', e);
         }
         try {
-            var sw = document.querySelector('#smart-widget');
+            var sw = doc.querySelector('#smart-widget');
             if (!sw || !sw.querySelectorAll) {
                 return { el: null, matchKind: '' };
             }
@@ -1422,8 +1546,12 @@
         }
     }
 
-    function findAdvancedFilterPaddingTarget() {
-        var swFound = findSmartWidgetAdvancedFilterPaddingTarget();
+    function findAdvancedFilterPaddingTargetInDoc(doc) {
+        if (!doc) {
+            return null;
+        }
+        var bodyEl = doc.body || doc.documentElement;
+        var swFound = findSmartWidgetAdvancedFilterPaddingTargetInDoc(doc);
         var smartWidgetTarget = swFound && swFound.el;
         if (smartWidgetTarget) {
             return {
@@ -1434,17 +1562,17 @@
                         : 'smart_widget_css_selector'
             };
         }
-        var sectionGrid = findAdvancedFilterGridBySections();
+        var sectionGrid = findAdvancedFilterGridBySectionsInDoc(doc);
         if (sectionGrid) {
             return { target: sectionGrid, reason: 'section_title_grid_heuristic' };
         }
-        var titles = document.querySelectorAll('h1,h2,h3,h4,h5,h6,legend,summary,label,div,span,p');
+        var titles = doc.querySelectorAll('h1,h2,h3,h4,h5,h6,legend,summary,label,div,span,p');
         for (var i = 0; i < titles.length; i++) {
             if (!isAdvancedFilterTitleCandidate(titles[i])) {
                 continue;
             }
             var scope = titles[i].parentElement;
-            for (var up = 0; scope && scope !== document.body && up < 8; up++) {
+            for (var up = 0; scope && scope !== bodyEl && up < 8; up++) {
                 if (scope.querySelector) {
                     var scopedGrid = scope.querySelector('.accordion.ui.inverted .ui.stackable.grid') ||
                         scope.querySelector('.accordion .ui.stackable.grid') ||
@@ -1478,11 +1606,48 @@
                 }
             }
         }
-        var grids = document.querySelectorAll('.accordion.ui.inverted .ui.stackable.grid,.accordion .ui.stackable.grid');
+        var grids = doc.querySelectorAll('.accordion.ui.inverted .ui.stackable.grid,.accordion .ui.stackable.grid');
         if (grids.length === 1) {
             return { target: grids[0], reason: 'single_accordion_stackable_grid' };
         }
-        return { target: null, reason: 'none' };
+        return null;
+    }
+
+    function findAdvancedFilterPaddingTarget() {
+        var best = null;
+        var bestPri = -1;
+        var bestArea = -1;
+        var bestDoc = null;
+        forEachReachableDocument(function (d) {
+            var r = findAdvancedFilterPaddingTargetInDoc(d);
+            if (!r || !r.target) {
+                return;
+            }
+            var pri = advancedFilterReasonPriority(r.reason);
+            var area = advancedFilterTargetArea(r.target);
+            if (pri > bestPri || (pri === bestPri && area > bestArea)) {
+                bestPri = pri;
+                bestArea = area;
+                best = r;
+                bestDoc = d;
+            }
+        });
+        if (!best) {
+            var smartWidgetDocCount = 0;
+            forEachReachableDocument(function (d) {
+                try {
+                    if (d.querySelector && d.querySelector('#smart-widget')) {
+                        smartWidgetDocCount++;
+                    }
+                } catch (eSw) {}
+            });
+            return { target: null, reason: 'none', smartWidgetDocsSeen: smartWidgetDocCount };
+        }
+        return {
+            target: best.target,
+            reason: best.reason,
+            sourceDocument: bestDoc
+        };
     }
 
     /**
@@ -1510,18 +1675,22 @@
         if (!from) {
             return null;
         }
+        var win =
+            from.ownerDocument && from.ownerDocument.defaultView
+                ? from.ownerDocument.defaultView
+                : window;
         var el = from;
         var depth = 0;
         while (el && depth < 32) {
-            if (window.getComputedStyle) {
+            if (win.getComputedStyle) {
                 try {
-                    var st = window.getComputedStyle(el);
+                    var st = win.getComputedStyle(el);
                     if (overflowYCreatesScrollport(st)) {
                         return el;
                     }
                 } catch (e) {}
             }
-            if (el === document.documentElement) {
+            if (el === (el.ownerDocument && el.ownerDocument.documentElement)) {
                 break;
             }
             el = el.parentElement;
@@ -1531,21 +1700,33 @@
     }
 
     function restoreAdvancedFilterBottomPadding() {
-        var spacers = document.querySelectorAll('[' + ADVANCED_FILTER_SPACER_ATTR + '="1"]');
-        for (var s = 0; s < spacers.length; s++) {
+        forEachReachableDocument(function (d) {
+            var spacers;
             try {
-                var p = spacers[s].parentNode;
-                if (p) {
-                    p.removeChild(spacers[s]);
-                }
-            } catch (eSp) {}
-        }
-        var list = document.querySelectorAll('[data-dc-war-bottom-pad]');
-        for (var i = 0; i < list.length; i++) {
-            list[i].style.removeProperty('padding-bottom');
-            list[i].removeAttribute('data-dc-war-bottom-pad');
-            list[i].removeAttribute('data-dc-war-bottom-pad-px');
-        }
+                spacers = d.querySelectorAll('[' + ADVANCED_FILTER_SPACER_ATTR + '="1"]');
+            } catch (eQ) {
+                return;
+            }
+            for (var s = 0; s < spacers.length; s++) {
+                try {
+                    var p = spacers[s].parentNode;
+                    if (p) {
+                        p.removeChild(spacers[s]);
+                    }
+                } catch (eSp) {}
+            }
+            var list;
+            try {
+                list = d.querySelectorAll('[data-dc-war-bottom-pad]');
+            } catch (eL) {
+                return;
+            }
+            for (var i = 0; i < list.length; i++) {
+                list[i].style.removeProperty('padding-bottom');
+                list[i].removeAttribute('data-dc-war-bottom-pad');
+                list[i].removeAttribute('data-dc-war-bottom-pad-px');
+            }
+        });
     }
 
     /**
@@ -1556,10 +1737,15 @@
         if (!target || !target.appendChild || !target.querySelector) {
             return null;
         }
+        var ownerDoc = target.ownerDocument || document;
         var sel = '[' + ADVANCED_FILTER_SPACER_ATTR + '="1"]';
         var div = target.querySelector(sel);
         if (!div) {
-            div = document.createElement('div');
+            try {
+                div = ownerDoc.createElement('div');
+            } catch (eCreate) {
+                return null;
+            }
             div.setAttribute(ADVANCED_FILTER_SPACER_ATTR, '1');
             div.setAttribute('aria-hidden', 'true');
             div.style.setProperty('flex-shrink', '0', 'important');
@@ -1593,6 +1779,8 @@
                 padEl: null,
                 selectorMatched: false,
                 smartWidgetSelector: SMART_WIDGET_ADVANCED_FILTER_SELECTOR,
+                smartWidgetDocsSeen:
+                    found && found.smartWidgetDocsSeen != null ? found.smartWidgetDocsSeen : null,
                 note: 'padding target not found'
             });
             debugInterval('advanced filter padding target not found', {
@@ -1624,15 +1812,19 @@
                     : '';
             } catch (eMi) {}
         }
-        if (spacerEl && window.getComputedStyle) {
+        var targetWin =
+            target.ownerDocument && target.ownerDocument.defaultView
+                ? target.ownerDocument.defaultView
+                : window;
+        if (spacerEl && targetWin.getComputedStyle) {
             try {
-                var sCs = window.getComputedStyle(spacerEl);
+                var sCs = targetWin.getComputedStyle(spacerEl);
                 spacerH = sCs ? sCs.height : '';
             } catch (eSc) {}
         }
-        if (measureEl && window.getComputedStyle) {
+        if (measureEl && targetWin.getComputedStyle) {
             try {
-                var cs = window.getComputedStyle(measureEl);
+                var cs = targetWin.getComputedStyle(measureEl);
                 computedPb = cs ? cs.paddingBottom : '';
                 overflowY = cs ? cs.overflowY : '';
                 flexGrow = cs ? cs.flexGrow : '';
@@ -1655,6 +1847,7 @@
                 found.reason === 'smart_widget_css_selector' ||
                 found.reason === 'smart_widget_class_substring',
             smartWidgetSelector: SMART_WIDGET_ADVANCED_FILTER_SELECTOR,
+            sourceFrameUrl: docHrefForLog(found.sourceDocument),
             innerTag: target.tagName || '',
             innerClass: elClassSnippet(target, 120),
             padTag: measureEl.tagName || '',
@@ -1702,7 +1895,7 @@
                 filterPadRetryCount = 0;
                 filterPadRetryTimer = setInterval(function () {
                     filterPadRetryCount++;
-                    if (updateAdvancedFilterBottomPadding() || filterPadRetryCount >= 20) {
+                    if (updateAdvancedFilterBottomPadding() || filterPadRetryCount >= 120) {
                         clearInterval(filterPadRetryTimer);
                         filterPadRetryTimer = null;
                     }
@@ -2313,8 +2506,15 @@
             try {
                 mountOperationalTimeIfNeeded();
             } catch (e) {}
+            attachIframePadHooks(document);
         });
         mo.observe(document.documentElement, { childList: true, subtree: true });
+        attachIframePadHooks(document);
+        if (!filterPadSlowTimer) {
+            filterPadSlowTimer = setInterval(function () {
+                scheduleAdvancedFilterBottomPadding();
+            }, 4000);
+        }
     }
 
     if (document.readyState === 'loading') {
@@ -2339,6 +2539,10 @@
         if (filterPadRetryTimer) {
             clearInterval(filterPadRetryTimer);
             filterPadRetryTimer = null;
+        }
+        if (filterPadSlowTimer) {
+            clearInterval(filterPadSlowTimer);
+            filterPadSlowTimer = null;
         }
         if (filterPadRaf) {
             cancelAnimationFrame(filterPadRaf);
