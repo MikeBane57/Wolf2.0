@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flight tooltip display options
 // @namespace    Wolf 2.0
-// @version      0.4.2
+// @version      0.4.3
 // @description  Flight leg tooltip: hold on puck (default), native hover, disabled, optional extra hover delay
 // @match        https://opssuitemain.swacorp.com/worksheet*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
@@ -351,13 +351,15 @@
             return;
         }
         var t = releasedHoverPuck;
-        ['pointerout', 'pointerleave', 'mouseout', 'mouseleave'].forEach(function(type) {
-            dispatchPointerLike(type, t, dwellClientX, dwellClientY, dwellScreenX, dwellScreenY, document.body);
-        });
+        // Clear before dispatching synthetic leaves so capture-phase handlers do not see
+        // releasedHoverPuck still set and call dismissHoldTooltip again (stack overflow).
         releasedHoverPuck = null;
         if (getMode() === 'hold_click') {
             clearHoldTooltipRevealAttr();
         }
+        ['pointerout', 'pointerleave', 'mouseout', 'mouseleave'].forEach(function(type) {
+            dispatchPointerLike(type, t, dwellClientX, dwellClientY, dwellScreenX, dwellScreenY, document.body);
+        });
     }
 
     function dismissHoldTooltip(reason) {
@@ -400,10 +402,13 @@
         }
 
         if (releasedHoverPuck && puck !== releasedHoverPuck) {
+            var prevReleased = releasedHoverPuck;
+            releasedHoverPuck = null;
+            clearHoldTooltipRevealAttr();
             ['pointerout', 'pointerleave', 'mouseout', 'mouseleave'].forEach(function(type) {
                 dispatchPointerLike(
                     type,
-                    releasedHoverPuck,
+                    prevReleased,
                     e.clientX,
                     e.clientY,
                     e.screenX,
@@ -411,8 +416,6 @@
                     document.body
                 );
             });
-            releasedHoverPuck = null;
-            clearHoldTooltipRevealAttr();
             pruneStaleFlightTooltips();
         }
 
@@ -457,10 +460,12 @@
         }
 
         if (releasedHoverPuck && puck !== releasedHoverPuck) {
+            var prevReleasedHover = releasedHoverPuck;
+            releasedHoverPuck = null;
             ['pointerout', 'pointerleave', 'mouseout', 'mouseleave'].forEach(function(type) {
                 dispatchPointerLike(
                     type,
-                    releasedHoverPuck,
+                    prevReleasedHover,
                     e.clientX,
                     e.clientY,
                     e.screenX,
@@ -468,7 +473,6 @@
                     document.body
                 );
             });
-            releasedHoverPuck = null;
             pruneStaleFlightTooltips();
         }
 
