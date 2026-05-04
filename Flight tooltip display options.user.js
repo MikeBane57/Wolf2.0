@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         Flight tooltip display options
 // @namespace    Wolf 2.0
-// @version      0.4.1
-// @description  Flight leg tooltip: default, hold on puck to show, disabled, optional extra hover delay
+// @version      0.4.2
+// @description  Flight leg tooltip: hold on puck (default), native hover, disabled, optional extra hover delay
 // @match        https://opssuitemain.swacorp.com/worksheet*
 // @match        https://opssuitemain.swacorp.com/widgets/worksheet*
 // @match        https://opssuitemain.swacorp.com/schedule*
 // @grant        none
-// @donkeycode-pref {"flightTooltipDisplayMode":{"type":"select","group":"Flight tooltip","label":"Display mode","description":"Default = native hover. Hold on puck = hover tooltips only after pressing and holding on a flight puck (no hover-only popups). Disabled = hide tooltips. Legacy values map: Click only → Default; Hover only → Hold on puck.","default":"hover","options":[{"value":"hover","val":"hover","label":"Default"},{"value":"hold_click","val":"hold_click","label":"Hold on puck to show"},{"value":"disabled","val":"disabled","label":"Disabled"}]},"flightTooltipHoldMs":{"type":"number","group":"Flight tooltip","label":"Hold duration (ms)","description":"How long to press on a puck before the tooltip appears (Hold on puck mode only).","default":450,"min":150,"max":3000,"step":50},"flightTooltipHoverDelayMs":{"type":"number","group":"Flight tooltip","label":"Extra hover delay (ms)","description":"Default mode only: extra milliseconds of hover on a puck before hover reaches the page (0 = site default). Ignored in Hold on puck mode.","default":0,"min":0,"max":5000,"step":50},"flightTooltipPassThroughClicks":{"type":"boolean","group":"Flight tooltip","label":"Tooltip: clicks pass through","description":"When ON, the flight tooltip ignores pointer events so clicks and hovers reach cells and pucks underneath. Turn OFF if you need to select or copy text inside the tooltip.","default":false},"flightTooltipDebug":{"type":"boolean","group":"Flight tooltip","label":"Debug logging","description":"Log tooltip display controller events to the browser console.","default":false}}
+// @donkeycode-pref {"flightTooltipDisplayMode":{"type":"select","group":"Flight tooltip","label":"Display mode","description":"Hold on puck (default) = tooltip only after press-and-hold on a flight puck. Default = native hover. Disabled = hide tooltips. Legacy: Click only → Default; Hover only → Hold on puck.","default":"hold_click","options":[{"value":"hover","val":"hover","label":"Default"},{"value":"hold_click","val":"hold_click","label":"Hold on puck to show"},{"value":"disabled","val":"disabled","label":"Disabled"}]},"flightTooltipHoldMs":{"type":"number","group":"Flight tooltip","label":"Hold duration (ms)","description":"How long to press on a puck before the tooltip appears (Hold on puck mode only).","default":450,"min":150,"max":3000,"step":50},"flightTooltipHoverDelayMs":{"type":"number","group":"Flight tooltip","label":"Extra hover delay (ms)","description":"Default mode only: extra milliseconds of hover on a puck before hover reaches the page (0 = site default). Ignored in Hold on puck mode.","default":0,"min":0,"max":5000,"step":50},"flightTooltipPassThroughClicks":{"type":"boolean","group":"Flight tooltip","label":"Tooltip: clicks pass through","description":"When ON, the flight tooltip ignores pointer events so clicks and hovers reach cells and pucks underneath. Turn OFF if you need to select or copy text inside the tooltip.","default":false},"flightTooltipDebug":{"type":"boolean","group":"Flight tooltip","label":"Debug logging","description":"Log tooltip display controller events to the browser console.","default":false}}
 // @updateURL    https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20tooltip%20display%20options.user.js
 // @downloadURL  https://github.com/MikeBane57/Wolf2.0/raw/refs/heads/main/Flight%20tooltip%20display%20options.user.js
 // ==/UserScript==
@@ -90,7 +90,7 @@
     }
 
     function getMode() {
-        var raw = String(getPref('flightTooltipDisplayMode', 'hover') || 'hover').toLowerCase();
+        var raw = String(getPref('flightTooltipDisplayMode', 'hold_click') || 'hold_click').toLowerCase();
         var mode = raw.replace(/\s+/g, '_').replace(/-/g, '_');
         if (mode === 'click') {
             return 'hover';
